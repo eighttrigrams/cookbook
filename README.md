@@ -45,6 +45,13 @@ So **lean is the default**, in the API and in the UI alike: a listing and a plai
 card in the browser goes and fetches it. Recipes are **fully versioned** — every
 edit that changes something archives the outgoing state and bumps the version.
 
+All three fields are meant to be markdown, with clojure code blocks highlighted
+in the body. **That is not built yet**: it needs `marked`, `highlight.js` and
+`DOMPurify`, and the sanitizer is not optional here — agents write unsupervised
+and a published Recipe is served to anonymous visitors, so `marked` output
+reaching the DOM unsanitized would be an XSS route no sibling app has. Until all
+three are in, bodies render as plain text.
+
 ## Hosting
 
 Runs standalone in dev, and in production inside the [plurama](../plurama)
@@ -88,6 +95,34 @@ Every route handler's docstring is its documentation, in the form
 `METHOD /path — what it does`. The listing carries `:method` and `:path` as
 separate fields. An agent is the primary reader of this API, so the docstrings
 are the interface, not decoration.
+
+### Recipes
+
+- `GET /api/recipes` — the listing, most recently saved first. `?search=` narrows
+  over title and useful-when. **Lean**: no `description` key at all.
+- `GET /api/recipes/:id` — one recipe, lean the same way.
+- **`?detail=full`** on either of those adds the description. That is the only
+  way to get a body, and it is meant to be asked for one recipe at a time.
+- `POST /api/recipes` — `{:title :useful_when :description}`. Title required.
+  The new recipe is version 1 and private; `published` is not accepted here.
+- `PUT /api/recipes/:id` — the same three fields; anything you leave out keeps
+  its current value. Pass `modified_at` from your last read to be told (409)
+  when someone else saved in between. A save that changes nothing is a no-op.
+- `DELETE /api/recipes/:id` — the recipe and its whole history.
+- `GET /api/recipes/:id/versions` — every version, newest first, each with all
+  three fields and its `created_at`. The newest carries `current: true`.
+
+### Versioning
+
+`recipes` holds the current state, `recipe_history` the superseded ones keyed
+`(recipe_id, version)`. A save archives the outgoing state at its own version
+number and moves the row to the next one, so the history holds versions 1..N-1
+and the row is N. The version is stored **on the row** rather than derived from
+the history, because recipes are a collection and deriving would mean a
+correlated subquery per row in every listing.
+
+Publishing does not create a version and `published` is not in the history
+table: versions are about content, the latch is a separate fact about the row.
 
 ### Rate limiting
 
