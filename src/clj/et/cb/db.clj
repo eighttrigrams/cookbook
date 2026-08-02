@@ -78,5 +78,5 @@
   pointing at a row that is already gone."
   [ds]
   (let [conn (get-conn ds)]
-    (doseq [table []]
+    (doseq [table [:recipe_history :recipes]]
       (jdbc/execute-one! conn (sql/format {:delete-from table})))))

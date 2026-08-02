@@ -1,0 +1,177 @@
+(ns et.cb.db.recipe
+  "The one entity: a Recipe — a `title`, a `useful_when` line, and a
+  `description` body.
+
+  **Lean by default.** The reader here is an agent: it scans title and
+  useful-when to decide whether a Recipe is relevant, then fetches exactly one
+  description. So the default projection is a cheap retrieval index, and it is
+  built as a *select-column* choice rather than a post-hoc dissoc — a lean read
+  never loads the description, so there is no key for a caller to leak.
+
+  **History model** follows treina's `et.trn.db.program`, which follows
+  rhizome's: `recipes` always holds the *current* state and `recipe_history`
+  holds the superseded ones, keyed (recipe_id, version). A save pushes the
+  outgoing state into history first, so the newest history row is the state just
+  before the current one. Version numbers grow with each save and never change
+  afterwards, which is what makes 'how did this read back then' answerable.
+
+  One deliberate change from treina: **the version lives on the row** instead of
+  being derived as `(inc (max history.version))`. Treina can derive it because
+  its `program` is a singleton per user; recipes are a collection, so deriving
+  would mean a correlated subquery per row in every listing. A new recipe is
+  version 1 with no history rows; a save archives the outgoing state *at its own
+  version number* and moves the row to the next one. History therefore holds
+  1..N-1 and the row is N.
+
+  `published` is deliberately **not** in the history table, and publishing does
+  not create a version: versions are about content, the latch is a separate fact
+  about the row. A table that half-answered both questions would answer neither."
+  (:require [clojure.string :as str]
+            [next.jdbc :as jdbc]
+            [honey.sql :as sql]
+            [taoensso.telemere :as tel]
+            [et.cb.db :as db]))
+
+(def lean-select-columns
+  "Everything but the body. This *is* the default API shape."
+  [:id :title :useful_when :version :published :published_at :created_at :modified_at])
+
+(defn- select-columns [lean?]
+  (if lean? lean-select-columns (conj lean-select-columns :description)))
+
+(defn list-recipes
+  "The user's recipes, most recently touched first, optionally narrowed by a
+  substring search over title and useful-when. `lean?` (the default) leaves the
+  description out of the projection entirely."
+  ([ds user-id] (list-recipes ds user-id {}))
+  ([ds user-id {:keys [search-term lean?] :or {lean? true}}]
+   (let [search-clause (db/build-search-clause search-term [:title :useful_when])
+         where (cond-> [:and (db/user-id-where-clause user-id)]
+                 search-clause (conj search-clause))]
+     (jdbc/execute! (db/get-conn ds)
+       (sql/format {:select (select-columns lean?)
+                    :from [:recipes]
+                    :where where
+                    :order-by [[:modified_at :desc] [:id :desc]]})
+       db/jdbc-opts))))
+
+(defn get-recipe
+  "One recipe the user owns, or nil. Lean like the listing unless asked
+  otherwise."
+  ([ds user-id id] (get-recipe ds user-id id {}))
+  ([ds user-id id {:keys [lean?] :or {lean? true}}]
+   (jdbc/execute-one! (db/get-conn ds)
+     (sql/format {:select (select-columns lean?)
+                  :from [:recipes]
+                  :where [:and [:= :id id] (db/user-id-where-clause user-id)]})
+     db/jdbc-opts)))
+
+(defn create-recipe
+  "A new recipe: version 1, no history rows, and private — `published` is left
+  at its column default, because publishing is its own deliberate act."
+  [ds user-id {:keys [title useful_when description]}]
+  (let [result (jdbc/execute-one! (db/get-conn ds)
+                 (sql/format {:insert-into :recipes
+                              :values [{:title (str/trim title)
+                                        :useful_when (or useful_when "")
+                                        :description (or description "")
+                                        :version 1
+                                        :user_id user-id}]
+                              :returning (select-columns false)})
+                 db/jdbc-opts)]
+    (tel/log! {:level :info :data {:id (:id result) :user-id user-id}} "Recipe created")
+    result))
+
+(defn- content-of [recipe]
+  (select-keys recipe [:title :useful_when :description]))
+
+(defn- merge-content
+  "A field the caller left out keeps its current value, so an edit meant for one
+  field cannot silently clear the other two."
+  [current {:keys [title useful_when description]}]
+  {:title (if (some? title) (str/trim title) (:title current))
+   :useful_when (if (some? useful_when) useful_when (:useful_when current))
+   :description (if (some? description) description (:description current))})
+
+(defn- archive! [tx current]
+  (jdbc/execute-one! tx
+    (sql/format {:insert-into :recipe_history
+                 :values [{:recipe_id (:id current)
+                           :version (:version current)
+                           :title (:title current)
+                           :useful_when (:useful_when current)
+                           :description (:description current)}]})))
+
+(defn update-recipe
+  "Save the given fields as the new current state and archive the outgoing one.
+
+  Returns nil when `expected-modified-at` no longer matches (someone else saved
+  meanwhile) — the house's optimistic-concurrency shape. A save that changes
+  nothing is returned unchanged: it neither bumps the version nor writes a
+  history row, since identical versions would only add empty steps to walk
+  through.
+
+  Callers must have established that the recipe exists; nil here means the
+  version guard failed, not that the id was wrong."
+  [ds user-id id fields expected-modified-at]
+  (jdbc/with-transaction [tx (db/get-conn ds)]
+    (let [current (get-recipe tx user-id id {:lean? false})
+          incoming (merge-content current fields)]
+      (cond
+        (and expected-modified-at (not= expected-modified-at (:modified_at current)))
+        nil
+
+        (= incoming (content-of current))
+        current
+
+        :else
+        (do
+          (archive! tx current)
+          (let [result (jdbc/execute-one! tx
+                         (sql/format {:update :recipes
+                                      :set (assoc incoming
+                                                  :version (inc (:version current))
+                                                  :modified_at [:raw "datetime('now')"])
+                                      :where [:= :id id]
+                                      :returning (select-columns false)})
+                         db/jdbc-opts)]
+            (tel/log! {:level :info :data {:id id :user-id user-id :version (:version result)}}
+                      "Recipe saved")
+            result))))))
+
+(defn delete-recipe
+  "Remove a recipe the user owns together with its whole version history.
+  History rows first, like every other delete path in the suite — foreign keys
+  are not enforced on this connection, so ON DELETE CASCADE would be a promise
+  nothing keeps."
+  [ds user-id id]
+  (jdbc/with-transaction [tx (db/get-conn ds)]
+    (let [own [:and [:= :id id] (db/user-id-where-clause user-id)]]
+      (when (jdbc/execute-one! tx
+              (sql/format {:select [:id] :from [:recipes] :where own})
+              db/jdbc-opts)
+        (jdbc/execute-one! tx (sql/format {:delete-from :recipe_history
+                                           :where [:= :recipe_id id]}))
+        (jdbc/execute-one! tx (sql/format {:delete-from :recipes :where own}))
+        (tel/log! {:level :info :data {:id id :user-id user-id}} "Recipe deleted")
+        {:success true}))))
+
+(defn list-versions
+  "Every state of a recipe, newest first. The current row is included as version
+  N and flagged `:current true`, so a reader can step from today's text back
+  through the history in one uniform list. nil when the id matches nothing the
+  user owns."
+  [ds user-id id]
+  (when-let [current (get-recipe ds user-id id {:lean? false})]
+    (let [history (jdbc/execute! (db/get-conn ds)
+                    (sql/format {:select [:version :title :useful_when :description :created_at]
+                                 :from [:recipe_history]
+                                 :where [:= :recipe_id id]
+                                 :order-by [[:version :desc]]})
+                    db/jdbc-opts)]
+      {:versions (into [(assoc (content-of current)
+                               :version (:version current)
+                               :created_at (:modified_at current)
+                               :current true)]
+                       history)
+       :total (inc (count history))})))

@@ -1,7 +1,8 @@
 (ns et.cb.ui.core
   (:require [reagent.dom.client :as rdomc]
             [reagent.core :as r]
-            [et.cb.ui.state :as state]))
+            [et.cb.ui.state :as state]
+            [et.cb.ui.views.recipes :as recipes]))
 
 (defn login-form []
   (let [username (r/atom "")
@@ -49,7 +50,7 @@
        (when (and auth-required? (not logged-in?) show-login?)
          [login-form])
        [:div.main-layout
-        [:div.empty "No recipes yet."]]])))
+        [recipes/recipes-tab]]])))
 
 (defonce root (rdomc/create-root (.getElementById js/document "app")))
 

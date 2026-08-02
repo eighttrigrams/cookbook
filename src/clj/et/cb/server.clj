@@ -3,11 +3,12 @@
             [et.cb.db :as db]
             [et.cb.server.common :as common]
             [et.cb.server.user-handler :as user-handler]
+            [et.cb.server.recipe-handler :as recipe-handler]
             [et.cb.auth :as auth]
             [et.cb.middleware.rate-limit :as rate-limit :refer [wrap-rate-limit]]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [compojure.core :refer [defroutes GET POST context]]
+            [compojure.core :refer [defroutes GET POST PUT DELETE context]]
             [compojure.route :as route]
             [ring.middleware.json :refer [wrap-json-response wrap-json-body]]
             [ring.middleware.params :refer [wrap-params]]
@@ -60,7 +61,8 @@
   on each handler *is* the API documentation. An agent is the primary reader of
   this API, so keeping the list current is not housekeeping."
   '[et.cb.server
-    et.cb.server.user-handler])
+    et.cb.server.user-handler
+    et.cb.server.recipe-handler])
 
 (def ^:private route-doc-re
   "Route handlers document themselves as `METHOD /path — explanation`. Matching
@@ -96,6 +98,14 @@
       (GET  "/required" [] user-handler/password-required-handler)
       (GET  "/me"       [] user-handler/me-handler)
       (POST "/login"    [] user-handler/login-handler))
+
+    (context "/recipes" []
+      (GET    "/"             [] recipe-handler/list-recipes-handler)
+      (POST   "/"             [] recipe-handler/add-recipe-handler)
+      (GET    "/:id/versions" [] recipe-handler/recipe-versions-handler)
+      (GET    "/:id"          [] recipe-handler/get-recipe-handler)
+      (PUT    "/:id"          [] recipe-handler/update-recipe-handler)
+      (DELETE "/:id"          [] recipe-handler/delete-recipe-handler))
 
     (context "/test" []
       (POST "/reset" [] reset-test-db-handler))))

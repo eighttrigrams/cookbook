@@ -72,6 +72,7 @@ button:disabled { opacity: 0.45; cursor: default; transform: none; }
   -webkit-backdrop-filter: blur(var(--glass-blur));
 }
 .compose button { align-self: flex-start; }
+.compose input { width: 100%; }
 
 textarea {
   padding: 10px 14px;
@@ -119,6 +120,39 @@ textarea:focus {
   font-size: 0.8em;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+/* The version is a fact about the row, not decoration: every save that changes
+   something moves it, and the history behind it is what makes "how did this
+   read back then" answerable. */
+.version-badge {
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+  font-size: 0.75em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.card-useful-when {
+  margin-top: 8px;
+  color: var(--text-secondary);
+  font-size: 0.92em;
+}
+
+.card-body {
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: var(--glass-bg-description);
+  border-radius: 10px;
+  font-size: 0.92em;
+  white-space: pre-wrap;
+}
+.card-body-loading, .card-body-empty {
+  margin-top: 12px;
+  color: var(--muted-text);
+  font-size: 0.88em;
 }
 
 .card-footer {

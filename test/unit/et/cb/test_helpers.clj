@@ -2,6 +2,8 @@
   (:require [et.cb.db :as db]
             [et.cb.db.user :as db.user]
             [clojure.java.io :as io]
+            [next.jdbc :as jdbc]
+            [honey.sql :as sql]
             [taoensso.telemere :as tel]))
 
 (tel/remove-handler! :default/console)
@@ -24,3 +26,14 @@
       (finally
         (when-let [pc (:persistent-conn conn)]
           (.close pc))))))
+
+(defn history-row-count
+  "Straight at the table, so a test can tell 'the API stopped showing them' from
+  'the rows are gone'."
+  [recipe-id]
+  (-> (jdbc/execute-one! (db/get-conn *ds*)
+        (sql/format {:select [[[:count :*] :n]]
+                     :from [:recipe_history]
+                     :where [:= :recipe_id recipe-id]})
+        db/jdbc-opts)
+      :n))
