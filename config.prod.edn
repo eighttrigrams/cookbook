@@ -1,0 +1,4 @@
+{:db {:type :sqlite-file
+      :path "/app/data/cookbook.db"}
+ :port #long #or [#env PORT 8080]
+ :logfile "logs/cookbook.log"}

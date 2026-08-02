@@ -1,0 +1,20 @@
+/* Phone layout. The shelf is the whole app, so it just gets the full width. */
+
+@media (max-width: 640px) {
+  body { padding: 14px 12px 32px; }
+  .top-bar { flex-wrap: wrap; gap: 10px; margin-bottom: 16px; }
+  .card { padding: 14px; }
+  .card-title { font-size: 1em; }
+  .card-footer { flex-wrap: wrap; gap: 8px 12px; }
+  .card-actions { margin-left: 0; }
+  .login-form { max-width: none; flex-wrap: wrap; }
+  .login-form input { flex: 1 1 100%; }
+  .top-bar-right { flex-wrap: wrap; }
+  .modal-backdrop { padding: 12px; align-items: flex-start; }
+  .modal { margin-top: 12px; }
+}
+
+/* Touch screens: the lift-on-hover reads as a stuck state after a tap. */
+@media (hover: none) {
+  .card:hover { transform: none; box-shadow: var(--glass-shadow); }
+}

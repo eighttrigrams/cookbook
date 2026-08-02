@@ -1,0 +1,9 @@
+{:source-paths ["src/cljs"]
+ :dependencies [[reagent "2.0.1"]
+                [cljs-ajax "0.8.4"]]
+ :http {:port #shadow/env ["SHADOW_PORT" :as :int :default 9807]}
+ :builds {:app {:target :browser
+                :output-dir "resources/public/cookbook/js"
+                :asset-path "/js"
+                :modules {:main {:init-fn et.cb.ui.core/init}}
+                :devtools {:repl-pprint true}}}}

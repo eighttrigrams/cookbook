@@ -1,0 +1,166 @@
+.top-bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.brand { display: flex; align-items: baseline; gap: 8px; }
+.brand-mark { color: var(--accent); font-size: 1.4em; }
+.brand-name { font-size: 1.4em; font-weight: 600; letter-spacing: -0.02em; }
+.top-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+/* Mirrors tracker's toggle: a bare glyph, ☾ to go dark and ☀ to come back. */
+.dark-mode-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  font-size: 1.1em;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease, color 2s ease;
+}
+.dark-mode-toggle:hover {
+  background: var(--surface-subtle);
+  color: var(--text-primary);
+  transform: none;
+}
+
+button.secondary {
+  background: var(--glass-bg);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+}
+button.secondary:hover { background: var(--glass-bg-elevated); }
+button.secondary.danger { color: #ff3b30; }
+button:disabled { opacity: 0.45; cursor: default; transform: none; }
+
+.loading, .empty {
+  padding: 32px 0;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.login-form { max-width: 420px; }
+
+/* --------------------------------------------------------------------------
+   composing */
+
+.compose {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  margin-bottom: 20px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--glass-radius);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+}
+.compose button { align-self: flex-start; }
+
+textarea {
+  padding: 10px 14px;
+  border: 1px solid var(--input-border);
+  border-radius: 10px;
+  background: var(--glass-bg-subtle);
+  font-family: inherit;
+  font-size: 0.95em;
+  color: var(--text-primary);
+  resize: vertical;
+}
+textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(180, 83, 9, 0.18);
+}
+
+.search { width: 100%; margin-bottom: 16px; }
+
+/* --------------------------------------------------------------------------
+   the shelf of recipes */
+
+.card {
+  padding: 16px 18px;
+  margin-bottom: 14px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--glass-radius);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+}
+.card:hover { transform: translateY(-1px); }
+
+.card-header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  cursor: pointer;
+}
+.card-toggle { color: var(--accent); font-size: 0.9em; }
+.card-title { flex: 1; }
+.card-date {
+  color: var(--muted-text);
+  font-size: 0.8em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.card-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  font-size: 0.85em;
+}
+.card-actions { display: flex; gap: 8px; margin-left: auto; }
+.card-actions button { padding: 6px 12px; font-size: 0.9em; }
+
+/* --------------------------------------------------------------------------
+   the edit modal */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+.modal {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 460px;
+  max-height: 100%;
+  overflow-y: auto;
+  padding: 20px;
+  background: var(--glass-bg-elevated);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--glass-radius);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+}
+.modal-subtitle { color: var(--text-secondary); font-size: 0.85em; }
+.modal-actions { display: flex; gap: 8px; margin-top: 4px; }

@@ -1,0 +1,6 @@
+{:db {:type :sqlite-memory}
+ :port #long #or [#env PORT 3170]
+ :nrepl-port 7901
+ :dangerously-skip-logins? true
+ :shadow? true
+ :logfile "logs/cookbook.log"}
