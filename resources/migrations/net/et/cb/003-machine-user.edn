@@ -1,0 +1,16 @@
+{:up ["ALTER TABLE users ADD COLUMN is_machine_user INTEGER NOT NULL DEFAULT 0"
+      "ALTER TABLE users ADD COLUMN for_user_id INTEGER REFERENCES users(id)"
+      "ALTER TABLE users ADD COLUMN password_set_at DATETIME"
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_single_machine_user
+         ON users (is_machine_user) WHERE is_machine_user = 1"]
+ ;; The row goes first, while the flag that identifies it still exists. Dropping
+ ;; only the columns would leave `machine-user` behind as an ordinary human row,
+ ;; still holding its password — and a later re-migrate would then read it as a
+ ;; second *human* user, so its credential would mint an admin token. The one
+ ;; thing this migration made possible has to go away with it.
+ :down ["DELETE FROM users WHERE is_machine_user = 1"
+        "DROP INDEX IF EXISTS idx_users_single_machine_user"
+        "ALTER TABLE users DROP COLUMN password_set_at"
+        "ALTER TABLE users DROP COLUMN for_user_id"
+        "ALTER TABLE users DROP COLUMN is_machine_user"]
+ :transactions false}

@@ -49,8 +49,14 @@
 
 (defn get-user-from-request
   "Resolve the acting user. In prod, from the verified JWT. In dev with
-  skip-logins, defaults to the first user (or the nil-owner admin when there
-  are none), optionally overridden by an x-user-id header."
+  skip-logins, defaults to the first *human* user (or the nil-owner admin when
+  there are none), optionally overridden by an x-user-id header.
+
+  Human, not merely first: the machine user is a row in this table too, and in dev
+  it is usually the only one — the owner has no row at all. Taking the first row
+  of any kind would hand the dev owner the machine's user-id and empty his shelf,
+  which is the same class of bug as minting a machine token scoped to the
+  machine's own id."
   [req]
   (or (some-> (auth/extract-token req) auth/verify-token)
       (when (allow-skip-logins?)
@@ -58,10 +64,19 @@
           (if (or (nil? user-id-str) (= user-id-str "null"))
             (let [first-user (jdbc/execute-one! (db/get-conn (ensure-ds))
                                (sql/format {:select [:id] :from [:users]
+                                            :where [:= :is_machine_user 0]
                                             :order-by [[:id :asc]] :limit 1})
                                db/jdbc-opts)]
               {:user-id (:id first-user) :is-admin true})
             {:user-id (Integer/parseInt user-id-str) :is-admin false})))))
+
+(defn machine-caller?
+  "Whether this request carries a *machine* token. Only a token can say so — the
+  claim is put there by `auth/create-machine-token` at login — so a dev owner with
+  no token, whom `authenticated?` deliberately accepts, is never mistaken for
+  one."
+  [req]
+  (true? (:machine? (get-user-from-request req))))
 
 (defn get-user-id [req]
   (:user-id (get-user-from-request req)))
