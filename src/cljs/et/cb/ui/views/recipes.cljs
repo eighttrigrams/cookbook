@@ -14,9 +14,15 @@
 
   Publishing happens from the card, behind a confirmation, and only the owner
   sees the affordance. It is one way — the API has no unpublish — so a published
-  card loses its Publish button and wears a badge instead."
+  card loses its Publish button and wears a badge instead.
+
+  All three fields are markdown, but not the same markdown: the title and the
+  useful-when line are rendered inline, so they cannot grow a heading or a list
+  and break the card's layout, while the body gets the full parser and the code
+  highlighting. See `et.cb.ui.markdown`."
   (:require [reagent.core :as r]
             [clojure.string :as str]
+            [et.cb.ui.markdown :as markdown]
             [et.cb.ui.state :as state]))
 
 (defn- day [timestamp]
@@ -114,12 +120,16 @@
          [:button.secondary {:on-click state/stop-publishing} "Cancel"]]]])))
 
 (defn- card-body
-  "`detail` is nil until the fetch this expansion started comes back."
+  "`detail` is nil until the fetch this expansion started comes back.
+
+  The body is the one field that gets the full markdown parser, and the only one
+  that can carry a fenced code block — so the highlighter is only ever asked for
+  something a card has actually been expanded to see."
   [detail]
   (if detail
     (if (str/blank? (:description detail))
       [:div.card-body-empty "No body yet."]
-      [:div.card-body (:description detail)])
+      [:div.card-body [markdown/render (:description detail)]])
     [:div.card-body-loading "Loading…"]))
 
 (defn- card [{:keys [id title useful_when version published published_at modified_at]}
@@ -131,7 +141,7 @@
     [:div.card {:class (when published? "published")}
      [:div.card-header {:on-click #(state/toggle-open id)}
       [:span.card-toggle (if expanded? "▾" "▸")]
-      [:h2.card-title title]
+      [:h2.card-title [markdown/render-inline title]]
       (when (and logged-in? published?)
         [:span.published-badge {:title (str "Published " (day published_at)
                                             " — public, and one way")}
@@ -139,7 +149,7 @@
       [:span.version-badge {:title "Every edit makes a new version"} (str "v" version)]
       [:span.card-date (day modified_at)]]
      (when (seq useful_when)
-       [:div.card-useful-when useful_when])
+       [:div.card-useful-when [markdown/render-inline useful_when]])
      (when expanded?
        [card-body (get details id)])
      (when logged-in?

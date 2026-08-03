@@ -1,0 +1,169 @@
+/* Rendered markdown, lifted from treina and extended for the code blocks a
+   Recipe's body carries. The headings deliberately stay at body size so a
+   rendered block sits inside a card without shouting. */
+
+.markdown-content {
+  line-height: 1.55;
+  white-space: normal;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.markdown-content img,
+.markdown-content video,
+.markdown-content iframe {
+  max-width: 100%;
+  height: auto;
+}
+.markdown-content pre,
+.markdown-content table {
+  max-width: 100%;
+  overflow-x: auto;
+}
+.markdown-content p {
+  margin: 0 0 0.5em 0;
+}
+.markdown-content p:last-child {
+  margin-bottom: 0;
+}
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3 {
+  margin: 0.6em 0 0.3em 0;
+  font-size: 1em;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+.markdown-content h1:first-child,
+.markdown-content h2:first-child,
+.markdown-content h3:first-child {
+  margin-top: 0;
+}
+.markdown-content ul, .markdown-content ol {
+  margin: 0.25em 0;
+  padding-left: 1.5em;
+}
+.markdown-content li { margin: 0; }
+.markdown-content li p { margin: 0; }
+.markdown-content code {
+  background: var(--surface-subtle);
+  padding: 0.1em 0.3em;
+  border-radius: 3px;
+  font-family: 'SF Mono', SFMono-Regular, Menlo, Monaco, monospace;
+  font-size: 0.9em;
+}
+.markdown-content pre {
+  background: var(--surface-subtle);
+  padding: 0.75em;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 0.5em 0;
+}
+.markdown-content pre code {
+  background: none;
+  padding: 0;
+}
+.markdown-content a {
+  color: var(--accent);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+.markdown-content a:hover { text-decoration: underline; }
+.markdown-content strong { font-weight: 600; }
+.markdown-content blockquote {
+  border-left: 3px solid var(--border-color);
+  margin: 0.5em 0;
+  padding-left: 1em;
+  color: var(--text-secondary);
+}
+.markdown-content table {
+  border-collapse: collapse;
+  margin: 0.5em 0;
+}
+.markdown-content th,
+.markdown-content td {
+  border: 1px solid var(--border-color);
+  padding: 0.3em 0.6em;
+  text-align: left;
+}
+.markdown-content hr {
+  border: none;
+  border-top: 1px solid var(--border-color);
+  margin: 0.8em 0;
+}
+
+/* The title and the useful-when line are phrases holding a place in the card's
+   layout, not documents: they are parsed inline, so there is nothing
+   block-level in them to style, and they keep the line-height of the card
+   rather than the reading line-height of a body. */
+.markdown-inline { line-height: inherit; }
+
+/* Syntax colours for the highlighter.
+ *
+ * highlight.js emits plain classes and leaves the palette to the page. A stock
+ * theme .css would bring its own background and foreground and fight base.css's
+ * light/dark variables, so the tokens are themed here instead — warm hues, to
+ * sit with the amber-on-cream the rest of the app uses. They live beside their
+ * only consumer rather than in base.css, which owns the app's palette.
+ */
+:root {
+  --syntax-comment: #928374;
+  --syntax-keyword: #9d0006;
+  --syntax-name: #076678;
+  --syntax-title: #af3a03;
+  --syntax-symbol: #427b58;
+  --syntax-string: #79740e;
+  --syntax-literal: #8f3f71;
+}
+html.dark-mode {
+  --syntax-comment: #a89984;
+  --syntax-keyword: #fb4934;
+  --syntax-name: #83a598;
+  --syntax-title: #fe8019;
+  --syntax-symbol: #8ec07c;
+  --syntax-string: #b8bb26;
+  --syntax-literal: #d3869b;
+}
+
+.markdown-content .hljs-comment,
+.markdown-content .hljs-quote {
+  color: var(--syntax-comment);
+  font-style: italic;
+}
+.markdown-content .hljs-keyword,
+.markdown-content .hljs-selector-tag,
+.markdown-content .hljs-section {
+  color: var(--syntax-keyword);
+}
+.markdown-content .hljs-name,
+.markdown-content .hljs-built_in,
+.markdown-content .hljs-variable,
+.markdown-content .hljs-attr,
+.markdown-content .hljs-attribute {
+  color: var(--syntax-name);
+}
+.markdown-content .hljs-title,
+.markdown-content .hljs-class .hljs-title,
+.markdown-content .hljs-type {
+  color: var(--syntax-title);
+}
+.markdown-content .hljs-symbol,
+.markdown-content .hljs-meta,
+.markdown-content .hljs-selector-attr {
+  color: var(--syntax-symbol);
+}
+.markdown-content .hljs-string,
+.markdown-content .hljs-regexp,
+.markdown-content .hljs-addition {
+  color: var(--syntax-string);
+}
+.markdown-content .hljs-number,
+.markdown-content .hljs-literal,
+.markdown-content .hljs-character,
+.markdown-content .hljs-deletion {
+  color: var(--syntax-literal);
+}
+.markdown-content .hljs-emphasis { font-style: italic; }
+.markdown-content .hljs-strong { font-weight: 600; }
