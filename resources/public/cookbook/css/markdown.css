@@ -94,6 +94,15 @@
   margin: 0.8em 0;
 }
 
+/* In dark mode base.css's --border-color sits on almost exactly the tone the
+   card body already has, so a table's rules and a blockquote's bar disappear —
+   and the grid is most of what a table is for. */
+html.dark-mode .markdown-content th,
+html.dark-mode .markdown-content td,
+html.dark-mode .markdown-content blockquote {
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
 /* The title and the useful-when line are phrases holding a place in the card's
    layout, not documents: they are parsed inline, so there is nothing
    block-level in them to style, and they keep the line-height of the card
