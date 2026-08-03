@@ -45,7 +45,7 @@
   visitor all three fields: the collapse is about verbosity, the privacy
   boundary is the publish latch itself."
   [req]
-  (let [id (common/parse-int-opt (get-in req [:params :id]))
+  (let [id (common/recipe-id req)
         recipe (when id (db.recipe/get-recipe (common/ensure-ds) (read-scope req) id
                                               {:lean? (lean? req)}))]
     (if recipe
@@ -83,7 +83,7 @@
   [req]
   (let [ds (common/ensure-ds)
         user-id (common/get-user-id req)
-        id (common/parse-int-opt (get-in req [:params :id]))
+        id (common/recipe-id req)
         {:keys [title modified_at] :as body} (:body req)]
     (cond
       (nil? (when id (db.recipe/get-recipe ds user-id id)))
@@ -105,7 +105,7 @@
   history. 404 when the id matches nothing you own."
   [req]
   (let [user-id (common/get-user-id req)
-        id (common/parse-int-opt (get-in req [:params :id]))
+        id (common/recipe-id req)
         result (when id (db.recipe/delete-recipe (common/ensure-ds) user-id id))]
     (if (:success result)
       {:status 200 :body result}
@@ -122,7 +122,7 @@
   you own."
   [req]
   (let [user-id (common/get-user-id req)
-        id (common/parse-int-opt (get-in req [:params :id]))
+        id (common/recipe-id req)
         result (when id (db.recipe/publish-recipe (common/ensure-ds) user-id id))]
     (if result
       {:status 200 :body result}
@@ -139,7 +139,7 @@
   published or not. Publishing puts today's text in public, not every draft
   behind it."
   [req]
-  (let [id (common/parse-int-opt (get-in req [:params :id]))
+  (let [id (common/recipe-id req)
         result (when (and id (common/authenticated? req))
                  (db.recipe/list-versions (common/ensure-ds) (common/get-user-id req) id))]
     (if result

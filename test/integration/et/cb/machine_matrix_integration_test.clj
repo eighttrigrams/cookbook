@@ -183,6 +183,130 @@
             (is (true? unchanged?) "nothing may have changed in the table")))))))
 
 ;; ---------------------------------------------------------------------------
+;; how the id is spelt
+;;
+;; The table above is exhaustive over caller × state × operation and spells the id
+;; `(str id)` in every cell — and that was the one spelling the guard and the
+;; handler agreed on. The guard parsed the id off the raw `:path-info` with `\d+`
+;; while clout captures `[^/,;?]+` and compojure url-decodes it after matching, so
+;; `/%31%31` was no recipe at all to the guard and recipe 11 to the handler. All
+;; three machine refusals could be walked past by respelling the id, including the
+;; publish latch, which nothing in this app can undo.
+;;
+;; So the spelling of the id is an axis of the security surface, and it belongs in
+;; the table. The plain spelling stays in the list as a control: it is what makes
+;; these tests about the *disagreement* rather than about whether a machine can
+;; write at all.
+
+(defn- pct
+  "Every ASCII digit percent-encoded — `11` becomes `%31%31`. Built from the digits
+  rather than hardcoded, so each case is provably the recipe it just created."
+  [s]
+  (apply str (map #(str "%3" %) s)))
+
+(defn- arabic-indic
+  "The same digits as U+0660…U+0669. `Integer/parseInt` accepts these through
+  `Character/digit` and Java's `\\d` does not, so this spelling comes from the
+  handler's parse being lenient rather than from the path being encoded — a fix
+  that only url-decodes closes half of the hole and leaves this open."
+  [s]
+  (apply str (map #(char (+ 0x0660 (- (int %) (int \0)))) s)))
+
+(defn- spellings
+  "Every way of writing this recipe's id that still routes to this recipe. Keyed by
+  what makes each one different, because a failure naming `%2011` is unreadable."
+  [id]
+  (let [s (str id)]
+    (array-map
+      "plain"                  s
+      "fully encoded"          (pct s)
+      ;; the last digit only, not the first: encoding everything *after* the first
+      ;; digit is the plain id again for a one-digit id, and a spelling that
+      ;; silently collapses into the control tests nothing
+      "half encoded"           (let [cut (dec (count s))]
+                                 (str (subs s 0 cut) (pct (subs s cut))))
+      "leading plus"           (str "+" s)
+      "encoded leading plus"   (str "%2B" s)
+      "trailing encoded space" (str s "%20")
+      "leading encoded space"  (str "%20" s)
+      "Arabic-Indic digits"    (arabic-indic s)
+      "encoded leading zero"   (str (pct "0") (pct s)))))
+
+(def ^:private spelling-labels (vec (keys (spellings 11))))
+
+;; Edit and delete are asked of a **published** recipe, which is the state the rule
+;; is about. Publish is asked of an unpublished one as well, and that is the case
+;; that matters most: publishing an already-published recipe is a 200 no-op that
+;; changes no row, so only the unpublished case can tell a refusal from a
+;; permitted write.
+(def ^:private spelling-cases
+  [{:op :edit    :state :published}
+   {:op :delete  :state :published}
+   {:op :publish :state :unpublished}
+   {:op :publish :state :published}])
+
+(defn- machine-mutation
+  "One machine mutation of recipe `id`, naming it as `spelling`."
+  [op id spelling]
+  (let [path (str "/api/recipes/" spelling)]
+    (case op
+      :edit    (request :machine :put path {:title "Rewritten by a machine"})
+      :delete  (request :machine :delete path)
+      :publish (request :machine :post (str path "/publish")))))
+
+(deftest a-machine-is-refused-however-the-recipe-id-is-spelt
+  (doseq [{:keys [op state]} spelling-cases
+          label spelling-labels]
+    (testing (str "machine / " (name state) " recipe / " (name op)
+                  " / id spelt: " label)
+      (let [id (owner-recipe! state (str (name op) " " label))
+            spelling (get (spellings id) label)
+            before (row id)
+            resp (machine-mutation op id spelling)]
+        (is (= 403 (:status resp))
+            (str "a machine may not " (name op) " this recipe, however it is named"))
+        ;; the row, not the status: this is the half that catches a guard which
+        ;; answers 403 for the plain id and lets the encoded one through
+        (is (= before (row id))
+            "nothing may have changed in the table")))))
+
+(deftest every-spelling-names-the-same-recipe
+  ;; Without this the refusals above would also pass if a "fix" made the *router*
+  ;; reject the encoded spellings — a 403 and a 404 are both not-a-write. What has
+  ;; to hold is that the router still resolves every spelling to this row and the
+  ;; guard refuses it anyway: the two agreeing, rather than both failing.
+  (let [id (owner-recipe! :published "Spelt every way")]
+    (doseq [label spelling-labels]
+      (testing (str "the owner reads recipe " id " as " label)
+        (let [resp (request :owner :get (str "/api/recipes/" (get (spellings id) label)))]
+          (is (= 200 (:status resp)) "the router has to resolve this spelling")
+          (is (= id (:id (:body resp)))
+              "and resolve it to the same row, or the refusal above proves nothing"))))))
+
+(deftest the-machine-rules-hold-through-the-production-chain
+  ;; The bypass was not dev-only, and this is why: the prod chain's one addition is
+  ;; `wrap-auth`, a machine token is a *valid* token, so it passes straight through
+  ;; and the recipe rules are the only wall left standing. Assert them where they
+  ;; are the only wall — the rest of this file runs a chain with no `wrap-auth` at
+  ;; all, which is the same reason the guard lives in `app-routes`.
+  (let [id (owner-recipe! :published "Signed, and reachable from production")
+        before (row id)]
+    (h/with-prod-app
+      (doseq [label ["plain" "fully encoded" "Arabic-Indic digits"]]
+        (let [path (str "/api/recipes/" (get (spellings id) label))]
+          (testing (str "a machine gets nowhere with the id spelt: " label)
+            (is (= 403 (:status (request :machine :put path {:title "Edited through prod"}))))
+            (is (= 403 (:status (request :machine :post (str path "/publish")))))
+            (is (= 403 (:status (request :machine :delete path)))))))
+      (testing "and none of that landed"
+        (is (= before (row id))))
+      (testing "while the owner's own token goes through the same chain — so those
+                403s are the recipe rules answering, not wrap-auth refusing everyone"
+        (is (= 200 (:status (h/API :put (str "/api/recipes/" id)
+                                   {:token (h/token-for h/*user-id*)
+                                    :body {:title "Edited by the owner"}}))))))))
+
+;; ---------------------------------------------------------------------------
 ;; the gate that must not come back
 
 (deftest a-machine-write-lands-because-there-is-no-recording-gate

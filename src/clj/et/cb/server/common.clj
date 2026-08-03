@@ -103,3 +103,20 @@
   (when (and s (not (str/blank? (str s))))
     (try (Integer/parseInt (str/trim (str s)))
          (catch NumberFormatException _ nil))))
+
+(defn recipe-id
+  "The recipe a request names, or nil when it names none.
+
+  **The one place that question is answered.** Every recipe handler calls this and
+  so does `wrap-machine-recipe-rules`, deliberately: a single row has many
+  spellings in the path, and the two must not resolve them differently.
+
+  Two things make hand-rolling a second answer wrong. compojure captures `:id`
+  with clout's `[^/,;?]+` and url-decodes it *after* matching, so `/11`, `/%31%31`
+  and `/1%31` are one recipe to the router. And `Integer/parseInt` then accepts
+  more than `\\d+` does — a leading `+`, and non-ASCII decimal digits via
+  `Character/digit` — so `+11` and `١١` are that recipe too. A guard that
+  disagreed with its handler about which row a path named was a guard that could be
+  walked past by respelling the id."
+  [req]
+  (parse-int-opt (get-in req [:params :id])))

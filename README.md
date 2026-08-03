@@ -69,8 +69,10 @@ takes it out of the public listing, history and all, which is un-latching by
 demolition. And a machine may not publish at all, published or not, because the
 latch is irreversible — a machine that could set it could make private content
 permanently public *and* freeze the Recipe out of its own reach. Both rules live
-in one place, `wrap-recipe-write-guard`, which every mutating recipe route passes
-through. There is no switch that lifts either.
+in one place, `wrap-machine-recipe-rules`, which every mutating recipe route
+passes through — installed with compojure's `wrap-routes` so that it runs *after*
+the route has matched, and therefore reads the same recipe id the handler does
+rather than parsing one off the raw path. There is no switch that lifts either.
 
 ### What a visitor sees
 

@@ -9,7 +9,8 @@
             [et.cb.middleware.rate-limit :as rate-limit :refer [wrap-rate-limit]]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [compojure.core :refer [defroutes routes GET POST PUT DELETE context]]
+            [compojure.core :refer [defroutes routes wrap-routes
+                                    GET POST PUT DELETE context]]
             [compojure.route :as route]
             [ring.middleware.json :refer [wrap-json-response wrap-json-body]]
             [ring.middleware.params :refer [wrap-params]]
@@ -94,27 +95,23 @@
 (defn- mutating-request? [req]
   (#{:post :put :delete} (:request-method req)))
 
-(def ^:private recipe-id-re
-  "The guard runs *before* compojure matches a route, so `:params` is still empty
-  and the recipe id has to come off the path. Inside the `/api/recipes` context
-  `:path-info` is the remainder — `/7`, `/7/publish`, or `/` for the collection —
-  which is also why this keeps working if the app is ever mounted under a prefix."
-  #"^/(\d+)(?:/.*)?$")
+(def ^:private publish-route
+  "The path of the one route that sets the latch, named once and used twice: the
+  route table below is built from it and `publish-request?` compares against it, so
+  the guard cannot come to disagree with the router about which request publishes.
+  compojure accepts a symbol here — `compile-route` compiles a non-literal path at
+  runtime — and records the route it matched in `:compojure/route` as
+  `[method source]`, where `source` is the string the route was compiled from."
+  "/:id/publish")
 
-(defn- recipe-path [req]
-  (or (:path-info req)
-      (some-> (:uri req) (str/replace #"^/api/recipes" ""))))
-
-(defn- target-recipe-id
-  "The recipe this request names, or nil for one that names none. The only
-  mutating recipe route without an id is create, and a create cannot target a
-  published recipe because it makes a new one."
+(defn- publish-request?
+  "Whether compojure matched *the* publish route, asked of compojure rather than of
+  the path. There is no regex here on purpose: `/11/publish`, `/%31%31/publish` and
+  `/+11/publish` are all that route, and the router is the only thing that knows it
+  in one answer. A path that matches no route never reaches this middleware at all,
+  so a publish spelt in a way clout rejects is a 404 before it is a question."
   [req]
-  (when-let [[_ id] (some->> (recipe-path req) (re-find recipe-id-re))]
-    (parse-long id)))
-
-(defn- publish-request? [req]
-  (some? (re-matches #"^/\d+/publish/?$" (or (recipe-path req) ""))))
+  (= [:post publish-route] (:compojure/route req)))
 
 (defn- published-target?
   "Whether the named recipe is published, asked in the caller's own scope. A
@@ -141,13 +138,26 @@
   `get-user-id` is legitimately nil, and that is how the dev owner is
   represented. Gating on a token instead would refuse every dev write.
 
-  It is **not** the machine-write gate this app must not have (see below). That
-  gate would refuse a *credentialled* agent whatever it was writing; the machine
-  rules here refuse exactly two things, and an agent still writes everything else
-  unsupervised.
+  **This half needs no recipe id, which is why it stays out here, in front of the
+  router.** It therefore also answers for a mutating path that matches *no* route,
+  and everything at or after this form inside the context is covered. The machine
+  rules are the half that does need an id, and for that reason they cannot be
+  answered here — see `wrap-machine-recipe-rules`.
 
-  **The machine rules.** A published Recipe is the owner's: a machine caller may
-  not change one, and may not publish at all. So, for a machine token only:
+  It sits inside `app-routes` rather than in the middleware chain, so every
+  assembly of the app gets it — `app`, `build-app` for plurama, and the
+  integration tests' own chain alike. That last one is the reason: the tests build
+  their own chain without `wrap-auth`, so a guard in the chain would be invisible
+  to them."
+  [handler]
+  (fn [req]
+    (if (and (mutating-request? req) (not (common/authenticated? req)))
+      {:status 401 :body {:error "Authentication required"}}
+      (handler req))))
+
+(defn- wrap-machine-recipe-rules
+  "A published Recipe is the owner's: a machine caller may not change one, and may
+  not publish at all. So, for a machine token only:
 
   - any mutation naming a **published** recipe → 403, which covers delete as well
     as edit, because deleting a published recipe is un-latching by demolition and
@@ -160,29 +170,35 @@
   `authenticated?` deliberately accepts — is never mistaken for a machine. There is
   no switch that lifts either rule.
 
-  It wraps the whole `/api/recipes` context rather than each handler, and because
-  it answers *before* compojure matches a route, everything at or after this form
-  inside the context is covered — including a path that no route matches. A route
-  inserted *above* this form in the context would not be: put new recipe routes
-  inside the `(routes …)` form it wraps.
+  It is **not** the machine-write gate this app must not have (see the comment above
+  the middleware chain). That gate would refuse a *credentialled* agent whatever it
+  was writing; these two rules refuse exactly two things, and an agent still writes
+  everything else unsupervised.
 
-  It sits inside `app-routes` rather than in the middleware chain, so every
-  assembly of the app gets it — `app`, `build-app` for plurama, and the
-  integration tests' own chain alike. That last one is the reason: the tests build
-  their own chain without `wrap-auth`, so a guard in the chain would be invisible
-  to them."
+  **Installed with `compojure.core/wrap-routes`, which runs it after the route has
+  matched, and that is load-bearing rather than incidental.** Both rules have to
+  know which recipe the request names, and in front of the router there is no
+  reliable answer: `:path-info` is whatever the client wrote, undecoded, while the
+  handler is given an `:id` clout captured and compojure url-decoded. A guard that
+  parsed the raw path resolved `/11` and *not* `/%31%31`, `/1%31`, `/+11` or `/١١`,
+  which are the same recipe to the handler — so a machine could edit, delete and
+  publish any published Recipe by respelling the id. The fix is not a better parse:
+  the id comes from `common/recipe-id`, the one function the handlers themselves
+  call, so there is no second answer to disagree with.
+
+  Wrapping the whole `(routes …)` form rather than each route keeps the property
+  the pre-routing guard had: every route inside is covered, including one added
+  later. A path that matches nothing never gets here, which is right — there is no
+  recipe to protect — and `wrap-recipe-write-guard` outside still answers those
+  with a 401."
   [handler]
   (fn [req]
-    (let [mutating? (mutating-request? req)
-          machine? (and mutating? (common/machine-caller? req))]
+    (let [machine? (and (mutating-request? req) (common/machine-caller? req))]
       (cond
-        (and mutating? (not (common/authenticated? req)))
-        {:status 401 :body {:error "Authentication required"}}
-
         (and machine? (publish-request? req))
         {:status 403 :body {:error "Publishing is the owner's: a machine caller cannot set the publish latch"}}
 
-        (and machine? (when-let [id (target-recipe-id req)] (published-target? req id)))
+        (and machine? (when-let [id (common/recipe-id req)] (published-target? req id)))
         {:status 403 :body {:error "This Recipe is published, and a published Recipe is the owner's: a machine caller cannot change it"}}
 
         :else
@@ -204,16 +220,23 @@
       (GET "/"         [] user-handler/machine-user-handler)
       (PUT "/password" [] user-handler/set-machine-user-password-handler))
 
+    ;; Two guards, because they answer two different questions. The 401 goes in
+    ;; front of the router, where it needs nothing from the request but its
+    ;; method. The machine rules go behind it via `wrap-routes`, because they need
+    ;; the recipe id and only the router knows that. Put new recipe routes inside
+    ;; the `(routes …)` form: that is what both guards cover.
     (context "/recipes" []
       (wrap-recipe-write-guard
-        (routes
-          (GET    "/"             [] recipe-handler/list-recipes-handler)
-          (POST   "/"             [] recipe-handler/add-recipe-handler)
-          (GET    "/:id/versions" [] recipe-handler/recipe-versions-handler)
-          (POST   "/:id/publish"  [] recipe-handler/publish-recipe-handler)
-          (GET    "/:id"          [] recipe-handler/get-recipe-handler)
-          (PUT    "/:id"          [] recipe-handler/update-recipe-handler)
-          (DELETE "/:id"          [] recipe-handler/delete-recipe-handler))))
+        (wrap-routes
+          (routes
+            (GET    "/"             [] recipe-handler/list-recipes-handler)
+            (POST   "/"             [] recipe-handler/add-recipe-handler)
+            (GET    "/:id/versions" [] recipe-handler/recipe-versions-handler)
+            (POST   publish-route   [] recipe-handler/publish-recipe-handler)
+            (GET    "/:id"          [] recipe-handler/get-recipe-handler)
+            (PUT    "/:id"          [] recipe-handler/update-recipe-handler)
+            (DELETE "/:id"          [] recipe-handler/delete-recipe-handler))
+          wrap-machine-recipe-rules)))
 
     (context "/test" []
       (POST "/reset" [] reset-test-db-handler))))
