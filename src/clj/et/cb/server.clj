@@ -218,7 +218,16 @@
   the pre-routing guard had: every route inside is covered, including one added
   later. A path that matches nothing never gets here, which is right — there is no
   recipe to protect — and `wrap-recipe-write-guard` outside still answers those
-  with a 401."
+  with a 401.
+
+  **A known window, recorded rather than closed.** `published-target?` runs its own
+  `SELECT`, outside the transaction the handler then writes in. So a machine `PUT`
+  that starts while a recipe is unpublished and lands after the owner has published
+  it is allowed here and applied there. The window is one query plus a dispatch,
+  and two concurrent writes to this SQLite database mostly fail with a 500 before
+  either finishes, so a lock would be paying for a race the database does not
+  currently let you win. On a database that tolerates concurrent writers it becomes
+  real, and the check has to move inside the write transaction."
   [handler]
   (fn [req]
     (let [machine? (and (mutating-request? req) (common/machine-caller? req))]
