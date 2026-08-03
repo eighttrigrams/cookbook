@@ -87,19 +87,31 @@
 
 (defn- publish-modal
   "The latch is one-way: nothing in the API takes it back off, so this asks
-  before it fires rather than offering an undo afterwards."
-  [{:keys [id title]}]
-  [:div.modal-backdrop {:on-click state/stop-publishing}
-   [:div.modal {:on-click #(.stopPropagation %)}
-    [:h2 "Publish this recipe?"]
-    [:div.modal-subtitle title]
-    [:p.modal-note
-     "It becomes readable by anyone who opens Cookbook, and you have put your
-      name to it. There is no unpublish."]
-    [:div.modal-actions
-     [:button.publish-confirm {:on-click #(state/publish-recipe id state/stop-publishing)}
-      "Publish"]
-     [:button.secondary {:on-click state/stop-publishing} "Cancel"]]]])
+  before it fires rather than offering an undo afterwards.
+
+  The confirm button goes dead on the first click. Only the response callback
+  closes this dialog — that is deliberate, so a failed publish can put its error
+  banner somewhere reachable — which leaves the button live for the whole round
+  trip unless something takes it out. Two quick clicks would otherwise send two
+  POSTs, and the second one loses a write race server-side: the card would gain
+  its published badge at the same moment the banner said the publish failed."
+  [_recipe]
+  (let [sending? (r/atom false)]
+    (fn [{:keys [id title]}]
+      [:div.modal-backdrop {:on-click state/stop-publishing}
+       [:div.modal {:on-click #(.stopPropagation %)}
+        [:h2 "Publish this recipe?"]
+        [:div.modal-subtitle title]
+        [:p.modal-note
+         "It becomes readable by anyone who opens Cookbook, and you have put your
+          name to it. There is no unpublish."]
+        [:div.modal-actions
+         [:button.publish-confirm
+          {:disabled @sending?
+           :on-click #(do (reset! sending? true)
+                          (state/publish-recipe id state/stop-publishing))}
+          (if @sending? "Publishing…" "Publish")]
+         [:button.secondary {:on-click state/stop-publishing} "Cancel"]]]])))
 
 (defn- card-body
   "`detail` is nil until the fetch this expansion started comes back."
