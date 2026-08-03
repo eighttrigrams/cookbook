@@ -4,6 +4,7 @@
             [et.cb.server.common :as common]
             [et.cb.server.user-handler :as user-handler]
             [et.cb.server.recipe-handler :as recipe-handler]
+            [et.cb.db.recipe :as db.recipe]
             [et.cb.auth :as auth]
             [et.cb.middleware.rate-limit :as rate-limit :refer [wrap-rate-limit]]
             [clojure.java.io :as io]
@@ -93,6 +94,36 @@
 (defn- mutating-request? [req]
   (#{:post :put :delete} (:request-method req)))
 
+(def ^:private recipe-id-re
+  "The guard runs *before* compojure matches a route, so `:params` is still empty
+  and the recipe id has to come off the path. Inside the `/api/recipes` context
+  `:path-info` is the remainder — `/7`, `/7/publish`, or `/` for the collection —
+  which is also why this keeps working if the app is ever mounted under a prefix."
+  #"^/(\d+)(?:/.*)?$")
+
+(defn- recipe-path [req]
+  (or (:path-info req)
+      (some-> (:uri req) (str/replace #"^/api/recipes" ""))))
+
+(defn- target-recipe-id
+  "The recipe this request names, or nil for one that names none. The only
+  mutating recipe route without an id is create, and a create cannot target a
+  published recipe because it makes a new one."
+  [req]
+  (when-let [[_ id] (some->> (recipe-path req) (re-find recipe-id-re))]
+    (parse-long id)))
+
+(defn- publish-request? [req]
+  (some? (re-matches #"^/\d+/publish/?$" (or (recipe-path req) ""))))
+
+(defn- published-target?
+  "Whether the named recipe is published, asked in the caller's own scope. A
+  recipe the caller cannot see answers nil here, so what comes back is the
+  handler's 404 rather than a 403 that would confirm the row exists."
+  [req id]
+  (= 1 (:published (db.recipe/get-recipe (common/ensure-ds)
+                                         (common/get-user-id req) id))))
+
 (defn- wrap-recipe-write-guard
   "Refuse a mutating recipe request from a caller nobody can identify.
 
@@ -111,19 +142,51 @@
   represented. Gating on a token instead would refuse every dev write.
 
   It is **not** the machine-write gate this app must not have (see below). That
-  gate would refuse a *credentialled* agent; this refuses a caller with no
-  credentials at all. An agent holding a token still writes unsupervised.
+  gate would refuse a *credentialled* agent whatever it was writing; the machine
+  rules here refuse exactly two things, and an agent still writes everything else
+  unsupervised.
 
-  It wraps the whole `/api/recipes` context rather than each handler, so a route
-  added there later is covered by construction, and it sits inside `app-routes`
-  rather than in the middleware chain, so every assembly of the app gets it —
-  `app`, `build-app` for plurama, and the integration tests' own chain alike."
+  **The machine rules.** A published Recipe is the owner's: a machine caller may
+  not change one, and may not publish at all. So, for a machine token only:
+
+  - any mutation naming a **published** recipe → 403, which covers delete as well
+    as edit, because deleting a published recipe is un-latching by demolition and
+    leaving it open would be a hole in the same wall;
+  - any **publish** → 403, published or not, because the latch is irreversible and
+    a machine that could set it could make private content permanently public and
+    freeze the recipe out of its own reach.
+
+  Both read the token's `:machine?` claim, so a dev owner with no token — whom
+  `authenticated?` deliberately accepts — is never mistaken for a machine. There is
+  no switch that lifts either rule.
+
+  It wraps the whole `/api/recipes` context rather than each handler, and because
+  it answers *before* compojure matches a route, everything at or after this form
+  inside the context is covered — including a path that no route matches. A route
+  inserted *above* this form in the context would not be: put new recipe routes
+  inside the `(routes …)` form it wraps.
+
+  It sits inside `app-routes` rather than in the middleware chain, so every
+  assembly of the app gets it — `app`, `build-app` for plurama, and the
+  integration tests' own chain alike. That last one is the reason: the tests build
+  their own chain without `wrap-auth`, so a guard in the chain would be invisible
+  to them."
   [handler]
   (fn [req]
-    (if (and (mutating-request? req)
-             (not (common/authenticated? req)))
-      {:status 401 :body {:error "Authentication required"}}
-      (handler req))))
+    (let [mutating? (mutating-request? req)
+          machine? (and mutating? (common/machine-caller? req))]
+      (cond
+        (and mutating? (not (common/authenticated? req)))
+        {:status 401 :body {:error "Authentication required"}}
+
+        (and machine? (publish-request? req))
+        {:status 403 :body {:error "Publishing is the owner's: a machine caller cannot set the publish latch"}}
+
+        (and machine? (when-let [id (target-recipe-id req)] (published-target? req id)))
+        {:status 403 :body {:error "This Recipe is published, and a published Recipe is the owner's: a machine caller cannot change it"}}
+
+        :else
+        (handler req)))))
 
 (defroutes api-routes
   (context "/api" []

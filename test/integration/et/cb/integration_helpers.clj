@@ -73,6 +73,14 @@
 (defn token-for [user-id]
   (auth/create-token user-id "test-user" true))
 
+(defn machine-token-for
+  "A machine token exactly as `login-handler` mints one: the token's `:user-id` is
+  the **owner's**, not the machine row's, because that resolution happens once at
+  mint time. Pass the owner's id — a test that passed the machine row's id would
+  be testing a token the app never issues."
+  [owner-id]
+  (auth/create-machine-token owner-id "machine-user"))
+
 (defn- build-request [method path {:keys [body token anonymous? as-user]}]
   (cond-> (mock/request method path)
     token (mock/header "Authorization" (str "Bearer " token))
