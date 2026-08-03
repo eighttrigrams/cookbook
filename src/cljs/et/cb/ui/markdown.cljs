@@ -60,11 +60,20 @@
 (defn- configure!
   "Clojure first — `clj` and `edn` come with it as aliases — then bash, which is
   what the ops recipes are full of. Anything else falls back to an unhighlighted
-  block, which is the honest rendering of a language this bundle cannot read."
+  block, which is the honest rendering of a language this bundle cannot read.
+
+  `:breaks true` because of what was already written here. Before anything
+  rendered markdown, a body's newlines survived on a `pre-wrap` card, so the
+  Recipes in the database use one line per step — and under CommonMark, where a
+  single newline is just a space, those turn into one reflowed paragraph. That
+  would be this change quietly rewriting the owner's existing bodies. An agent
+  writing terse steps has the same habit, so honouring the newline is the rule
+  that matches what authors here actually type."
   []
   (.registerLanguage hljs "clojure" hljs-clojure)
   (.registerLanguage hljs "bash" hljs-bash)
-  (.use marked #js {:renderer #js {:code render-code}}))
+  (.use marked #js {:breaks true
+                    :renderer #js {:code render-code}}))
 
 ;; Once, not once per hot reload: `marked.use` stacks renderers rather than
 ;; replacing them.
