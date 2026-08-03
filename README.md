@@ -30,6 +30,22 @@ ownership: it makes a Recipe public *and* freezes it against machine mutation,
 in one irreversible step. There is no unpublish, because un-latching would hand
 a machine back the right to rewrite something the owner had signed.
 
+The visibility half of that is built: `POST /api/recipes/:id/publish`, and
+anonymous visitors who see published Recipes only. The machine half — who may
+*write* a published Recipe — is a later stage; there are no machine users yet.
+
+### What a visitor sees
+
+Recipes are **private by default** and a visitor is shown the published ones,
+whoever owns them. An unpublished Recipe is *absent* rather than redacted: not
+in the listing, no title and no id, and asking for it by id gives the same 404
+as an id that never existed. The version history is the owner's — a visitor
+gets a 404 there whether or not the Recipe is published, because the states
+behind a published Recipe were never published themselves.
+
+The lean rule applies to a visitor unchanged, `?detail=full` and all: the
+collapse is about verbosity, the privacy boundary is the latch.
+
 ## Recipes
 
 A Recipe has three fields, and the split between them is a retrieval index, not
@@ -44,6 +60,10 @@ So **lean is the default**, in the API and in the UI alike: a listing and a plai
 `GET` carry no `description` key at all, `?detail=full` adds it, and expanding a
 card in the browser goes and fetches it. Recipes are **fully versioned** — every
 edit that changes something archives the outgoing state and bumps the version.
+
+A Recipe is private when created and stays that way until the owner publishes
+it from its card, behind a confirmation because the step is one way. A published
+card wears a badge and loses its Publish button.
 
 All three fields are meant to be markdown, with clojure code blocks highlighted
 in the body. **That is not built yet**: it needs `marked`, `highlight.js` and
@@ -111,6 +131,12 @@ are the interface, not decoration.
 - `DELETE /api/recipes/:id` — the recipe and its whole history.
 - `GET /api/recipes/:id/versions` — every version, newest first, each with all
   three fields and its `created_at`. The newest carries `current: true`.
+  Owner-only.
+- `POST /api/recipes/:id/publish` — set the latch. **Idempotent**: publishing
+  something already published is a 200 no-op and does not move `published_at`,
+  because the first publish is the fact being recorded. Not a content change —
+  no version bump, no history row, and `modified_at` stays where it was. There
+  is no unpublish route, deliberately.
 
 ### Versioning
 
