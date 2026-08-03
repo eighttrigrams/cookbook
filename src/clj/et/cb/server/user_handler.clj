@@ -22,16 +22,31 @@
   the owner's. `db/user-id-where-clause` is then already correct everywhere, and
   no future handler can forget a resolution step it never has to do.
 
+  **A `for_user_id` of NULL falls back to the first human user**, which is the
+  same rule dev's skip-logins already resolves the owner by. It is NULL for every
+  machine user created in dev, because the ⚙ panel stores the caller's id and the
+  dev owner has no `users` row to have an id — correct when it is written, and
+  silently wrong the moment a human row appears (a local prod-mode run against the
+  dev database seeds `admin` at startup, say). Without the fallback the machine
+  would keep acting as the nil owner: an empty shelf again, and every row it wrote
+  owned by nobody and 404 to the one person meant to read it. Resolving it here
+  rather than repairing the row keeps the single resolution point — a stored value
+  can go stale, and nothing prompts the password reset that would rewrite it.
+
   It also reads `is-admin` off the row instead of assuming it: the machine is not
   an admin, and saying otherwise would hand an unsupervised writer the owner's
   authority as well as his scope."
   [req]
-  (let [{:keys [username password]} (:body req)
-        user (db.user/verify-user (common/ensure-ds) username password)]
+  (let [ds (common/ensure-ds)
+        {:keys [username password]} (:body req)
+        user (db.user/verify-user ds username password)]
     (if user
       (let [machine? (= 1 (:is_machine_user user))
-            ;; the scope the token acts in — the owner's rows, never the machine's own
-            acting-id (if machine? (:for_user_id user) (:id user))]
+            ;; the scope the token acts in — the owner's rows, never the machine's
+            ;; own, and never nobody's
+            acting-id (if machine?
+                        (or (:for_user_id user) (:id (db.user/first-human-user ds)))
+                        (:id user))]
         {:status 200
          :body {:token (if machine?
                          (auth/create-machine-token acting-id (:username user))

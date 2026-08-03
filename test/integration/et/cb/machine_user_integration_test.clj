@@ -139,6 +139,52 @@
         (is (= #{id} (set (map :id (:body listed))))
             "an empty shelf here means the machine row was mistaken for the owner")))))
 
+(defn- recipe-user-id [id]
+  (:user_id (jdbc/execute-one! (db/get-conn h/*ds*)
+              (sql/format {:select [:user_id] :from [:recipes] :where [:= :id id]})
+              db/jdbc-opts)))
+
+(deftest a-machine-minted-with-no-owner-follows-the-owner-who-appears
+  ;; The other direction of the same bug, and the one dev actually produces. The ⚙
+  ;; panel stores the *caller's* id as `for_user_id`, and in dev the owner has no
+  ;; `users` row, so it stores NULL — correct while he is the nil owner. Then a
+  ;; human row appears (a local prod-mode run against the dev database seeds
+  ;; `admin` at startup) and nothing repairs the machine's row: it would keep
+  ;; acting as the nil owner, reading an empty shelf and writing rows owned by
+  ;; nobody, which the owner is then the one person who cannot open.
+  (let [{owned :id} (:body (POST-json "/api/recipes" {:title "The owner's recipe"}))]
+    ;; dev's shape: no human row at all, so the panel has no owner id to store
+    (sql-exec! {:delete-from :users :where [:= :is_machine_user 0]})
+    (set-password! "machine-secret" {:anonymous? true})
+    (testing "the row really is stored with no owner — this is what dev writes"
+      (is (some? (machine-row)))
+      (is (nil? (:for_user_id (machine-row)))))
+
+    (let [human (:id (db.user/create-user h/*ds* "admin" "adminpass"))]
+      (sql-exec! {:update :recipes :set {:user_id human} :where [:= :id owned]})
+      (let [{:keys [token user]} (:body (login "machine-user" "machine-secret"))]
+        (testing "the token is minted in that owner's scope rather than nobody's"
+          (is (= human (:id user)))
+          (is (true? (:is-machine user))))
+
+        (testing "so the shelf it reads is his, and not empty"
+          (let [listed (h/API :get "/api/recipes" {:token token})]
+            (is (= 200 (:status listed)))
+            (is (seq (:body listed)) "an empty shelf here is the bug this test exists for")
+            (is (= #{owned} (set (map :id (:body listed)))))))
+
+        (testing "and what it writes belongs to the owner, who can open it"
+          (let [{created :id} (:body (h/API :post "/api/recipes"
+                                            {:token token :body {:title "By the agent"}}))]
+            (is (= human (recipe-user-id created))
+                "a nil here is a row owned by nobody — invisible to the owner")
+            (is (= 200 (:status (h/API :get (str "/api/recipes/" created)
+                                       {:as-user human}))))))
+
+        (testing "and the stored NULL is still NULL — the resolution follows the
+                  owner, rather than the row being quietly rewritten"
+          (is (nil? (:for_user_id (machine-row)))))))))
+
 (deftest a-human-login-is-unchanged
   (let [resp (login "test-user" "testpass")
         {:keys [token user]} (:body resp)]

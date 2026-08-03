@@ -81,8 +81,14 @@
 
   `for-user-id` is the **owner's** id, and it is what lets the machine's token be
   minted in the owner's scope (see `login-handler`). It is re-asserted on a reset,
-  so a row created in dev — where the owner has no `users` row at all and this is
-  legitimately nil — starts pointing at the real owner as soon as there is one.
+  so resetting the password repoints a row at whoever the owner is by then.
+
+  In dev it is legitimately **nil**: the owner has no `users` row there, so there
+  is no id to store. That does *not* fix itself. Nothing here rewrites the row when
+  a human user later appears, and nothing prompts the reset that would — so a nil
+  is not read as 'nobody' at the far end either. `login-handler` falls back to the
+  first human user when it mints the token, which is what makes a row stored with
+  nil follow the owner rather than freeze.
 
   At most one such row can exist, and that is enforced by a partial unique index
   in migration 003 rather than only here: a uniqueness rule that lives in a
