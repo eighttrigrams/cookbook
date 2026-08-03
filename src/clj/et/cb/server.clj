@@ -24,9 +24,29 @@
     (try (Integer/parseInt v) (catch Exception _ default))
     default))
 
-(defn- reset-test-db-handler [_]
-  (if (common/prod-mode?)
+(defn- reset-test-db-handler
+  "Drops every recipe and its whole version history. Dev only, and the owner's
+  alone.
+
+  It is a sibling of `/api/recipes` and so outside both recipe guards, which is
+  how it came to be the one destructive route in this app with no caller check at
+  all: a machine token refused an edit and a delete on a published Recipe could
+  wipe the entire table, published rows and history together, in one call — and so
+  could a caller with no credentials. `prod-mode?` bounded the damage to a dev
+  database, which is exactly where the owner's own Recipes live.
+
+  So it asks `common/owner-caller?`, the same question the machine-user routes
+  ask. Being outside the recipe guards means it has to ask for itself; nothing
+  about being a test fixture makes it exempt."
+  [req]
+  (cond
+    (common/prod-mode?)
     {:status 403 :body {:error "Not available in production"}}
+
+    (not (common/owner-caller? req))
+    {:status 403 :body {:error "Only the owner can reset the database"}}
+
+    :else
     (do (db/reset-all-data! (common/ensure-ds))
         (rate-limit/reset-rate-limit!)
         {:status 200 :body {:success true}})))

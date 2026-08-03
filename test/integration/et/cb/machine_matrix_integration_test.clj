@@ -307,6 +307,45 @@
                                     :body {:title "Edited by the owner"}}))))))))
 
 ;; ---------------------------------------------------------------------------
+;; the destructive route that is not a recipe route
+;;
+;; `POST /api/test/reset` drops every recipe and all of its history. It is a
+;; sibling of `/api/recipes`, so it sits outside both recipe guards and had no
+;; caller check of its own: a machine token refused an edit and a delete on a
+;; published Recipe seconds earlier could wipe the whole table with one call, and
+;; so could a caller carrying nothing at all.
+;;
+;; It is asserted in this file, which is otherwise about Recipes, because this file
+;; claims to be the whole security surface — and a route that deletes every Recipe
+;; is part of that surface wherever it happens to be mounted.
+
+(deftest resetting-the-database-is-the-owners-alone
+  (let [signed (owner-recipe! :published "The owner's signed recipe")
+        drafted (owner-recipe! :unpublished "The owner's draft")
+        before (row-count)]
+    (testing "a machine token is refused — the same caller the guard refuses an
+              edit and a delete on the published one"
+      (is (= 403 (:status (request :machine :put (str "/api/recipes/" signed)
+                                   {:title "Rewritten by a machine"}))))
+      (is (= 403 (:status (request :machine :delete (str "/api/recipes/" signed)))))
+      (is (= 403 (:status (request :machine :post "/api/test/reset")))))
+
+    (testing "and so is a caller with no credentials"
+      (is (= 403 (:status (request :anon :post "/api/test/reset")))))
+
+    ;; the table, not the status: a reset that ran and answered 403 anyway would
+    ;; pass on the codes alone, and this is the assertion that cannot
+    (testing "nothing was dropped by either refusal"
+      (is (= before (row-count)))
+      (is (some? (row signed)))
+      (is (some? (row drafted))))
+
+    (testing "while the owner may still use it — the 403s are about the caller,
+              not the route being switched off"
+      (is (= 200 (:status (request :owner :post "/api/test/reset"))))
+      (is (zero? (row-count))))))
+
+;; ---------------------------------------------------------------------------
 ;; the gate that must not come back
 
 (deftest a-machine-write-lands-because-there-is-no-recording-gate

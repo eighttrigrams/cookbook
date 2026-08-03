@@ -69,12 +69,12 @@
 
 (defn- owner-caller
   "The signed-in owner, or nil for a machine caller and for an anonymous one.
-  Asks `common/machine-caller?` rather than trusting `is-admin`, because a dev
-  owner with no token is legitimately the owner and has no claims at all."
+  `common/owner-caller?` is the predicate, shared with the other routes that are
+  the owner's alone, so they cannot come to disagree about who that is; this only
+  adds the caller's claims, which is what the password route needs for its id."
   [req]
-  (let [caller (common/get-user-from-request req)]
-    (when (and caller (not (common/machine-caller? req)))
-      caller)))
+  (when (common/owner-caller? req)
+    (common/get-user-from-request req)))
 
 (defn- present-machine-user
   "What the client may know: that the row is there, its fixed name, and when the

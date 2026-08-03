@@ -83,6 +83,19 @@
 (defn authenticated? [req]
   (some? (get-user-from-request req)))
 
+(defn owner-caller?
+  "Whether this request is the owner acting for himself: a caller `authenticated?`
+  accepts, and not a machine token.
+
+  The handful of routes that are the owner's alone all ask this one question, so
+  they ask it through one function — the machine-user credential routes and
+  `POST /api/test/reset`. Asking `is-admin?` instead would be wrong twice over: a
+  dev owner with no token has no claims at all, and `is-admin` is *derived* from
+  `is_machine_user` rather than being a privilege column, so it gates nothing on
+  its own."
+  [req]
+  (and (authenticated? req) (not (machine-caller? req))))
+
 (defn admin-password []
   (or (System/getenv "ADMIN_PASSWORD")
       (when (= "true" (System/getenv "DEV")) "admin")
