@@ -163,7 +163,13 @@ html.dark-mode {
 .markdown-content .hljs-selector-attr {
   color: var(--syntax-symbol);
 }
+/* `regex`, not `regexp`, is what the Clojure grammar emits — it is the only one
+   in the package that spells it that way, and a Clojure regex literal is a
+   string with a `#` in front of it, so it belongs in this group. `regexp` stays
+   for the grammars that do spell it so. Getting this wrong is invisible: the
+   token simply renders at body colour, which reads as prose. */
 .markdown-content .hljs-string,
+.markdown-content .hljs-regex,
 .markdown-content .hljs-regexp,
 .markdown-content .hljs-addition {
   color: var(--syntax-string);
@@ -176,3 +182,11 @@ html.dark-mode {
 }
 .markdown-content .hljs-emphasis { font-style: italic; }
 .markdown-content .hljs-strong { font-weight: 600; }
+
+/* Two classes the two registered grammars emit and this theme leaves alone on
+   purpose: `hljs-punctuation`, which in Clojure wraps a lone comma, and
+   `hljs-function`, which in bash wraps a whole signature and carries its own
+   `hljs-title` inside — colouring the wrapper would recolour the braces with it.
+   Both read correctly at body colour. With those two and `regex` accounted for,
+   every class clojure and bash emit is decided; the remaining selectors above
+   are for grammars this bundle may come to register. */
