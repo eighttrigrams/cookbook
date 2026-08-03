@@ -219,3 +219,61 @@
         (is (= 0 (:published after)))
         (is (= 1 (:version after))))
       (is (= #{drafted signed owners} (ids-in (GET-json "/api/recipes")))))))
+
+(defn- recipe-row [id]
+  (jdbc/execute-one! (db/get-conn h/*ds*)
+    (sql/format {:select [:title :version :published :published_at]
+                 :from [:recipes] :where [:= :id id]})
+    db/jdbc-opts))
+
+(defn- all-recipe-ids []
+  (mapv :id (jdbc/execute! (db/get-conn h/*ds*)
+              (sql/format {:select [:id] :from [:recipes] :order-by [[:id :asc]]})
+              db/jdbc-opts)))
+
+;; The companion to `a-visitor-cannot-write`, and the one that covers a dev
+;; server. That test runs entirely inside `h/with-prod-app`, so all it proves is
+;; that `wrap-auth` refuses — and `wrap-auth` only engages when `prod-mode?`, so
+;; nothing exercised the handlers' own answer to an unauthenticated caller.
+;;
+;; The two notions of identity have to agree: a read asks `authenticated?` and
+;; serves this caller the visitor scope, while a write asks `get-user-id` and
+;; gets nil, which the db layer reads as `user_id IS NULL`. That is a real owner
+;; in this schema — and in a dev database it is every row, since dev's admin has
+;; no user row. Hence the nulled `user_id` below: it is the shape a dev row has.
+(deftest a-visitor-cannot-write-with-wrap-auth-out-of-the-chain
+  (let [{drafted :id} (create! "Draft")]
+    (sql-exec! {:update :recipes :set {:user_id nil} :where [:= :id drafted]})
+    (h/with-real-auth
+      (testing "the read path says this caller may not even see the recipe"
+        (is (= 404 (:status (h/API :get (str "/api/recipes/" drafted) {:anonymous? true}))))
+        (is (empty? (:body (h/API :get "/api/recipes" {:anonymous? true})))))
+
+      (testing "so the write path must not let the same caller latch it — the one
+                write with no undo"
+        (let [refused (h/API :post (str "/api/recipes/" drafted "/publish")
+                             {:anonymous? true})]
+          (is (= 401 (:status refused)))
+          ;; an agent is the primary caller here, so the refusal is JSON
+          (is (= "Authentication required" (:error (:body refused))))))
+
+      (testing "nor edit it, delete it, or create one of its own"
+        (is (= 401 (:status (h/API :put (str "/api/recipes/" drafted)
+                                   {:anonymous? true :body {:title "Renamed"}}))))
+        (is (= 401 (:status (h/API :delete (str "/api/recipes/" drafted)
+                                   {:anonymous? true}))))
+        (is (= 401 (:status (h/API :post "/api/recipes"
+                                   {:anonymous? true :body {:title "By nobody"}}))))))
+
+    ;; read straight from the table: the row is nil-owned, so no HTTP caller owns
+    ;; it and no scoped GET can be used to check on it.
+    (testing "and the row is exactly as it was"
+      (let [row (recipe-row drafted)]
+        (is (= 0 (:published row)))
+        (is (nil? (:published_at row)))
+        (is (= "Draft" (:title row)))
+        (is (= 1 (:version row)))))
+    ;; the whole table by id, not a count: a delete that succeeded and a create
+    ;; that succeeded would leave the count at 1 between them.
+    (testing "and the table still holds exactly that one recipe"
+      (is (= [drafted] (all-recipe-ids))))))

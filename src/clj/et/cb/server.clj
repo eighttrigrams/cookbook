@@ -8,7 +8,7 @@
             [et.cb.middleware.rate-limit :as rate-limit :refer [wrap-rate-limit]]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [compojure.core :refer [defroutes GET POST PUT DELETE context]]
+            [compojure.core :refer [defroutes routes GET POST PUT DELETE context]]
             [compojure.route :as route]
             [ring.middleware.json :refer [wrap-json-response wrap-json-body]]
             [ring.middleware.params :refer [wrap-params]]
@@ -90,6 +90,41 @@
               (sort-by (juxt :path :method))
               vec)})
 
+(defn- mutating-request? [req]
+  (#{:post :put :delete} (:request-method req)))
+
+(defn- wrap-recipe-write-guard
+  "Refuse a mutating recipe request from a caller nobody can identify.
+
+  The read handlers and the write handlers ask two different questions about who
+  is calling: a read asks `common/authenticated?` and falls back to
+  `db.recipe/visitor-scope`, while a write asks `common/get-user-id`, which
+  answers **nil** for an anonymous caller. The db layer reads a nil user-id as
+  `user_id IS NULL` — a real owner in this schema, and in a dev database it is
+  *every* row, because dev's admin has no user row. So without this, a caller the
+  read path correctly refuses to show a private recipe to could still publish it,
+  and publishing has no undo.
+
+  This asks `common/authenticated?`, deliberately **not** whether a Bearer token
+  is present: dev's `:dangerously-skip-logins?` makes `authenticated?` true while
+  `get-user-id` is legitimately nil, and that is how the dev owner is
+  represented. Gating on a token instead would refuse every dev write.
+
+  It is **not** the machine-write gate this app must not have (see below). That
+  gate would refuse a *credentialled* agent; this refuses a caller with no
+  credentials at all. An agent holding a token still writes unsupervised.
+
+  It wraps the whole `/api/recipes` context rather than each handler, so a route
+  added there later is covered by construction, and it sits inside `app-routes`
+  rather than in the middleware chain, so every assembly of the app gets it —
+  `app`, `build-app` for plurama, and the integration tests' own chain alike."
+  [handler]
+  (fn [req]
+    (if (and (mutating-request? req)
+             (not (common/authenticated? req)))
+      {:status 401 :body {:error "Authentication required"}}
+      (handler req))))
+
 (defroutes api-routes
   (context "/api" []
     (GET  "/describe" [] describe-handler)
@@ -100,13 +135,15 @@
       (POST "/login"    [] user-handler/login-handler))
 
     (context "/recipes" []
-      (GET    "/"             [] recipe-handler/list-recipes-handler)
-      (POST   "/"             [] recipe-handler/add-recipe-handler)
-      (GET    "/:id/versions" [] recipe-handler/recipe-versions-handler)
-      (POST   "/:id/publish"  [] recipe-handler/publish-recipe-handler)
-      (GET    "/:id"          [] recipe-handler/get-recipe-handler)
-      (PUT    "/:id"          [] recipe-handler/update-recipe-handler)
-      (DELETE "/:id"          [] recipe-handler/delete-recipe-handler))
+      (wrap-recipe-write-guard
+        (routes
+          (GET    "/"             [] recipe-handler/list-recipes-handler)
+          (POST   "/"             [] recipe-handler/add-recipe-handler)
+          (GET    "/:id/versions" [] recipe-handler/recipe-versions-handler)
+          (POST   "/:id/publish"  [] recipe-handler/publish-recipe-handler)
+          (GET    "/:id"          [] recipe-handler/get-recipe-handler)
+          (PUT    "/:id"          [] recipe-handler/update-recipe-handler)
+          (DELETE "/:id"          [] recipe-handler/delete-recipe-handler))))
 
     (context "/test" []
       (POST "/reset" [] reset-test-db-handler))))
@@ -117,9 +154,6 @@
   (GET "/styles.css" [] serve-styles)
   (route/resources "/" {:root "public/cookbook"})
   (route/not-found {:status 404 :body {:error "Not found"}}))
-
-(defn- mutating-request? [req]
-  (#{:post :put :delete} (:request-method req)))
 
 (defn- public-endpoint? [req]
   (= (:uri req) "/api/auth/login"))
