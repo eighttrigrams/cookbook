@@ -197,6 +197,13 @@
       (GET  "/me"       [] user-handler/me-handler)
       (POST "/login"    [] user-handler/login-handler))
 
+    ;; Owner-only, and guarded by the handlers themselves rather than by
+    ;; `wrap-recipe-write-guard`, which is about recipes: a machine token gets a
+    ;; 403 here, which is the one place in this app that it does.
+    (context "/machine-user" []
+      (GET "/"         [] user-handler/machine-user-handler)
+      (PUT "/password" [] user-handler/set-machine-user-password-handler))
+
     (context "/recipes" []
       (wrap-recipe-write-guard
         (routes

@@ -19,7 +19,8 @@
   toggle. The one thing it cannot cross is the publish latch — a published
   Recipe is the owner's and a machine caller may not change it."
   [user-id username]
-  (create-token {:user-id user-id :username username :is-admin false :machine? true}))
+  (create-token {:user-id user-id :username username :is-admin false
+                 :machine? true :machine-username username}))
 
 (defn verify-token [token]
   (try
