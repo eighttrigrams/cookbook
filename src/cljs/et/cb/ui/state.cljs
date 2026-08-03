@@ -27,6 +27,7 @@
            :details {}           ;; id -> the full row, fetched when a card opens
            :open #{}             ;; ids of the expanded cards
            :editing nil          ;; id of the recipe whose Edit modal is open
+           :publishing nil       ;; id of the recipe awaiting a publish confirmation
            :search ""
            :recipes-request 0})) ;; only the newest listing request may land
 
@@ -95,7 +96,7 @@
   (clear-token!)
   (swap! *app-state assoc
          :logged-in? false :token nil :current-user nil
-         :recipes [] :details {} :open #{} :editing nil)
+         :recipes [] :details {} :open #{} :editing nil :publishing nil)
   (fetch-recipes))
 
 ;; ---------------------------------------------------------------------------
@@ -167,6 +168,17 @@
         (when on-success (on-success)))
       (err-handler "Could not save"))))
 
+(defn publish-recipe
+  "One way: there is no unpublish call to pair with this one, on the server or
+  here. The response is the full row, so an open card keeps a fresh body."
+  [id on-done]
+  (api/post-json (str "/api/recipes/" id "/publish") {} (auth-headers)
+    (fn [recipe]
+      (cache-detail! recipe)
+      (fetch-recipes)
+      (when on-done (on-done)))
+    (err-handler "Could not publish")))
+
 (defn delete-recipe [id]
   (api/delete-simple (str "/api/recipes/" id) (auth-headers)
     (fn [_]
@@ -189,6 +201,15 @@
 
 (defn stop-editing []
   (swap! *app-state assoc :editing nil))
+
+;; Publishing asks first. The latch is one-way — nothing in the API takes it
+;; back off — so a misplaced click is not something an undo could repair.
+
+(defn start-publishing [id]
+  (swap! *app-state assoc :publishing id))
+
+(defn stop-publishing []
+  (swap! *app-state assoc :publishing nil))
 
 ;; ---------------------------------------------------------------------------
 ;; dark mode

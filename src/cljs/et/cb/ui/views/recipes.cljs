@@ -10,7 +10,11 @@
   contradict the API's own rule.
 
   Recipes are versioned. The card shows which version it is on; every save that
-  changes something makes the next one."
+  changes something makes the next one.
+
+  Publishing happens from the card, behind a confirmation, and only the owner
+  sees the affordance. It is one way — the API has no unpublish — so a published
+  card loses its Publish button and wears a badge instead."
   (:require [reagent.core :as r]
             [clojure.string :as str]
             [et.cb.ui.state :as state]))
@@ -81,6 +85,22 @@
           "Save"]
          [:button.secondary {:on-click state/stop-editing} "Cancel"]]]])))
 
+(defn- publish-modal
+  "The latch is one-way: nothing in the API takes it back off, so this asks
+  before it fires rather than offering an undo afterwards."
+  [{:keys [id title]}]
+  [:div.modal-backdrop {:on-click state/stop-publishing}
+   [:div.modal {:on-click #(.stopPropagation %)}
+    [:h2 "Publish this recipe?"]
+    [:div.modal-subtitle title]
+    [:p.modal-note
+     "It becomes readable by anyone who opens Cookbook, and you have put your
+      name to it. There is no unpublish."]
+    [:div.modal-actions
+     [:button.publish-confirm {:on-click #(state/publish-recipe id state/stop-publishing)}
+      "Publish"]
+     [:button.secondary {:on-click state/stop-publishing} "Cancel"]]]])
+
 (defn- card-body
   "`detail` is nil until the fetch this expansion started comes back."
   [detail]
@@ -90,13 +110,20 @@
       [:div.card-body (:description detail)])
     [:div.card-body-loading "Loading…"]))
 
-(defn- card [{:keys [id title useful_when version modified_at]}
+(defn- card [{:keys [id title useful_when version published published_at modified_at]}
              {:keys [logged-in? open details]}]
-  (let [expanded? (contains? open id)]
-    [:div.card
+  (let [expanded? (contains? open id)
+        ;; JSON gives 0/1 and 0 is truthy in cljs, so this has to be a
+        ;; comparison rather than a test for presence.
+        published? (= 1 published)]
+    [:div.card {:class (when published? "published")}
      [:div.card-header {:on-click #(state/toggle-open id)}
       [:span.card-toggle (if expanded? "▾" "▸")]
       [:h2.card-title title]
+      (when (and logged-in? published?)
+        [:span.published-badge {:title (str "Published " (day published_at)
+                                            " — public, and one way")}
+         "published"])
       [:span.version-badge {:title "Every edit makes a new version"} (str "v" version)]
       [:span.card-date (day modified_at)]]
      (when (seq useful_when)
@@ -106,11 +133,13 @@
      (when logged-in?
        [:div.card-footer
         [:span.card-actions
+         (when-not published?
+           [:button.secondary {:on-click #(state/start-publishing id)} "Publish"])
          [:button.secondary {:on-click #(state/start-editing id)} "Edit"]
          [:button.secondary.danger {:on-click #(state/delete-recipe id)} "Delete"]]])]))
 
 (defn recipes-tab []
-  (let [{:keys [recipes search logged-in? open details editing]} @state/*app-state]
+  (let [{:keys [recipes search logged-in? open details editing publishing]} @state/*app-state]
     [:div.shelf
      (when logged-in? [compose-form])
      [:input.search
@@ -126,4 +155,8 @@
      ;; block for the modal's fixed positioning, pinning the modal to that one
      ;; card instead of to the viewport.
      (when-let [recipe (get details editing)]
-       [edit-modal recipe])]))
+       [edit-modal recipe])
+     ;; The confirmation only needs the two short fields, which the listing
+     ;; already carries — unlike the Edit modal it never has to fetch a body.
+     (when-let [recipe (first (filter #(= publishing (:id %)) recipes))]
+       [publish-modal recipe])]))

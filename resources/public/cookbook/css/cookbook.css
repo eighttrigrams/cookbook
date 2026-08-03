@@ -135,6 +135,23 @@ textarea:focus {
   white-space: nowrap;
 }
 
+/* The latch, at a glance. A published Recipe is public and cannot be taken
+   back, so the card says so on its own rather than only in the footer — where
+   the Publish button is gone precisely because there is nothing left to do. */
+.published-badge {
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgba(180, 83, 9, 0.14);
+  color: var(--accent);
+  font-size: 0.72em;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+html.dark-mode .published-badge { background: rgba(245, 158, 11, 0.18); }
+.card.published { border-left: 3px solid var(--accent); }
+
 .card-useful-when {
   margin-top: 8px;
   color: var(--text-secondary);
@@ -197,4 +214,10 @@ textarea:focus {
   -webkit-backdrop-filter: blur(var(--glass-blur));
 }
 .modal-subtitle { color: var(--text-secondary); font-size: 0.85em; }
+.modal-note {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.9em;
+  line-height: 1.5;
+}
 .modal-actions { display: flex; gap: 8px; margin-top: 4px; }
