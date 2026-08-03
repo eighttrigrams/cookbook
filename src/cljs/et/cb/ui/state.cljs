@@ -29,7 +29,9 @@
            :editing nil          ;; id of the recipe whose Edit modal is open
            :publishing nil       ;; id of the recipe awaiting a publish confirmation
            :search ""
-           :recipes-request 0})) ;; only the newest listing request may land
+           :recipes-request 0    ;; only the newest listing request may land
+           :settings-open? false ;; the owner's settings panel, asked for like the login form
+           :machine-user nil}))  ;; {:exists :username :password_set_at} — never a password
 
 ;; ---------------------------------------------------------------------------
 ;; helpers
@@ -96,8 +98,39 @@
   (clear-token!)
   (swap! *app-state assoc
          :logged-in? false :token nil :current-user nil
-         :recipes [] :details {} :open #{} :editing nil :publishing nil)
+         :recipes [] :details {} :open #{} :editing nil :publishing nil
+         ;; the machine user's state is the owner's business too, and the panel
+         ;; must not stay open over a signed-out shelf
+         :settings-open? false :machine-user nil)
   (fetch-recipes))
+
+;; ---------------------------------------------------------------------------
+;; the machine user
+;;
+;; Owner-only on the server, so these two are only ever called from the settings
+;; panel. Neither can carry a password back: no endpoint returns one.
+
+(defn fetch-machine-user []
+  (api/fetch-json "/api/machine-user" (auth-headers)
+    (fn [m] (swap! *app-state assoc :machine-user m))))
+
+(defn toggle-settings
+  "Opening re-reads the state rather than trusting what was fetched before, since
+  the password could have been reset from an API client in between."
+  []
+  (let [open? (not (:settings-open? @*app-state))]
+    (swap! *app-state assoc :settings-open? open?)
+    (when open? (fetch-machine-user))))
+
+(defn set-machine-user-password
+  "Creates the machine user the first time and resets its password afterwards —
+  one operation on a fixed name, which is why there is one button."
+  [password on-success]
+  (api/put-json "/api/machine-user/password" {:password password} (auth-headers)
+    (fn [m]
+      (swap! *app-state assoc :machine-user m :error nil)
+      (when on-success (on-success)))
+    (err-handler "Could not set the machine user's password")))
 
 ;; ---------------------------------------------------------------------------
 ;; recipes

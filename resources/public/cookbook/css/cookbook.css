@@ -221,3 +221,62 @@ html.dark-mode .published-badge { background: rgba(245, 158, 11, 0.18); }
   line-height: 1.5;
 }
 .modal-actions { display: flex; gap: 8px; margin-top: 4px; }
+
+/* --------------------------------------------------------------------------
+   the owner's one setting: the machine user's password
+
+   Deliberately spare. There is no username to choose and no list of rows —
+   cookbook has one owner and one machine acting for him — so the panel is a
+   status line and a single field. */
+
+.settings-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  font-size: 1.05em;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.settings-toggle:hover {
+  background: var(--surface-subtle);
+  color: var(--text-primary);
+  transform: none;
+}
+.settings-toggle.active { color: var(--accent); background: var(--surface-subtle); }
+
+.settings {
+  padding: 16px 18px;
+  margin-bottom: 20px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--glass-radius);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+}
+.settings h2 { margin: 0 0 8px; font-size: 1.05em; }
+.settings-note {
+  margin: 0 0 12px;
+  max-width: 62ch;
+  color: var(--text-secondary);
+  font-size: 0.9em;
+  line-height: 1.5;
+}
+.settings-note code {
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--surface-subtle);
+  font-size: 0.95em;
+}
+.settings-status { margin-bottom: 10px; font-size: 0.88em; }
+.settings-present { color: var(--text-secondary); }
+.settings-absent { color: var(--muted-text); }
+.settings-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.settings-row input { flex: 1 1 220px; max-width: 320px; }
