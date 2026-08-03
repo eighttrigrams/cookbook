@@ -76,7 +76,8 @@
                     :renderer #js {:code render-code}}))
 
 ;; Once, not once per hot reload: `marked.use` stacks renderers rather than
-;; replacing them.
+;; replacing them. The var exists to hold that single call, so nothing reads it.
+#_{:clj-kondo/ignore [:unused-private-var]}
 (defonce ^:private configured (configure!))
 
 (def ^:private purify-opts
