@@ -170,14 +170,21 @@
 
 (defn publish-recipe
   "One way: there is no unpublish call to pair with this one, on the server or
-  here. The response is the full row, so an open card keeps a fresh body."
+  here. The response is the full row, so an open card keeps a fresh body.
+
+  `on-done` runs on failure too, because it is what closes the confirmation:
+  the error banner renders under the modal's fixed overlay, so leaving the
+  dialog open would put the banner's dismiss button out of reach."
   [id on-done]
-  (api/post-json (str "/api/recipes/" id "/publish") {} (auth-headers)
-    (fn [recipe]
-      (cache-detail! recipe)
-      (fetch-recipes)
-      (when on-done (on-done)))
-    (err-handler "Could not publish")))
+  (let [done #(when on-done (on-done))]
+    (api/post-json (str "/api/recipes/" id "/publish") {} (auth-headers)
+      (fn [recipe]
+        (cache-detail! recipe)
+        (fetch-recipes)
+        (done))
+      (fn [resp]
+        (done)
+        ((err-handler "Could not publish") resp)))))
 
 (defn delete-recipe [id]
   (api/delete-simple (str "/api/recipes/" id) (auth-headers)
