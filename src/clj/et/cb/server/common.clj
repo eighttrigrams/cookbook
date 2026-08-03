@@ -1,11 +1,10 @@
 (ns et.cb.server.common
   (:require [et.cb.db :as db]
+            [et.cb.db.user :as db.user]
             [et.cb.auth :as auth]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [aero.core :as aero]
-            [next.jdbc :as jdbc]
-            [honey.sql :as sql]
             [taoensso.telemere :as tel]))
 
 (defonce ds (atom nil))
@@ -62,12 +61,7 @@
       (when (allow-skip-logins?)
         (let [user-id-str (get-in req [:headers "x-user-id"])]
           (if (or (nil? user-id-str) (= user-id-str "null"))
-            (let [first-user (jdbc/execute-one! (db/get-conn (ensure-ds))
-                               (sql/format {:select [:id] :from [:users]
-                                            :where [:= :is_machine_user 0]
-                                            :order-by [[:id :asc]] :limit 1})
-                               db/jdbc-opts)]
-              {:user-id (:id first-user) :is-admin true})
+            {:user-id (:id (db.user/first-human-user (ensure-ds))) :is-admin true}
             {:user-id (Integer/parseInt user-id-str) :is-admin false})))))
 
 (defn machine-caller?

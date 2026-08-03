@@ -113,6 +113,32 @@
           (is (false? (:is-admin (:body me))))
           (is (= h/*user-id* (:id (:body me)))))))))
 
+(defn- sql-exec! [statement]
+  (jdbc/execute-one! (db/get-conn h/*ds*) (sql/format statement)))
+
+(deftest creating-the-machine-user-does-not-displace-the-dev-owner
+  ;; Dev's actual shape, which no other test has: the owner has **no** `users`
+  ;; row at all — so his recipes are NULL-owned and skip-logins resolves him by
+  ;; taking a row out of the table — and the machine user is the only row there.
+  ;; Resolving "the first row" rather than "the first human" would hand the dev
+  ;; owner the machine's user-id and empty his shelf, which looks exactly like
+  ;; the app losing his data.
+  (let [{id :id} (:body (POST-json "/api/recipes" {:title "The dev owner's recipe"}))]
+    (sql-exec! {:update :recipes :set {:user_id nil} :where [:= :id id]})
+    (set-password! "machine-secret")
+    (sql-exec! {:delete-from :users :where [:= :is_machine_user 0]})
+    (testing "the machine row is now the only row in users"
+      (is (= 1 (:n (jdbc/execute-one! (db/get-conn h/*ds*)
+                     (sql/format {:select [[[:count :*] :n]] :from [:users]})
+                     db/jdbc-opts)))))
+    (testing "and a dev request with no token and no user header is still the owner"
+      ;; skip-logins is on (no `with-real-auth`), so this is the dev owner, not a
+      ;; visitor — the request simply carries nothing that names a user.
+      (let [listed (h/API :get "/api/recipes" {:anonymous? true})]
+        (is (= 200 (:status listed)))
+        (is (= #{id} (set (map :id (:body listed))))
+            "an empty shelf here means the machine row was mistaken for the owner")))))
+
 (deftest a-human-login-is-unchanged
   (let [resp (login "test-user" "testpass")
         {:keys [token user]} (:body resp)]
