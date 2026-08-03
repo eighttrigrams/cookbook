@@ -19,6 +19,9 @@
                   :extra-deps {io.github.cognitect-labs/test-runner {:git/tag "v0.5.1"
                                                                      :git/sha "dfb30dd6605cb6c0efc275e1df1736f6e90d4d73"}
                                ring/ring-mock {:mvn/version "0.6.2"}}
+                  :main-opts ["-m" "cognitect.test-runner"
+                              "-d" "test/unit"
+                              "-d" "test/integration"]
                   :exec-fn cognitect.test-runner.api/test
                   :exec-args {:dirs ["test/unit" "test/integration"]}}
            :build {:deps {io.github.clojure/tools.build {:git/tag "v0.10.14" :git/sha "1176afd38dc39cb1880bd990d85718d4a61e194d"}}
