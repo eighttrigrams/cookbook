@@ -77,7 +77,10 @@
 
 (defn- configure!
   "Clojure first — `clj` and `edn` come with it as aliases — then bash, which is
-  what the ops recipes are full of. Anything else falls back to an unhighlighted
+  what the ops recipes are full of. `shell` and `console` are not aliases of bash
+  in the package, and two of the three Recipes written so far are shell
+  instructions, so an author typing ```shell would otherwise get a flat block and
+  no hint as to why. Anything genuinely unknown falls back to an unhighlighted
   block, which is the honest rendering of a language this bundle cannot read.
 
   `:breaks true` because of what was already written here. Before anything
@@ -90,6 +93,7 @@
   []
   (.registerLanguage hljs "clojure" hljs-clojure)
   (.registerLanguage hljs "bash" hljs-bash)
+  (.registerAliases hljs #js ["shell" "console"] #js {:languageName "bash"})
   (.use marked #js {:breaks true
                     :renderer #js {:code render-code
                                    :checkbox render-checkbox}}))
