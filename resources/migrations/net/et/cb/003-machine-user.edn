@@ -13,4 +13,15 @@
         "ALTER TABLE users DROP COLUMN password_set_at"
         "ALTER TABLE users DROP COLUMN for_user_id"
         "ALTER TABLE users DROP COLUMN is_machine_user"]
- :transactions false}
+ ;; There is deliberately no `:transactions false` here. Three of the four `:up`
+ ;; statements are `ALTER TABLE ADD COLUMN`, which SQLite has no `IF NOT EXISTS`
+ ;; form of, so a *partial* `:up` cannot be retried: ragtime would not have
+ ;; recorded the migration, and the next startup would run statement one against a
+ ;; column that already exists — `duplicate column name: is_machine_user`, thrown
+ ;; out of `db/init-conn` before anything else can happen, on every boot from then
+ ;; on, taking `-main` and `build-app` with it. SQLite has transactional DDL and
+ ;; all of these statements are transaction-safe, so leaving transactions on is
+ ;; precisely what makes a crash between two of them recoverable. The flag was
+ ;; copied from tracker's 044-add-machine-users.edn, which had its own reason;
+ ;; cookbook never did.
+ }

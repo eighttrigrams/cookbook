@@ -86,6 +86,60 @@
 ;; Its own temp file database: rolling back the suite's shared in-memory schema
 ;; would take every other test with it.
 
+(defn- temp-file-db
+  "A migrated database of its own in a temp directory, and a thunk that deletes it.
+  Its own, because rolling back or half-applying the suite's shared in-memory
+  schema would take every other test with it."
+  [label]
+  (let [dir (java.nio.file.Files/createTempDirectory
+              label (into-array java.nio.file.attribute.FileAttribute []))
+        ds (db/init-conn {:type :sqlite-file :path (str dir "/" label ".db")})]
+    [ds (fn []
+          (when-let [pc (:persistent-conn ds)] (.close pc))
+          (doseq [f (reverse (file-seq (clojure.java.io/file (str dir))))] (.delete f)))]))
+
+(deftest migration-003-is-transactional-so-a-partial-up-leaves-nothing-behind
+  ;; This is what dropping `:transactions false` bought, and the reason not to copy
+  ;; the flag back in. Only the fourth `:up` statement is idempotent — SQLite has no
+  ;; `ADD COLUMN IF NOT EXISTS` — so if a partial `:up` could persist, ragtime would
+  ;; not have recorded the migration and the next startup would re-run statement one
+  ;; against a column that already exists. That throws out of `db/init-conn`, which
+  ;; is the first thing `-main` and `build-app` do: the app would simply not boot,
+  ;; and would not boot again.
+  ;;
+  ;; Provoked rather than asserted about the file: roll 003 back, then add one of
+  ;; the columns it wants by hand, so its third statement fails while its first two
+  ;; would have succeeded.
+  (let [[ds clean!] (temp-file-db "cb-migration-partial")]
+    (try
+      (migrations/rollback! (:conn ds))
+      (is (not (contains? (columns ds) "is_machine_user")) "003 is rolled back")
+
+      (jdbc/execute-one! (db/get-conn ds)
+        ["ALTER TABLE users ADD COLUMN password_set_at DATETIME"])
+
+      (testing "the re-migrate fails on the third statement, as set up"
+        (let [ex (try (migrations/migrate! (:conn ds)) nil (catch Exception e e))]
+          (is (some? ex))
+          (is (str/includes? (str (ex-message ex)) "duplicate column name"))))
+
+      (testing "and the two statements before it did not persist — the whole :up
+                rolled back, so the migration is retryable rather than wedged"
+        (is (not (contains? (columns ds) "is_machine_user")))
+        (is (not (contains? (columns ds) "for_user_id")))
+        (is (not (contains? (indexes ds) "idx_users_single_machine_user"))))
+
+      (testing "so once the conflict is out of the way it applies, which is what
+                'recoverable' means here"
+        (jdbc/execute-one! (db/get-conn ds)
+          ["ALTER TABLE users DROP COLUMN password_set_at"])
+        (migrations/migrate! (:conn ds))
+        (is (contains? (columns ds) "is_machine_user"))
+        (is (contains? (columns ds) "for_user_id"))
+        (is (contains? (columns ds) "password_set_at"))
+        (is (contains? (indexes ds) "idx_users_single_machine_user")))
+      (finally (clean!)))))
+
 (deftest migration-003-down-really-reverses
   (let [dir (java.nio.file.Files/createTempDirectory
               "cb-migration-down" (into-array java.nio.file.attribute.FileAttribute []))
