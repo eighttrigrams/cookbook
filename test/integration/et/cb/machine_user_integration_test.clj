@@ -266,6 +266,13 @@
     (testing "the two new routes are published in the catalogue"
       (is (contains? paths ["GET" "/api/machine-user"]))
       (is (contains? paths ["PUT" "/api/machine-user/password"])))
+    ;; This set is the "nothing else" half of the name, and it used to lock in a
+    ;; catalogue that omitted `POST /api/test/reset` — a real route, and the only
+    ;; destructive one — because its handler was private and its docstring did not
+    ;; match `route-doc-re`. So the "every route" half was false while this
+    ;; assertion looked like it proved otherwise, which is why nothing in this suite
+    ;; ever mentioned that the route had no caller check. It is in the catalogue now
+    ;; and in this set; an agent reading the list is exactly who should be told.
     (testing "every route is there and no non-route var leaked in"
       (is (= #{["GET" "/api/describe"]
                ["GET" "/api/auth/required"] ["GET" "/api/auth/me"] ["POST" "/api/auth/login"]
@@ -273,7 +280,15 @@
                ["GET" "/api/recipes"] ["POST" "/api/recipes"]
                ["GET" "/api/recipes/:id"] ["PUT" "/api/recipes/:id"]
                ["DELETE" "/api/recipes/:id"]
-               ["POST" "/api/recipes/:id/publish"] ["GET" "/api/recipes/:id/versions"]}
+               ["POST" "/api/recipes/:id/publish"] ["GET" "/api/recipes/:id/versions"]
+               ["POST" "/api/test/reset"]}
              paths)))
+    (testing "and the destructive one says so, and says who may call it"
+      (let [reset (first (filter #(= ["POST" "/api/test/reset"] ((juxt :method :path) %)) routes))]
+        (is (some? reset))
+        ;; \s+ rather than a space: these docstrings are wrapped, so a literal
+        ;; " " would be asserting where the line breaks fall
+        (is (re-find #"(?i)dev\s+only" (:doc reset)))
+        (is (re-find #"(?i)owner's\s+alone" (:doc reset)))))
     (testing "no middleware or helper is advertised as callable"
       (is (empty? (filter #(str/includes? (:name %) "wrap-") routes))))))

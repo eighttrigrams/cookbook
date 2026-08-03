@@ -24,9 +24,10 @@
     (try (Integer/parseInt v) (catch Exception _ default))
     default))
 
-(defn- reset-test-db-handler
-  "Drops every recipe and its whole version history. Dev only, and the owner's
-  alone.
+(defn reset-test-db-handler
+  "POST /api/test/reset — drop every Recipe and its whole version history. Dev
+  only: 403 in production. The owner's alone, like the machine-user routes — a
+  machine token is refused and so is a caller with no credentials.
 
   It is a sibling of `/api/recipes` and so outside both recipe guards, which is
   how it came to be the one destructive route in this app with no caller check at
@@ -35,9 +36,16 @@
   could a caller with no credentials. `prod-mode?` bounded the damage to a dev
   database, which is exactly where the owner's own Recipes live.
 
-  So it asks `common/owner-caller?`, the same question the machine-user routes
-  ask. Being outside the recipe guards means it has to ask for itself; nothing
-  about being a test fixture makes it exempt."
+  So it asks `common/owner-caller?`. Being outside the recipe guards means it has
+  to ask for itself; nothing about being a test fixture makes it exempt.
+
+  **Public, and documented here, on purpose.** It was `^:private` with a docstring
+  that did not match `route-doc-re`, so it was missing from `/api/describe` — and
+  the test that pinned that catalogue was called *every route is there and no
+  non-route var leaked in*, which quietly made the omission of the one destructive
+  endpoint in the app into an asserted fact. An agent reading this list to find out
+  what it can call is precisely who needs to be told this route exists. Leaving it
+  out was never a safety measure; the caller check is the safety measure."
   [req]
   (cond
     (common/prod-mode?)
