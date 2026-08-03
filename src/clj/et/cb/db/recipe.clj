@@ -39,17 +39,34 @@
 (defn- select-columns [lean?]
   (if lean? lean-select-columns (conj lean-select-columns :description)))
 
+(def visitor-scope
+  "What an anonymous caller may read: the published recipes, whoever owns them.
+
+  A visitor has no user-id, and `db/user-id-where-clause` reads a missing one as
+  `user_id IS NULL` — a real category in this schema, not an empty one — so a
+  visitor described by a nil user-id would quietly be served the nil-owner's
+  rows. This marker keeps a visitor's query from ever naming an owner, and it
+  narrows on `published` in the query itself, so an unpublished row is outside
+  the result set rather than filtered out of it afterwards."
+  ::visitor)
+
+(defn- scope-clause [scope]
+  (if (= scope visitor-scope)
+    [:= :published 1]
+    (db/user-id-where-clause scope)))
+
 (defn- published? [recipe]
   (= 1 (:published recipe)))
 
 (defn list-recipes
-  "The user's recipes, most recently touched first, optionally narrowed by a
-  substring search over title and useful-when. `lean?` (the default) leaves the
-  description out of the projection entirely."
-  ([ds user-id] (list-recipes ds user-id {}))
-  ([ds user-id {:keys [search-term lean?] :or {lean? true}}]
+  "The recipes visible in `scope` — a user-id for their owner, `visitor-scope`
+  for an anonymous caller — most recently touched first, optionally narrowed by
+  a substring search over title and useful-when. `lean?` (the default) leaves
+  the description out of the projection entirely."
+  ([ds scope] (list-recipes ds scope {}))
+  ([ds scope {:keys [search-term lean?] :or {lean? true}}]
    (let [search-clause (db/build-search-clause search-term [:title :useful_when])
-         where (cond-> [:and (db/user-id-where-clause user-id)]
+         where (cond-> [:and (scope-clause scope)]
                  search-clause (conj search-clause))]
      (jdbc/execute! (db/get-conn ds)
        (sql/format {:select (select-columns lean?)
@@ -59,14 +76,14 @@
        db/jdbc-opts))))
 
 (defn get-recipe
-  "One recipe the user owns, or nil. Lean like the listing unless asked
-  otherwise."
-  ([ds user-id id] (get-recipe ds user-id id {}))
-  ([ds user-id id {:keys [lean?] :or {lean? true}}]
+  "One recipe visible in `scope` — see `list-recipes` — or nil. Lean like the
+  listing unless asked otherwise."
+  ([ds scope id] (get-recipe ds scope id {}))
+  ([ds scope id {:keys [lean?] :or {lean? true}}]
    (jdbc/execute-one! (db/get-conn ds)
      (sql/format {:select (select-columns lean?)
                   :from [:recipes]
-                  :where [:and [:= :id id] (db/user-id-where-clause user-id)]})
+                  :where [:and [:= :id id] (scope-clause scope)]})
      db/jdbc-opts)))
 
 (defn create-recipe

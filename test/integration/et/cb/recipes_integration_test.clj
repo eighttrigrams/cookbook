@@ -102,9 +102,9 @@
                                               (= "GET" (:method %)))
                                         entries))))))))
 
-(deftest an-anonymous-visitor-sees-nothing-yet
+(deftest an-anonymous-visitor-sees-nothing-unpublished
   (create! "Private by default")
   (h/with-real-auth
-    (testing "recipes are private until the publish latch exists (stage 3):
-              absent, not redacted"
+    (testing "a recipe is private until it is published: absent, not redacted.
+              The full visitor matrix lives in the publish-latch namespace."
       (is (empty? (:body (h/API :get "/api/recipes" {:anonymous? true})))))))

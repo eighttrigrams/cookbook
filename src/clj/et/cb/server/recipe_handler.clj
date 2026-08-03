@@ -9,27 +9,44 @@
   [req]
   (not= "full" (common/query-param req "detail")))
 
+(defn- read-scope
+  "Owner or visitor, decided once per read. A visitor is deliberately *not*
+  described by a user-id: `common/get-user-id` gives nil for one, and the db
+  layer reads a nil user-id as `user_id IS NULL`, which is a real owner in this
+  schema — so the visitor path never asks for a user-id at all."
+  [req]
+  (if (common/authenticated? req)
+    (common/get-user-id req)
+    db.recipe/visitor-scope))
+
 (defn list-recipes-handler
   "GET /api/recipes — the caller's recipes, most recently saved first, optionally
   narrowed by ?search over title and useful-when.
 
   **Lean by default**: the response carries no `description` key at all. Pass
   ?detail=full to include it. The two short fields are meant as a retrieval
-  index — scan them, decide which recipe you want, then fetch that one body."
+  index — scan them, decide which recipe you want, then fetch that one body.
+
+  An anonymous visitor is served the **published** recipes instead of anybody's
+  private ones. An unpublished recipe is absent from that listing rather than
+  redacted in it: no title, no id, and nothing that reveals it is there."
   [req]
-  (let [user-id (common/get-user-id req)]
-    {:status 200
-     :body (db.recipe/list-recipes (common/ensure-ds) user-id
-                                   {:search-term (common/query-param req "search")
-                                    :lean? (lean? req)})}))
+  {:status 200
+   :body (db.recipe/list-recipes (common/ensure-ds) (read-scope req)
+                                 {:search-term (common/query-param req "search")
+                                  :lean? (lean? req)})})
 
 (defn get-recipe-handler
   "GET /api/recipes/:id — one recipe. Lean by default like the listing;
-  ?detail=full adds the description. 404 when the id matches nothing you own."
+  ?detail=full adds the description. 404 when the id matches nothing you own.
+
+  For an anonymous visitor only a published recipe matches, and an unpublished
+  one is the same 404 as an id that does not exist. `?detail=full` then shows a
+  visitor all three fields: the collapse is about verbosity, the privacy
+  boundary is the publish latch itself."
   [req]
-  (let [user-id (common/get-user-id req)
-        id (common/parse-int-opt (get-in req [:params :id]))
-        recipe (when id (db.recipe/get-recipe (common/ensure-ds) user-id id
+  (let [id (common/parse-int-opt (get-in req [:params :id]))
+        recipe (when id (db.recipe/get-recipe (common/ensure-ds) (read-scope req) id
                                               {:lean? (lean? req)}))]
     (if recipe
       {:status 200 :body recipe}
@@ -116,11 +133,15 @@
   with its `version`, all three fields and `created_at`. The newest entry is the
   current row and carries `current: true`; the rest are the superseded states,
   which is what makes 'how did this read back then' answerable. Not affected by
-  ?detail — a history is the content or it is nothing."
+  ?detail — a history is the content or it is nothing.
+
+  The history is the owner's: an anonymous visitor gets a 404 for every id,
+  published or not. Publishing puts today's text in public, not every draft
+  behind it."
   [req]
-  (let [user-id (common/get-user-id req)
-        id (common/parse-int-opt (get-in req [:params :id]))
-        result (when id (db.recipe/list-versions (common/ensure-ds) user-id id))]
+  (let [id (common/parse-int-opt (get-in req [:params :id]))
+        result (when (and id (common/authenticated? req))
+                 (db.recipe/list-versions (common/ensure-ds) (common/get-user-id req) id))]
     (if result
       {:status 200 :body result}
       {:status 404 :body {:error "Recipe not found"}})))

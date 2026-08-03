@@ -130,6 +130,42 @@
         (is (nil? (db.recipe/publish-recipe h/*ds* (inc h/*user-id*) stranger-recipe)))
         (is (= 0 (:published (db.recipe/get-recipe h/*ds* h/*user-id* stranger-recipe))))))))
 
+(deftest a-visitor-sees-published-recipes-only
+  (let [{drafted :id} (create! "Draft")
+        {signed :id} (create! "Signed")]
+    (db.recipe/publish-recipe h/*ds* h/*user-id* signed)
+    (testing "the draft is outside the visitor's listing, not redacted in it"
+      (let [ids (set (map :id (db.recipe/list-recipes h/*ds* db.recipe/visitor-scope)))]
+        (is (contains? ids signed))
+        (is (false? (contains? ids drafted)))))
+    (testing "and outside a get"
+      (is (nil? (db.recipe/get-recipe h/*ds* db.recipe/visitor-scope drafted)))
+      (is (nil? (db.recipe/get-recipe h/*ds* db.recipe/visitor-scope drafted {:lean? false})))
+      (is (some? (db.recipe/get-recipe h/*ds* db.recipe/visitor-scope signed))))
+    (testing "a visitor is lean by default and gets the body on request"
+      (is (false? (contains? (db.recipe/get-recipe h/*ds* db.recipe/visitor-scope signed)
+                             :description)))
+      (is (= "body v1" (:description (db.recipe/get-recipe h/*ds* db.recipe/visitor-scope signed
+                                                           {:lean? false})))))
+    (testing "a search cannot widen the scope"
+      (is (empty? (db.recipe/list-recipes h/*ds* db.recipe/visitor-scope {:search-term "Draft"}))))))
+
+(deftest a-visitor-is-not-the-nil-owner
+  (let [drafted (db.recipe/create-recipe h/*ds* nil {:title "Nil-owner draft"})
+        signed (db.recipe/create-recipe h/*ds* nil {:title "Nil-owner signed"})]
+    (db.recipe/publish-recipe h/*ds* nil (:id signed))
+    (testing "a nil user-id selects the nil-owner's rows rather than nothing —
+              this is the trap a visitor must not fall into"
+      (is (= #{(:id drafted) (:id signed)}
+             (set (map :id (db.recipe/list-recipes h/*ds* nil))))))
+    (testing "the visitor scope is not that: it keeps the unpublished nil-owner
+              row out and lets the published one through"
+      (let [ids (set (map :id (db.recipe/list-recipes h/*ds* db.recipe/visitor-scope)))]
+        (is (false? (contains? ids (:id drafted))))
+        (is (contains? ids (:id signed))))
+      (is (nil? (db.recipe/get-recipe h/*ds* db.recipe/visitor-scope (:id drafted))))
+      (is (some? (db.recipe/get-recipe h/*ds* db.recipe/visitor-scope (:id signed)))))))
+
 (deftest delete-takes-the-history-with-it
   (let [{:keys [id]} (create! "Ciabatta")]
     (db.recipe/update-recipe h/*ds* h/*user-id* id {:description "v2"} nil)
