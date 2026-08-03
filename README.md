@@ -9,9 +9,10 @@ Cookbook is an **agentic memory store**. That decides more about it than the
 schema does, and it inverts the house default, so it goes first:
 
 > Every other plurama sibling treats an agent's write as something to be gated —
-> a machine token is read-only until the owner switches recording mode on.
+> there, a machine token is read-only until the owner switches recording mode on.
 > **Cookbook deliberately does not.** A caller holding cookbook credentials
-> writes freely, with no supervision and no toggle.
+> writes freely, with no supervision and no toggle. The one boundary is the
+> publish latch, below — not a mode, and not something the owner can turn off.
 
 There is no `recording_mode` namespace here, no `/api/recording-mode` route, and
 no machine-write guard in the middleware chain. Their absence is the feature. If
@@ -30,9 +31,46 @@ ownership: it makes a Recipe public *and* freezes it against machine mutation,
 in one irreversible step. There is no unpublish, because un-latching would hand
 a machine back the right to rewrite something the owner had signed.
 
-The visibility half of that is built: `POST /api/recipes/:id/publish`, and
-anonymous visitors who see published Recipes only. The machine half — who may
-*write* a published Recipe — is a later stage; there are no machine users yet.
+Both halves are built: `POST /api/recipes/:id/publish` with anonymous visitors
+who see published Recipes only, and the machine half below.
+
+### The one machine user
+
+One owner, one machine acting for him. The username is the literal
+`machine-user`, there is at most one such row — a partial unique index says so,
+not a handler — and the owner's only setting is its password: `GET
+/api/machine-user` says whether it exists and when the password was last set,
+`PUT /api/machine-user/password` sets or resets it. Creating it and changing its
+password are the same operation on a fixed name, which is why the UI is one field
+and one button. Neither route ever returns the password or its hash, and both
+refuse a machine token — an agent rotating its own credential is how it would
+lock the owner out of his own store.
+
+**Its scope is the owner's, resolved once at login.** Recipes are scoped by
+`user_id` and the machine user has a `users` row of its own, so a token carrying
+that row's id would authenticate perfectly and then show an *empty shelf*. So
+`login-handler` mints a machine token whose `:user-id` is the row's `for_user_id`
+— the owner's. A Recipe an agent writes therefore belongs to the owner and shows
+up on his shelf, and every handler is already right without having to remember a
+resolution step.
+
+What the machine may do:
+
+| | unpublished Recipe | published Recipe |
+|---|---|---|
+| read | yes | yes |
+| create | yes | – |
+| edit | yes, unsupervised | **403** |
+| delete | yes, unsupervised | **403** |
+| publish | **403** | **403** |
+
+Delete is refused on a published Recipe for the same reason edit is: removing one
+takes it out of the public listing, history and all, which is un-latching by
+demolition. And a machine may not publish at all, published or not, because the
+latch is irreversible — a machine that could set it could make private content
+permanently public *and* freeze the Recipe out of its own reach. Both rules live
+in one place, `wrap-recipe-write-guard`, which every mutating recipe route passes
+through. There is no switch that lifts either.
 
 ### What a visitor sees
 
