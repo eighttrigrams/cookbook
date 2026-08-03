@@ -27,6 +27,17 @@
         (when-let [pc (:persistent-conn conn)]
           (.close pc))))))
 
+(defn backdate-published-at!
+  "Put a distinguishable timestamp on a published row. `datetime('now')` is
+  second-resolution, so a second publish in the same second would leave the
+  stamp looking untouched even if it had rewritten it — this is what gives
+  'published_at does not move' something to bite on."
+  [recipe-id value]
+  (jdbc/execute-one! (db/get-conn *ds*)
+    (sql/format {:update :recipes
+                 :set {:published_at value}
+                 :where [:= :id recipe-id]})))
+
 (defn history-row-count
   "Straight at the table, so a test can tell 'the API stopped showing them' from
   'the rows are gone'."

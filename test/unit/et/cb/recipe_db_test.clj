@@ -93,6 +93,43 @@
       (is (every? #(false? (contains? % :published))
                   (:versions (versions-of id)))))))
 
+(deftest the-publish-latch
+  (let [{:keys [id]} (create! "Pretzel")]
+    (testing "publishing sets the latch and stamps when it happened"
+      (let [published (db.recipe/publish-recipe h/*ds* h/*user-id* id)]
+        (is (= 1 (:published published)))
+        (is (some? (:published_at published)))
+        (is (= 1 (:published (db.recipe/get-recipe h/*ds* h/*user-id* id))))))
+
+    (testing "it is not a content change — no version bump, no history row"
+      (is (= 1 (:version (db.recipe/get-recipe h/*ds* h/*user-id* id))))
+      (is (= 0 (h/history-row-count id)))
+      (is (= 1 (:total (versions-of id))))
+      (is (every? #(false? (contains? % :published)) (:versions (versions-of id)))))
+
+    (h/backdate-published-at! id "2020-01-01 00:00:00")
+
+    (testing "publishing again is a no-op — the first publish is the fact
+              recorded, so the stamp does not move"
+      (let [again (db.recipe/publish-recipe h/*ds* h/*user-id* id)]
+        (is (= 1 (:published again)))
+        (is (= "2020-01-01 00:00:00" (:published_at again)))
+        (is (= "2020-01-01 00:00:00"
+               (:published_at (db.recipe/get-recipe h/*ds* h/*user-id* id))))
+        (is (= 1 (:version again)))
+        (is (= 0 (h/history-row-count id)))))
+
+    (testing "an edit afterwards moves the version and leaves the latch alone"
+      (let [saved (db.recipe/update-recipe h/*ds* h/*user-id* id {:description "body v2"} nil)]
+        (is (= 2 (:version saved)))
+        (is (= 1 (:published saved)))
+        (is (= "2020-01-01 00:00:00" (:published_at saved)))))
+
+    (testing "the latch is the owner's to set"
+      (let [{stranger-recipe :id} (create! "Somebody else's")]
+        (is (nil? (db.recipe/publish-recipe h/*ds* (inc h/*user-id*) stranger-recipe)))
+        (is (= 0 (:published (db.recipe/get-recipe h/*ds* h/*user-id* stranger-recipe))))))))
+
 (deftest delete-takes-the-history-with-it
   (let [{:keys [id]} (create! "Ciabatta")]
     (db.recipe/update-recipe h/*ds* h/*user-id* id {:description "v2"} nil)

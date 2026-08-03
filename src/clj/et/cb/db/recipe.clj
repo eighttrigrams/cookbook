@@ -39,6 +39,9 @@
 (defn- select-columns [lean?]
   (if lean? lean-select-columns (conj lean-select-columns :description)))
 
+(defn- published? [recipe]
+  (= 1 (:published recipe)))
+
 (defn list-recipes
   "The user's recipes, most recently touched first, optionally narrowed by a
   substring search over title and useful-when. `lean?` (the default) leaves the
@@ -138,6 +141,33 @@
             (tel/log! {:level :info :data {:id id :user-id user-id :version (:version result)}}
                       "Recipe saved")
             result))))))
+
+(defn publish-recipe
+  "Set the latch on a recipe the user owns: `published` on, `published_at`
+  stamped. One way — there is no unpublish, because un-latching would hand a
+  machine back the right to rewrite something the owner had signed.
+
+  Publishing an already-published recipe returns it untouched: the first publish
+  is the fact being recorded, so `published_at` never moves. It is not a content
+  change either — no version bump and no history row — and it deliberately
+  leaves `modified_at` alone, so an edit the owner already has in flight is not
+  turned into a 409 by it.
+
+  nil when the id matches nothing the user owns."
+  [ds user-id id]
+  (jdbc/with-transaction [tx (db/get-conn ds)]
+    (when-let [current (get-recipe tx user-id id {:lean? false})]
+      (if (published? current)
+        current
+        (let [result (jdbc/execute-one! tx
+                       (sql/format {:update :recipes
+                                    :set {:published 1
+                                          :published_at [:raw "datetime('now')"]}
+                                    :where [:= :id id]
+                                    :returning (select-columns false)})
+                       db/jdbc-opts)]
+          (tel/log! {:level :info :data {:id id :user-id user-id}} "Recipe published")
+          result)))))
 
 (defn delete-recipe
   "Remove a recipe the user owns together with its whole version history.

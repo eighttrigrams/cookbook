@@ -41,7 +41,8 @@
 
   The new recipe is version 1 with no history, and it is **private**:
   `published` is not accepted here, because publishing is its own deliberate
-  act. 201 with the created recipe in the full shape, 400 on a blank title."
+  act — POST /api/recipes/:id/publish. 201 with the created recipe in the full
+  shape, 400 on a blank title."
   [req]
   (let [user-id (common/get-user-id req)
         {:keys [title] :as body} (:body req)]
@@ -59,8 +60,9 @@
   Every save that changes something archives the outgoing state as a version and
   moves the row to the next one. A save that changes nothing is a no-op — same
   version, no history row. Pass `modified_at` from the last read to be told
-  (409) when someone else saved in between. `published` is not writable here.
-  404 when the id matches nothing you own."
+  (409) when someone else saved in between. `published` is not writable here —
+  POST /api/recipes/:id/publish is the only thing that sets it, and nothing
+  clears it. 404 when the id matches nothing you own."
   [req]
   (let [ds (common/ensure-ds)
         user-id (common/get-user-id req)
@@ -89,6 +91,23 @@
         id (common/parse-int-opt (get-in req [:params :id]))
         result (when id (db.recipe/delete-recipe (common/ensure-ds) user-id id))]
     (if (:success result)
+      {:status 200 :body result}
+      {:status 404 :body {:error "Recipe not found"}})))
+
+(defn publish-recipe-handler
+  "POST /api/recipes/:id/publish — publish a recipe: it becomes visible to
+  anyone, and the owner has put his name to it.
+
+  **One way.** There is no unpublish route, deliberately. Publishing an already
+  published recipe is a 200 no-op that leaves the original `published_at` where
+  it was — the first publish is the fact being recorded. It is not a content
+  change: no version bump and no history row. 404 when the id matches nothing
+  you own."
+  [req]
+  (let [user-id (common/get-user-id req)
+        id (common/parse-int-opt (get-in req [:params :id]))
+        result (when id (db.recipe/publish-recipe (common/ensure-ds) user-id id))]
+    (if result
       {:status 200 :body result}
       {:status 404 :body {:error "Recipe not found"}})))
 

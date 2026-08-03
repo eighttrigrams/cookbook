@@ -103,6 +103,7 @@
       (GET    "/"             [] recipe-handler/list-recipes-handler)
       (POST   "/"             [] recipe-handler/add-recipe-handler)
       (GET    "/:id/versions" [] recipe-handler/recipe-versions-handler)
+      (POST   "/:id/publish"  [] recipe-handler/publish-recipe-handler)
       (GET    "/:id"          [] recipe-handler/get-recipe-handler)
       (PUT    "/:id"          [] recipe-handler/update-recipe-handler)
       (DELETE "/:id"          [] recipe-handler/delete-recipe-handler))

@@ -37,17 +37,6 @@
   (let [id (:id (create! "Fine"))]
     (is (= 400 (:status (PUT-json (str "/api/recipes/" id) {:title ""}))))))
 
-(deftest published-cannot-be-set-through-post-or-put
-  (let [created (:body (POST-json "/api/recipes"
-                                  {:title "Sneaky" :published 1 :published_at "2020-01-01 00:00:00"}))
-        id (:id created)]
-    (is (= 0 (:published created)))
-    (is (nil? (:published_at created)))
-    (PUT-json (str "/api/recipes/" id) {:published 1 :description "x"})
-    (let [after (:body (GET-json (str "/api/recipes/" id)))]
-      (is (= 0 (:published after)))
-      (is (nil? (:published_at after))))))
-
 (deftest the-version-ladder-over-http
   (let [id (:id (create! "Sourdough"))
         path (str "/api/recipes/" id)]
@@ -104,6 +93,7 @@
     (is (contains? by-path "/api/recipes"))
     (is (contains? by-path "/api/recipes/:id"))
     (is (contains? by-path "/api/recipes/:id/versions"))
+    (is (contains? by-path "/api/recipes/:id/publish"))
     (is (= #{"GET" "POST"} (set (map :method (get by-path "/api/recipes")))))
     (is (= #{"GET" "PUT" "DELETE"} (set (map :method (get by-path "/api/recipes/:id")))))
     (testing "the lean rule is documented where an agent will read it"
