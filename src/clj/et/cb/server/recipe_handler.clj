@@ -61,9 +61,21 @@
   and not saved since reads as not-human-edited even if the owner wrote every word
   of it: what was never recorded is not asserted. It composes with ?search.
 
+  **Every row carries the provenance split**: `machine_versions`, `ui_versions`
+  and `unrecorded_versions`, counting how many of that Recipe's versions were
+  written by an agent, in the web UI, and before cookbook recorded this at all.
+  The three always sum to `version`. `source` is there too — the *current*
+  version's own label, one of `ui`, `machine` or null. Unrecorded is a third
+  category and not a synonym for machine: a Recipe last saved before this shipped
+  reads `unrecorded_versions` equal to its version and nothing else, because
+  nothing that could answer who wrote those versions was ever stored. Per-version
+  labels are on GET /api/recipes/:id/versions.
+
   **Lean by default**: the response carries no `description` key at all. Pass
   ?detail=full to include it. The two short fields are meant as a retrieval
-  index — scan them, decide which recipe you want, then fetch that one body.
+  index — scan them, decide which recipe you want, then fetch that one body. The
+  counts are aggregated in the same query and cost the caller no extra round trip,
+  and they do not widen the projection — a lean listing still has no body in it.
 
   An anonymous visitor is served the **published** recipes instead of anybody's
   private ones. An unpublished recipe is absent from that listing rather than
@@ -103,8 +115,9 @@
   shape, 400 on a blank title.
 
   A create from a caller without a machine token sets `has_human_edit` on the new
-  row; a machine's create leaves it at 0. That is not writable from the body — it
-  is taken from the token, like the owner the row is filed under."
+  row; a machine's create leaves it at 0. The same fact labels the version being
+  created: `source` is `ui` or `machine` accordingly. Neither is writable from the
+  body — both are taken from the token, like the owner the row is filed under."
   [req]
   (let [user-id (common/get-user-id req)
         {:keys [title] :as body} (:body req)]
@@ -131,7 +144,13 @@
   is what ?human=true on the listing narrows by. Like `published` it cannot be
   carried in the body, and unlike `published` a machine may write over the
   content freely — what it cannot do is clear the mark, because nothing clears
-  it. A no-op save does not set it either: it returns before the write."
+  it. A no-op save does not set it either: it returns before the write.
+
+  The new version's `source` is set from that same fact, and the version it
+  displaces keeps the label it was saved under: the outgoing one goes into history
+  with its own `source`, not with this save's, so an agent's edit never
+  retroactively relabels what the owner wrote. A no-op save leaves `source` alone
+  as well, for the same reason it leaves the version alone."
   [req]
   (let [ds (common/ensure-ds)
         user-id (common/get-user-id req)
@@ -171,8 +190,9 @@
   **One way.** There is no unpublish route, deliberately. Publishing an already
   published recipe is a 200 no-op that leaves the original `published_at` where
   it was — the first publish is the fact being recorded. It is not a content
-  change: no version bump and no history row. 404 when the id matches nothing
-  you own."
+  change: no version bump, no history row, and neither `has_human_edit` nor
+  `source` is touched — putting your name to text is not writing it. 404 when the
+  id matches nothing you own."
   [req]
   (let [user-id (common/get-user-id req)
         id (common/recipe-id req)
@@ -183,10 +203,17 @@
 
 (defn recipe-versions-handler
   "GET /api/recipes/:id/versions — every version of a recipe, newest first, each
-  with its `version`, all three fields and `created_at`. The newest entry is the
-  current row and carries `current: true`; the rest are the superseded states,
-  which is what makes 'how did this read back then' answerable. Not affected by
-  ?detail — a history is the content or it is nothing.
+  with its `version`, all three fields, `created_at` and `source`. The newest entry
+  is the current row and carries `current: true`; the rest are the superseded
+  states, which is what makes 'how did this read back then' answerable. Not
+  affected by ?detail — a history is the content or it is nothing.
+
+  **`source` says where that one version came from**: `ui` for a save by the
+  owner, `machine` for one by an agent token, and **null for a version written
+  before cookbook recorded this** — the key is always present, and a null in it is
+  'never recorded' rather than 'withheld'. Each label belongs to the version it
+  sits on and not to the save that displaced it, so a version's label never changes
+  after the fact. The same three values are counted per Recipe on GET /api/recipes.
 
   The history is the owner's: an anonymous visitor gets a 404 for every id,
   published or not. Publishing puts today's text in public, not every draft

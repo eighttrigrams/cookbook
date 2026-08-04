@@ -1,5 +1,7 @@
 (ns et.cb.integration-helpers
   (:require [ring.mock.request :as mock]
+            [next.jdbc :as jdbc]
+            [honey.sql :as sql]
             [et.cb.db :as db]
             [et.cb.db.user :as db.user]
             [et.cb.server :as server]
@@ -69,6 +71,18 @@
   either way once prod-mode? says yes."
   [& body]
   `(with-prod-app* (fn [] ~@body)))
+
+(defn clear-source!
+  "Put a Recipe's current version back into the state migration 005 found
+  everything in: `source` NULL, provenance never recorded.
+
+  Reaches past the handlers because no request can produce it — every write labels
+  what it writes, which is the whole point — and yet it is the state every Recipe on
+  the owner's shelf is in until he next saves one. A test about the third bucket has
+  nothing to test without it."
+  [recipe-id]
+  (jdbc/execute-one! (db/get-conn *ds*)
+    (sql/format {:update :recipes :set {:source nil} :where [:= :id recipe-id]})))
 
 (defn token-for [user-id]
   (auth/create-token user-id "test-user" true))
