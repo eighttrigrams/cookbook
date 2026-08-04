@@ -58,21 +58,6 @@
     [:= :user_id user-id]
     [:is :user_id nil]))
 
-(defn build-search-clause
-  "Case-insensitive AND-of-terms substring match across `columns`."
-  ([search-term] (build-search-clause search-term [:name]))
-  ([search-term columns]
-   (when (and search-term (not (str/blank? search-term)))
-     (let [terms (->> (str/split (str/trim search-term) #"\s+")
-                      (map str/lower-case)
-                      (filter (complement str/blank?)))]
-       (when (seq terms)
-         (into [:and]
-               (map (fn [term]
-                      (into [:or]
-                            (map (fn [col] [:like [:lower col] (str "%" term "%")]) columns)))
-                    terms)))))))
-
 (def word-separator-chars
   "What ends a word for `build-word-prefix-search-clause`.
 
