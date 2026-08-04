@@ -45,6 +45,12 @@ button.secondary {
 }
 button.secondary:hover { background: var(--glass-bg-elevated); }
 button.secondary.danger { color: #ff3b30; }
+/* The delete modal's confirm button is not a `.secondary` one, so the rule
+   above does not reach it — and without this it would wear the same accent as
+   every safe primary, including the Publish confirmation. The hover has to be
+   named too, or the base `button:hover` flips it back to the accent. */
+button.delete-confirm.danger { background: #ff3b30; }
+button.delete-confirm.danger:hover { background: #e02b20; }
 button:disabled { opacity: 0.45; cursor: default; transform: none; }
 
 .loading, .empty {
