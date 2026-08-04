@@ -28,6 +28,7 @@
            :open #{}             ;; ids of the expanded cards
            :editing nil          ;; id of the recipe whose Edit modal is open
            :publishing nil       ;; id of the recipe awaiting a publish confirmation
+           :deleting nil         ;; id of the recipe awaiting a delete confirmation
            :search ""
            :recipes-request 0    ;; only the newest listing request may land
            :settings-open? false ;; the owner's settings panel, asked for like the login form
@@ -98,7 +99,7 @@
   (clear-token!)
   (swap! *app-state assoc
          :logged-in? false :token nil :current-user nil
-         :recipes [] :details {} :open #{} :editing nil :publishing nil
+         :recipes [] :details {} :open #{} :editing nil :publishing nil :deleting nil
          ;; the machine user's state is the owner's business too, and the panel
          ;; must not stay open over a signed-out shelf
          :settings-open? false :machine-user nil)
@@ -219,14 +220,26 @@
         (done)
         ((err-handler "Could not publish") resp)))))
 
-(defn delete-recipe [id]
-  (api/delete-simple (str "/api/recipes/" id) (auth-headers)
-    (fn [_]
-      (swap! *app-state (fn [s] (-> s
-                                    (update :details dissoc id)
-                                    (update :open disj id))))
-      (fetch-recipes))
-    (err-handler "Could not delete")))
+(defn delete-recipe
+  "Takes the recipe and its whole version history with it, and nothing in the
+  API brings any of it back — which is why a confirmation stands in front of
+  this call.
+
+  `on-done` runs on failure too, for the same reason it does in
+  `publish-recipe`: it is what closes the confirmation, and the error banner
+  renders under the modal's fixed overlay."
+  [id on-done]
+  (let [done #(when on-done (on-done))]
+    (api/delete-simple (str "/api/recipes/" id) (auth-headers)
+      (fn [_]
+        (swap! *app-state (fn [s] (-> s
+                                      (update :details dissoc id)
+                                      (update :open disj id))))
+        (fetch-recipes)
+        (done))
+      (fn [resp]
+        (done)
+        ((err-handler "Could not delete") resp)))))
 
 ;; ---------------------------------------------------------------------------
 ;; view state
@@ -250,6 +263,15 @@
 
 (defn stop-publishing []
   (swap! *app-state assoc :publishing nil))
+
+;; Deleting asks first as well, and for a stronger reason: it removes the
+;; recipe together with every version of it, and there is no undo call either.
+
+(defn start-deleting [id]
+  (swap! *app-state assoc :deleting id))
+
+(defn stop-deleting []
+  (swap! *app-state assoc :deleting nil))
 
 ;; ---------------------------------------------------------------------------
 ;; dark mode

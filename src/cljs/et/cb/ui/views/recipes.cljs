@@ -119,6 +119,34 @@
           (if @sending? "Publishing…" "Publish")]
          [:button.secondary {:on-click state/stop-publishing} "Cancel"]]]])))
 
+(defn- delete-modal
+  "Deleting takes the recipe and every version of it, and no route puts any of
+  it back — so this asks first, the same way publishing does.
+
+  The confirm button goes dead on the first click, and here the latch matters
+  more than it does for publishing. Only the response callback closes this
+  dialog, so two quick clicks would send two DELETEs: the first succeeds and
+  the second 404s, raising 'Could not delete' over a delete that in fact went
+  through."
+  [_recipe]
+  (let [sending? (r/atom false)]
+    (fn [{:keys [id title version]}]
+      [:div.modal-backdrop {:on-click state/stop-deleting}
+       [:div.modal {:on-click #(.stopPropagation %)}
+        [:h2 "Delete this recipe?"]
+        [:div.modal-subtitle title]
+        [:p.modal-note
+         (if (= 1 version)
+           "Its one version goes with it, and there is no undo."
+           (str "All " version " versions go with it, and there is no undo."))]
+        [:div.modal-actions
+         [:button.delete-confirm.danger
+          {:disabled @sending?
+           :on-click #(do (reset! sending? true)
+                          (state/delete-recipe id state/stop-deleting))}
+          (if @sending? "Deleting…" "Delete")]
+         [:button.secondary {:on-click state/stop-deleting} "Cancel"]]]])))
+
 (defn- card-body
   "`detail` is nil until the fetch this expansion started comes back.
 
@@ -158,10 +186,10 @@
          (when-not published?
            [:button.secondary {:on-click #(state/start-publishing id)} "Publish"])
          [:button.secondary {:on-click #(state/start-editing id)} "Edit"]
-         [:button.secondary.danger {:on-click #(state/delete-recipe id)} "Delete"]]])]))
+         [:button.secondary.danger {:on-click #(state/start-deleting id)} "Delete"]]])]))
 
 (defn recipes-tab []
-  (let [{:keys [recipes search logged-in? open details editing publishing]} @state/*app-state]
+  (let [{:keys [recipes search logged-in? open details editing publishing deleting]} @state/*app-state]
     [:div.shelf
      (when logged-in? [compose-form])
      ;; The endpoint matches words from their start and only in the title, so
@@ -184,4 +212,8 @@
      ;; The confirmation only needs the two short fields, which the listing
      ;; already carries — unlike the Edit modal it never has to fetch a body.
      (when-let [recipe (first (filter #(= publishing (:id %)) recipes))]
-       [publish-modal recipe])]))
+       [publish-modal recipe])
+     ;; Same again: the question needs the title and the version count, both of
+     ;; which the listing carries, so this one never fetches a body either.
+     (when-let [recipe (first (filter #(= deleting (:id %)) recipes))]
+       [delete-modal recipe])]))
