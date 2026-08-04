@@ -18,6 +18,12 @@
   --surface-subtle: rgba(0, 0, 0, 0.03);
   --badge-excluded-bg: rgba(255, 59, 48, 0.2);
   --badge-excluded-color: #ff3b30;
+  /* An opaque colour to sit *under* --body-bg. The body never needs one, but a
+     full-screen overlay does: the dark gradient's first stop carries an alpha
+     (#241a0e99), so painting --body-bg alone leaves the shelf legible through
+     what is supposed to have replaced it. The two ends of each theme's own
+     gradient. */
+  --opaque-bg: #fdf7ee;
 }
 html.dark-mode {
   color-scheme: dark;
@@ -35,6 +41,7 @@ html.dark-mode {
   --surface-subtle: rgba(255, 255, 255, 0.05);
   --muted-text: #8e8e93;
   --body-bg: linear-gradient(135deg, #241a0e99 0%, #2e2113 50%, #1f170d 100%);
+  --opaque-bg: #1f170d;
   /* The light-mode input border is a black wash, which vanishes on dark. */
   --input-border: rgba(255, 255, 255, 0.12);
 }
