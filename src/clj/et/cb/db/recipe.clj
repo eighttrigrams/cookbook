@@ -25,7 +25,17 @@
 
   `published` is deliberately **not** in the history table, and publishing does
   not create a version: versions are about content, the latch is a separate fact
-  about the row. A table that half-answered both questions would answer neither."
+  about the row. A table that half-answered both questions would answer neither.
+
+  **Provenance** is one bit on the row too: `has_human_edit`, set by a write from
+  a caller that is not a machine and never cleared. It is denormalised for the
+  same reason the version is — deriving it would mean a correlated subquery per
+  row in every listing — and unlike most denormalisation it cannot go stale,
+  because the fact is monotonic: once a human has edited a Recipe, that never
+  stops being true. It is a fact about the Recipe and not about a version; who
+  wrote v3 is a question this schema does not answer. The bit only exists going
+  forward from the migration that added it, so a row that predates it reads 0
+  until it is next saved from the UI."
   (:require [clojure.string :as str]
             [next.jdbc :as jdbc]
             [honey.sql :as sql]
@@ -34,7 +44,8 @@
 
 (def lean-select-columns
   "Everything but the body. This *is* the default API shape."
-  [:id :title :useful_when :version :published :published_at :created_at :modified_at])
+  [:id :title :useful_when :version :published :published_at :created_at :modified_at
+   :has_human_edit])
 
 (defn- select-columns [lean?]
   (if lean? lean-select-columns (conj lean-select-columns :description)))
@@ -70,14 +81,21 @@
   nor the description is searched: the title is the name of the thing, and a
   match in a line of prose was never what made a recipe the one you meant.
 
-  The search is a `:where` clause and not a filter over the rows, so it narrows
-  *inside* the scope it is given. A visitor's search runs against the published
-  recipes rather than against everything followed by a hiding step."
+  `human-only?` narrows to the Recipes that carry a human edit — the
+  `has_human_edit` bit described above. It composes with the search rather than
+  competing with it: both are clauses on the same query.
+
+  Both narrowings are `:where` clauses and not filters over the rows, so they
+  narrow *inside* the scope they are given. A visitor's search runs against the
+  published recipes rather than against everything followed by a hiding step, and
+  so does a visitor's human filter — it can only ever take rows away from what
+  that caller could already see."
   ([ds scope] (list-recipes ds scope {}))
-  ([ds scope {:keys [search-term lean?] :or {lean? true}}]
+  ([ds scope {:keys [search-term human-only? lean?] :or {lean? true}}]
    (let [search-clause (db/build-word-prefix-search-clause search-term :title)
          where (cond-> [:and (scope-clause scope)]
-                 search-clause (conj search-clause))]
+                 search-clause (conj search-clause)
+                 human-only? (conj [:= :has_human_edit 1]))]
      (jdbc/execute! (db/get-conn ds)
        (sql/format {:select (select-columns lean?)
                     :from [:recipes]
@@ -98,19 +116,28 @@
 
 (defn create-recipe
   "A new recipe: version 1, no history rows, and private — `published` is left
-  at its column default, because publishing is its own deliberate act."
-  [ds user-id {:keys [title useful_when description]}]
-  (let [result (jdbc/execute-one! (db/get-conn ds)
-                 (sql/format {:insert-into :recipes
-                              :values [{:title (str/trim title)
-                                        :useful_when (or useful_when "")
-                                        :description (or description "")
-                                        :version 1
-                                        :user_id user-id}]
-                              :returning (select-columns false)})
-                 db/jdbc-opts)]
-    (tel/log! {:level :info :data {:id (:id result) :user-id user-id}} "Recipe created")
-    result))
+  at its column default, because publishing is its own deliberate act.
+
+  `:human?` records that this came from a caller that is not a machine — see
+  `update-recipe` for what that means and why it is the fact worth recording. It
+  defaults to false, which is the conservative reading: a caller that says nothing
+  about itself leaves the row of unknown provenance rather than claiming the
+  owner's hand for it."
+  ([ds user-id fields] (create-recipe ds user-id fields {}))
+  ([ds user-id {:keys [title useful_when description]} {:keys [human?]}]
+   (let [result (jdbc/execute-one! (db/get-conn ds)
+                  (sql/format {:insert-into :recipes
+                               :values [{:title (str/trim title)
+                                         :useful_when (or useful_when "")
+                                         :description (or description "")
+                                         :version 1
+                                         :has_human_edit (if human? 1 0)
+                                         :user_id user-id}]
+                               :returning (select-columns false)})
+                  db/jdbc-opts)]
+     (tel/log! {:level :info :data {:id (:id result) :user-id user-id :human? (boolean human?)}}
+               "Recipe created")
+     result)))
 
 (defn- content-of [recipe]
   (select-keys recipe [:title :useful_when :description]))
@@ -142,32 +169,51 @@
   through.
 
   Callers must have established that the recipe exists; nil here means the
-  version guard failed, not that the id was wrong."
-  [ds user-id id fields expected-modified-at]
-  (jdbc/with-transaction [tx (db/get-conn ds)]
-    (let [current (get-recipe tx user-id id {:lean? false})
-          incoming (merge-content current fields)]
-      (cond
-        (and expected-modified-at (not= expected-modified-at (:modified_at current)))
-        nil
+  version guard failed, not that the id was wrong.
 
-        (= incoming (content-of current))
-        current
+  `:human?` — this save came from a caller carrying no *machine* token — sets
+  `has_human_edit` on the row, on the same statement that bumps the version. Three
+  things follow from where that assignment sits. The flag is only ever set and
+  never written back to 0, so a machine saving afterwards cannot take back what a
+  human recorded. The no-op branch above returns before it, so a save that changes
+  nothing does not earn the mark. And publishing is a different function
+  altogether, which is right: the latch is not a content change and a published
+  Recipe is not thereby a human-written one.
 
-        :else
-        (do
-          (archive! tx current)
-          (let [result (jdbc/execute-one! tx
-                         (sql/format {:update :recipes
-                                      :set (assoc incoming
-                                                  :version (inc (:version current))
-                                                  :modified_at [:raw "datetime('now')"])
-                                      :where [:= :id id]
-                                      :returning (select-columns false)})
-                         db/jdbc-opts)]
-            (tel/log! {:level :info :data {:id id :user-id user-id :version (:version result)}}
-                      "Recipe saved")
-            result))))))
+  The recorded fact is deliberately 'not a machine token' rather than 'came from
+  the browser'. Today the web UI is the only client that authenticates as the
+  human — `cookbook-tui` logs in as `machine-user`, so its writes count as a
+  machine's — and a token is checkable where a claim about a browser is not."
+  ([ds user-id id fields expected-modified-at]
+   (update-recipe ds user-id id fields expected-modified-at {}))
+  ([ds user-id id fields expected-modified-at {:keys [human?]}]
+   (jdbc/with-transaction [tx (db/get-conn ds)]
+     (let [current (get-recipe tx user-id id {:lean? false})
+           incoming (merge-content current fields)]
+       (cond
+         (and expected-modified-at (not= expected-modified-at (:modified_at current)))
+         nil
+
+         (= incoming (content-of current))
+         current
+
+         :else
+         (do
+           (archive! tx current)
+           (let [result (jdbc/execute-one! tx
+                          (sql/format {:update :recipes
+                                       :set (cond-> (assoc incoming
+                                                           :version (inc (:version current))
+                                                           :modified_at [:raw "datetime('now')"])
+                                              human? (assoc :has_human_edit 1))
+                                       :where [:= :id id]
+                                       :returning (select-columns false)})
+                          db/jdbc-opts)]
+             (tel/log! {:level :info :data {:id id :user-id user-id
+                                            :version (:version result)
+                                            :human? (boolean human?)}}
+                       "Recipe saved")
+             result)))))))
 
 (defn publish-recipe
   "Set the latch on a recipe the user owns: `published` on, `published_at`
@@ -179,6 +225,10 @@
   change either — no version bump and no history row — and it deliberately
   leaves `modified_at` alone, so an edit the owner already has in flight is not
   turned into a 409 by it.
+
+  It does not set `has_human_edit` either, for the same reason it writes no
+  version: that bit says a human wrote the text, and putting your name to text an
+  agent wrote is not writing it.
 
   nil when the id matches nothing the user owns."
   [ds user-id id]

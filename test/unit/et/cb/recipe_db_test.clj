@@ -166,6 +166,123 @@
       (is (nil? (db.recipe/get-recipe h/*ds* db.recipe/visitor-scope (:id drafted))))
       (is (some? (db.recipe/get-recipe h/*ds* db.recipe/visitor-scope (:id signed)))))))
 
+;; ---------------------------------------------------------------------------
+;; the human-edit mark
+;;
+;; One monotonic bit on the row: set by a write the caller says is not a
+;; machine's, never cleared by anything. These are the db-layer half — who counts
+;; as a machine is decided from the token, which is the handler's half and lives
+;; in the human-edit integration namespace.
+
+(defn- flag-of [id]
+  (:has_human_edit (db.recipe/get-recipe h/*ds* h/*user-id* id)))
+
+(defn- create-as! [human? title]
+  (db.recipe/create-recipe h/*ds* h/*user-id*
+                           {:title title :useful_when "when testing" :description "body v1"}
+                           {:human? human?}))
+
+(deftest the-human-edit-mark-is-monotonic
+  (testing "a machine's create leaves the row unmarked, and so does a caller who
+            says nothing about itself — an unrecorded author is not a human one"
+    (is (= 0 (:has_human_edit (create-as! false "Written by an agent"))))
+    (is (= 0 (:has_human_edit (create! "Said nothing")))))
+
+  (testing "a human's create marks it"
+    (is (= 1 (:has_human_edit (create-as! true "Written by hand")))))
+
+  (testing "a human edit of a machine's recipe earns the mark"
+    (let [{:keys [id]} (create-as! false "Agent's draft")]
+      (is (= 0 (flag-of id)))
+      (is (= 1 (:has_human_edit (db.recipe/update-recipe h/*ds* h/*user-id* id
+                                                         {:description "body v2"} nil
+                                                         {:human? true}))))
+      (is (= 1 (flag-of id)))))
+
+  (testing "and a machine editing afterwards cannot take it back"
+    (let [{:keys [id]} (create-as! true "The owner's")]
+      (db.recipe/update-recipe h/*ds* h/*user-id* id {:description "the agent's body"} nil
+                               {:human? false})
+      (is (= 1 (flag-of id)))
+      (is (= "the agent's body"
+             (:description (db.recipe/get-recipe h/*ds* h/*user-id* id {:lean? false})))
+          "the machine's write still landed — only the mark is untouchable"))))
+
+(deftest what-does-not-earn-the-mark
+  (testing "a save that changes nothing: it returns before the write, so there is
+            no edit to record"
+    (let [{:keys [id]} (create-as! false "Unchanged")]
+      (db.recipe/update-recipe h/*ds* h/*user-id* id {:description "body v1"} nil
+                               {:human? true})
+      (is (= 0 (flag-of id)))
+      (is (= 1 (:version (db.recipe/get-recipe h/*ds* h/*user-id* id))))))
+
+  (testing "a refused save: a stale modified_at writes nothing at all"
+    (let [{:keys [id]} (create-as! false "Raced")]
+      (is (nil? (db.recipe/update-recipe h/*ds* h/*user-id* id {:description "x"}
+                                         "1999-01-01 00:00:00" {:human? true})))
+      (is (= 0 (flag-of id)))))
+
+  (testing "publishing: the latch says the owner put his name to the text, not
+            that he wrote it"
+    (let [{:keys [id]} (create-as! false "Signed but not written")]
+      (is (= 1 (:published (db.recipe/publish-recipe h/*ds* h/*user-id* id))))
+      (is (= 0 (:has_human_edit (db.recipe/publish-recipe h/*ds* h/*user-id* id))))
+      (is (= 0 (flag-of id))))))
+
+(deftest the-mark-is-in-the-lean-projection
+  (let [{:keys [id]} (create-as! true "Readable at a glance")]
+    (testing "a caller can see the bit the filter narrows by without asking for a
+              body, the same way it can see `published`"
+      (is (= 1 (:has_human_edit (db.recipe/get-recipe h/*ds* h/*user-id* id))))
+      (is (every? #(contains? % :has_human_edit)
+                  (db.recipe/list-recipes h/*ds* h/*user-id*))))
+    (testing "and it is not part of the content — no version carries it"
+      (is (every? #(false? (contains? % :has_human_edit))
+                  (:versions (versions-of id)))))))
+
+(deftest human-only-narrows-the-listing
+  (let [{by-hand :id} (create-as! true "By hand")
+        {by-agent :id} (create-as! false "By an agent")]
+    (testing "on, the shelf is the marked rows only"
+      (is (= [by-hand] (map :id (db.recipe/list-recipes h/*ds* h/*user-id*
+                                                        {:human-only? true})))))
+    (testing "off, or not asked for, it is everything"
+      (is (= #{by-hand by-agent}
+             (set (map :id (db.recipe/list-recipes h/*ds* h/*user-id* {:human-only? false})))))
+      (is (= #{by-hand by-agent}
+             (set (map :id (db.recipe/list-recipes h/*ds* h/*user-id*))))))
+    (testing "it composes with the search rather than replacing it — both clauses
+              apply, so a term that matches only the agent's recipe finds nothing"
+      (is (= [by-hand] (map :id (db.recipe/list-recipes h/*ds* h/*user-id*
+                                                        {:human-only? true :search-term "by"}))))
+      (is (empty? (db.recipe/list-recipes h/*ds* h/*user-id*
+                                          {:human-only? true :search-term "agent"}))))))
+
+(deftest human-only-narrows-inside-the-visitor-scope
+  ;; The clause has to be a `:where` beside the scope, not a filter over rows the
+  ;; query already returned: a visitor filtering must get the human-edited ones
+  ;; *among the published*, never a peek at an unpublished one that happens to
+  ;; carry the mark.
+  (let [{drafted :id} (create-as! true "Drafted by hand")
+        {signed :id} (create-as! true "Signed and by hand")
+        {agents :id} (create-as! false "Signed, by an agent")]
+    (db.recipe/publish-recipe h/*ds* h/*user-id* signed)
+    (db.recipe/publish-recipe h/*ds* h/*user-id* agents)
+    (testing "the visitor's filtered shelf is the published human-edited row alone"
+      (is (= [signed] (map :id (db.recipe/list-recipes h/*ds* db.recipe/visitor-scope
+                                                       {:human-only? true})))))
+    (testing "the human-edited draft stays outside it — the filter narrows the
+              scope and cannot widen it"
+      (let [ids (set (map :id (db.recipe/list-recipes h/*ds* db.recipe/visitor-scope
+                                                      {:human-only? true})))]
+        (is (false? (contains? ids drafted)))
+        (is (false? (contains? ids agents)))))
+    (testing "while the owner does see the draft under the same filter, so what
+              the visitor is missing is the latch and not the mark"
+      (is (= #{drafted signed} (set (map :id (db.recipe/list-recipes h/*ds* h/*user-id*
+                                                                     {:human-only? true}))))))))
+
 (deftest delete-takes-the-history-with-it
   (let [{:keys [id]} (create! "Ciabatta")]
     (db.recipe/update-recipe h/*ds* h/*user-id* id {:description "v2"} nil)

@@ -1,0 +1,14 @@
+{:up ["ALTER TABLE recipes ADD COLUMN has_human_edit INTEGER NOT NULL DEFAULT 0"]
+ ;; **Every existing row comes out at 0, and that is the decision, not the
+ ;; default falling where it fell.** Nothing in this schema ever recorded who
+ ;; wrote a Recipe — `recipe_history` has no author column, and `recipes.user_id`
+ ;; deliberately cannot answer it, since a machine token acts in the owner's scope
+ ;; and its rows carry the owner's id. So the provenance of what already exists is
+ ;; genuinely unknown, and unknown provenance is not human provenance: marking
+ ;; these rows 1 would assert something nobody recorded. Leaving them 0 is
+ ;; self-healing — a recipe earns the mark the next time it is saved from the UI.
+ ;;
+ ;; The column goes on `recipes` and not on `recipe_history`: this is one
+ ;; monotonic fact about the row, not per-version authorship. "Who wrote v3" is a
+ ;; different feature and would need a different column in a different table.
+ :down ["ALTER TABLE recipes DROP COLUMN has_human_edit"]}
