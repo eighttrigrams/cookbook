@@ -44,11 +44,16 @@
   written before the column existed, which is a third category and a synonym for
   neither (see migration 005).
 
-  The bit stays, and the two cannot disagree: `has_human_edit` is true exactly
-  when some version reads `'ui'`, and the same write sets both. Keeping the bit is
-  what keeps `?human=true` a plain `:where` on the row instead of an aggregate
-  over history on every listing read — the thing this namespace avoided when it
-  put the version number on the row.
+  The bit stays, and going forward the two cannot disagree: `has_human_edit` is
+  true exactly when some version reads `'ui'`, and the same write sets both.
+  Keeping the bit is what keeps `?human=true` a plain `:where` on the row instead
+  of an aggregate over history on every listing read — the thing this namespace
+  avoided when it put the version number on the row. A row that straddles the two
+  migrations is the one place they read differently and neither is wrong: a UI save
+  made after 004 and before 005 set the bit at a time when no version could carry a
+  label, so the Recipe reads human-edited with nothing but unrecorded versions in
+  it. Deriving the bit instead of keeping it would not have helped — it would have
+  lost that Recipe from the filter it already appears in.
 
   The one ordering that matters is in `archive!`: a save pushes the outgoing
   version into history together with **its own** source, and only the statement

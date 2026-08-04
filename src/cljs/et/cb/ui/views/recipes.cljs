@@ -10,7 +10,10 @@
   contradict the API's own rule.
 
   Recipes are versioned. The card shows which version it is on; every save that
-  changes something makes the next one.
+  changes something makes the next one. Beside that it shows where those versions
+  came from — `3(machine)/17(ui)` — from counts the listing endpoint aggregates,
+  because a collapsed card is exactly the place that cannot go and fetch a version
+  list.
 
   The shelf can be narrowed two ways at once — by a title search, and to the
   Recipes a human has edited here rather than an agent. Both are the listing
@@ -165,7 +168,29 @@
       [:div.card-body [markdown/render (:description detail)]])
     [:div.card-body-loading "Loading…"]))
 
-(defn- card [{:keys [id title useful_when version published published_at modified_at]}
+(def ^:private source-badge-title
+  "Spelled out because `(?)` is the bucket every Recipe written before this
+  shipped falls into, and a reader who is not told would read it as the app being
+  unsure rather than as nothing having been recorded."
+  (str "Where this Recipe's versions came from — "
+       "(ui) saved here by hand, "
+       "(machine) written by an agent, "
+       "(?) not recorded, which is every version from before cookbook noted this"))
+
+(defn- source-split
+  "`3(machine)/17(ui)`, and only the buckets that have something in them: a
+  Recipe nothing has written by machine says `17(ui)` rather than carrying a `0`
+  around. All three empty cannot happen — the counts sum to the version number, so
+  there is always at least one — but a listing row from an older server would have
+  no counts at all, and that renders as nothing rather than as `0(?)`."
+  [{:keys [machine_versions ui_versions unrecorded_versions]}]
+  (let [buckets (->> [[machine_versions "machine"] [ui_versions "ui"] [unrecorded_versions "?"]]
+                     (filter (fn [[n _]] (and (number? n) (pos? n))))
+                     (map (fn [[n label]] (str n "(" label ")"))))]
+    (when (seq buckets)
+      [:span.source-badge {:title source-badge-title} (str/join "/" buckets)])))
+
+(defn- card [{:keys [id title useful_when version published published_at modified_at] :as recipe}
              {:keys [logged-in? open details]}]
   (let [expanded? (contains? open id)
         ;; JSON gives 0/1 and 0 is truthy in cljs, so this has to be a
@@ -180,6 +205,7 @@
                                             " — public, and one way")}
          "published"])
       [:span.version-badge {:title "Every edit makes a new version"} (str "v" version)]
+      [source-split recipe]
       [:span.card-date (day modified_at)]]
      (when (seq useful_when)
        [:div.card-useful-when [markdown/render-inline useful_when]])

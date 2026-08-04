@@ -162,6 +162,22 @@ textarea:focus {
   white-space: nowrap;
 }
 
+/* Where those versions came from — `3(machine)/17(ui)`. Deliberately the same
+   shape as the version badge it stands next to, because it is the same fact read
+   a second way: the badge says how many versions there are, this says who wrote
+   them. Lighter than the version badge, so the pair reads as one group with the
+   count in front rather than as two competing labels. */
+.source-badge {
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: var(--surface-subtle);
+  color: var(--muted-text);
+  font-size: 0.72em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: help;
+}
+
 /* The latch, at a glance. A published Recipe is public and cannot be taken
    back, so the card says so on its own rather than only in the footer — where
    the Publish button is gone precisely because there is nothing left to do. */
