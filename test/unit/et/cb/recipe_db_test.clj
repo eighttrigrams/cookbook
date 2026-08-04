@@ -283,6 +283,216 @@
       (is (= #{drafted signed} (set (map :id (db.recipe/list-recipes h/*ds* h/*user-id*
                                                                      {:human-only? true}))))))))
 
+;; ---------------------------------------------------------------------------
+;; per-version provenance
+;;
+;; `source` on the row for the current version and on each history row for the
+;; superseded ones. Same `:human?` the mark above is set from — there is one way
+;; of deciding who the caller is, and the token is the handler's half of it.
+
+(defn- source-of [id]
+  (:source (db.recipe/get-recipe h/*ds* h/*user-id* id)))
+
+(defn- sources-by-version
+  "version -> source over the whole ladder, newest and oldest alike, which is what
+  makes 'this version was relabelled' visible at all."
+  [id]
+  (into {} (map (juxt :version :source) (:versions (versions-of id)))))
+
+(defn- split-of
+  "The badge's three counts as the listing serves them — from the listing, because
+  that is the only read that carries them and the card is a collapsed row."
+  [id]
+  (-> (first (filter #(= id (:id %)) (db.recipe/list-recipes h/*ds* h/*user-id*)))
+      (select-keys [:version :machine_versions :ui_versions :unrecorded_versions])))
+
+(deftest archive-order-is-the-whole-design
+  ;; The one bug this schema invites. `archive!` must write the *outgoing* row's
+  ;; own source, not the source of the save displacing it. Backwards, an agent's
+  ;; edit would retroactively relabel the owner's previous version as machine
+  ;; work — plausible-looking in the UI and wrong everywhere.
+  (let [{:keys [id]} (create-as! true "Written by hand, then by an agent")]
+    (is (= "ui" (source-of id)) "v1 is the human's")
+    (db.recipe/update-recipe h/*ds* h/*user-id* id {:description "the agent's body"} nil
+                             {:human? false})
+    (testing "v1 still reads ui and v2 reads machine — each version keeps the label
+              it was saved under"
+      (is (= {1 "ui" 2 "machine"} (sources-by-version id))))
+    (testing "and the other way round too: a human saving over a machine's version
+              does not relabel it"
+      (db.recipe/update-recipe h/*ds* h/*user-id* id {:description "the owner's body"} nil
+                               {:human? true})
+      (is (= {1 "ui" 2 "machine" 3 "ui"} (sources-by-version id))))
+    (testing "so a version's label never changes once written — the whole point of
+              recording it per version"
+      (db.recipe/update-recipe h/*ds* h/*user-id* id {:description "and again"} nil
+                               {:human? false})
+      (is (= {1 "ui" 2 "machine" 3 "ui" 4 "machine"} (sources-by-version id))))))
+
+(deftest a-machine-create-then-a-human-edit
+  (let [{:keys [id]} (create-as! false "The agent's draft")]
+    (is (= "machine" (source-of id)))
+    (let [saved (db.recipe/update-recipe h/*ds* h/*user-id* id {:description "body v2"} nil
+                                         {:human? true})]
+      (testing "the new version is the human's and the old one stays the agent's"
+        (is (= "ui" (:source saved)))
+        (is (= {1 "machine" 2 "ui"} (sources-by-version id))))
+      (testing "which is one machine version and one ui version on the card"
+        (is (= {:version 2 :machine_versions 1 :ui_versions 1 :unrecorded_versions 0}
+               (split-of id)))))))
+
+(deftest a-caller-that-says-nothing-leaves-the-version-unrecorded
+  ;; The third bucket, reachable from the db layer only: every write through a
+  ;; handler carries `:human?`, because the token always answers it. Stamping
+  ;; 'machine' here would turn 'nobody said' into a claim about an agent.
+  (let [{:keys [id]} (create! "Said nothing")]
+    (is (nil? (source-of id)))
+    (is (= {:version 1 :machine_versions 0 :ui_versions 0 :unrecorded_versions 1}
+           (split-of id)))
+    (testing "and a labelled save afterwards leaves the unrecorded version
+              unrecorded rather than backfilling it"
+      (db.recipe/update-recipe h/*ds* h/*user-id* id {:description "body v2"} nil {:human? true})
+      (is (= {1 nil 2 "ui"} (sources-by-version id)))
+      (is (= {:version 2 :machine_versions 0 :ui_versions 1 :unrecorded_versions 1}
+             (split-of id))))))
+
+(deftest what-does-not-touch-the-source
+  (testing "publishing: not a version at all, so there is no provenance in it to
+            record — and relabelling the row would be relabelling somebody else's
+            work"
+    (let [{:keys [id]} (create-as! false "Signed but not written")]
+      (db.recipe/publish-recipe h/*ds* h/*user-id* id)
+      (is (= "machine" (source-of id)))
+      (is (= 1 (:version (db.recipe/get-recipe h/*ds* h/*user-id* id))))
+      (is (= {:version 1 :machine_versions 1 :ui_versions 0 :unrecorded_versions 0}
+             (split-of id)))
+      (testing "publishing twice is no different"
+        (db.recipe/publish-recipe h/*ds* h/*user-id* id)
+        (is (= "machine" (source-of id))))))
+
+  (testing "a save that changes nothing: no history row, so no version — and the
+            label would otherwise be the one thing a no-op changed"
+    (let [{:keys [id]} (create-as! false "Unchanged")]
+      (db.recipe/update-recipe h/*ds* h/*user-id* id {:description "body v1"} nil {:human? true})
+      (is (= "machine" (source-of id)))
+      (is (= 0 (h/history-row-count id)))
+      (is (= {1 "machine"} (sources-by-version id)))))
+
+  (testing "a refused save: a stale modified_at writes nothing at all"
+    (let [{:keys [id]} (create-as! true "Raced")]
+      (is (nil? (db.recipe/update-recipe h/*ds* h/*user-id* id {:description "x"}
+                                         "1999-01-01 00:00:00" {:human? false})))
+      (is (= "ui" (source-of id))))))
+
+(deftest the-three-counts-sum-to-the-version
+  ;; A real invariant and not a coincidence: history holds versions 1..N-1, one row
+  ;; each, and the row itself is N. A split that stopped summing would mean the
+  ;; badge was counting something other than versions.
+  (let [{:keys [id]} (create-as! true "Much revised")]
+    (doseq [[i human?] (map-indexed vector [false true false false true nil])]
+      (if (nil? human?)
+        (db.recipe/update-recipe h/*ds* h/*user-id* id {:description (str "body " i)} nil)
+        (db.recipe/update-recipe h/*ds* h/*user-id* id {:description (str "body " i)} nil
+                                 {:human? human?}))
+      (let [{:keys [version machine_versions ui_versions unrecorded_versions]} (split-of id)]
+        (is (= version (+ machine_versions ui_versions unrecorded_versions))
+            (str "the split must sum to the version at v" version))))
+    (testing "and the tally matches the ladder the version list shows, one entry
+              per version — the counts are aggregated from the same columns"
+      (is (= {:version 7 :machine_versions 3 :ui_versions 3 :unrecorded_versions 1}
+             (split-of id)))
+      (is (= {1 "ui" 2 "machine" 3 "ui" 4 "machine" 5 "machine" 6 "ui" 7 nil}
+             (sources-by-version id))))))
+
+(deftest a-recipe-with-no-history-counts-its-one-version-once
+  ;; The LEFT JOIN's phantom row: with no history rows at all the join still yields
+  ;; one all-NULL row per recipe, which an unguarded `source IS NULL` count would
+  ;; read as an extra unrecorded version.
+  (let [{by-hand :id} (create-as! true "Fresh, by hand")
+        {said-nothing :id} (create! "Fresh, unlabelled")]
+    (is (= {:version 1 :machine_versions 0 :ui_versions 1 :unrecorded_versions 0}
+           (split-of by-hand)))
+    (is (= {:version 1 :machine_versions 0 :ui_versions 0 :unrecorded_versions 1}
+           (split-of said-nothing)))))
+
+(deftest the-split-does-not-widen-the-lean-projection
+  ;; The counts come from a join on `recipe_history`, which has a `description`
+  ;; column of its own — so this is the read that would have leaked a body through
+  ;; the back door.
+  (let [{:keys [id]} (create-as! true "Brioche")]
+    (db.recipe/update-recipe h/*ds* h/*user-id* id {:description "body v2"} nil {:human? true})
+    (testing "a lean listing still has no description key at all"
+      (is (every? #(false? (contains? % :description))
+                  (db.recipe/list-recipes h/*ds* h/*user-id*))))
+    (testing "and the join does not duplicate the row it counted history for"
+      (is (= 1 (count (db.recipe/list-recipes h/*ds* h/*user-id*)))))
+    (testing "the full projection is still the recipe's own body, not a history row's"
+      (is (= "body v2" (:description (first (db.recipe/list-recipes h/*ds* h/*user-id*
+                                                                   {:lean? false}))))))
+    (testing "and the counts are there either way — both versions here are the
+              owner's, the create and the save"
+      (is (= 2 (:ui_versions (first (db.recipe/list-recipes h/*ds* h/*user-id*
+                                                            {:lean? false}))))))))
+
+(deftest the-mark-and-the-labels-cannot-disagree
+  ;; 004's bit is kept rather than derived — a listing filter that had to aggregate
+  ;; over history is what putting the version on the row avoided — so the two have
+  ;; to be written by the same save. `has_human_edit` is true exactly when some
+  ;; version reads 'ui'.
+  (let [agrees? (fn [id]
+                  (let [ui? (some #{"ui"} (vals (sources-by-version id)))]
+                    (= (= 1 (:has_human_edit (db.recipe/get-recipe h/*ds* h/*user-id* id)))
+                       (boolean ui?))))]
+    (testing "a machine's create: no ui version, no mark"
+      (let [{:keys [id]} (create-as! false "The agent's")]
+        (is (agrees? id))
+        (is (= 0 (:ui_versions (split-of id))))))
+
+    (testing "a human's create: a ui version and the mark"
+      (let [{:keys [id]} (create-as! true "The owner's")]
+        (is (agrees? id))
+        (is (= 1 (:ui_versions (split-of id))))))
+
+    (testing "a caller that said nothing: neither, which is why NULL is not
+              'machine' — it is the same silence the 0 in the bit is"
+      (let [{:keys [id]} (create! "Unlabelled")]
+        (is (agrees? id))
+        (is (= 0 (:ui_versions (split-of id))))))
+
+    (testing "and they stay in step across a whole ladder of saves, including the
+              machine save after the human one — where the mark latches and the
+              label does not"
+      (let [{:keys [id]} (create-as! false "Much revised")]
+        (doseq [human? [false true false true false]]
+          (db.recipe/update-recipe h/*ds* h/*user-id* id
+                                   {:description (str "body " (rand-int 1000000) human?)}
+                                   nil {:human? human?})
+          (is (agrees? id)))
+        (testing "the last save was a machine's, so the current label is machine
+                  while the mark stays 1 — the bit is about the Recipe, the label
+                  about the version"
+          (is (= "machine" (source-of id)))
+          (is (= 1 (:has_human_edit (db.recipe/get-recipe h/*ds* h/*user-id* id))))
+          (is (pos? (:ui_versions (split-of id)))))))))
+
+(deftest every-version-entry-carries-a-source-key
+  ;; The version list is what part 2's diff viewer reads, so the key has to be
+  ;; there on every entry — including the ones whose value is nil, and including
+  ;; the current row, whose label comes off the row rather than off a history row.
+  (let [{:keys [id]} (create! "Unlabelled first")]
+    (db.recipe/update-recipe h/*ds* h/*user-id* id {:description "body v2"} nil {:human? false})
+    (db.recipe/update-recipe h/*ds* h/*user-id* id {:description "body v3"} nil {:human? true})
+    (let [versions (:versions (versions-of id))]
+      (is (= 3 (count versions)))
+      (is (every? #(contains? % :source) versions))
+      (testing "the current entry's label is the row's"
+        (is (= "ui" (:source (first versions))))
+        (is (true? (:current (first versions)))))
+      (testing "the history entries' labels are their own, oldest included"
+        (is (= "machine" (:source (second versions))))
+        (is (nil? (:source (last versions))))
+        (is (contains? (last versions) :source))))))
+
 (deftest delete-takes-the-history-with-it
   (let [{:keys [id]} (create! "Ciabatta")]
     (db.recipe/update-recipe h/*ds* h/*user-id* id {:description "v2"} nil)

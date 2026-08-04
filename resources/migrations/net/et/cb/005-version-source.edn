@@ -1,0 +1,30 @@
+{:up ["ALTER TABLE recipe_history ADD COLUMN source TEXT"
+      "ALTER TABLE recipes ADD COLUMN source TEXT"]
+ ;; Where one *version* came from: `'ui'` or `'machine'`, the owner's own two
+ ;; words for the distinction — and the only one cookbook can authenticate,
+ ;; since a machine token is checkable where a claim about a browser is not.
+ ;; Two columns because the current version lives on the row and the superseded
+ ;; ones live on their history rows, which is the same split `version` itself
+ ;; already has: history holds 1..N-1 and the row is N.
+ ;;
+ ;; **Nullable with no default, and NULL is a third category — 'unrecorded' —
+ ;; not a synonym for `'machine'`.** Every row and every history row that exists
+ ;; when this runs comes out NULL, and nothing can recover what wrote them:
+ ;; `recipe_history` never had an author column, and `recipes.user_id` cannot
+ ;; answer it either, because a machine token deliberately acts in the *owner's*
+ ;; scope, so its rows carry the owner's id (see `login-handler`). A `DEFAULT
+ ;; 'machine'` would therefore be a silent claim about every version the owner
+ ;; wrote by hand before anybody was counting, and the mirror-image claim is no
+ ;; better. Unrecorded provenance is not machine provenance, the same way 004
+ ;; held that unknown provenance is not human provenance — so the UI is given a
+ ;; third bucket to show rather than a lie to round to.
+ ;;
+ ;; This is *per-version* authorship, which is exactly what 004 said it was not
+ ;; answering: its `has_human_edit` is one monotonic bit about the row. The bit
+ ;; stays — it is what `?human=true` reads, and a filter that had to aggregate
+ ;; over history on every listing read is the thing the house avoided when it put
+ ;; the version number on the row. Going forward the bit is derivable from these
+ ;; columns (true exactly when some version reads `'ui'`), so the same write sets
+ ;; both and they cannot disagree.
+ :down ["ALTER TABLE recipes DROP COLUMN source"
+        "ALTER TABLE recipe_history DROP COLUMN source"]}

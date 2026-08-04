@@ -32,10 +32,27 @@
   same reason the version is — deriving it would mean a correlated subquery per
   row in every listing — and unlike most denormalisation it cannot go stale,
   because the fact is monotonic: once a human has edited a Recipe, that never
-  stops being true. It is a fact about the Recipe and not about a version; who
-  wrote v3 is a question this schema does not answer. The bit only exists going
-  forward from the migration that added it, so a row that predates it reads 0
-  until it is next saved from the UI."
+  stops being true. It is a fact about the Recipe and not about a version. The bit
+  only exists going forward from the migration that added it, so a row that
+  predates it reads 0 until it is next saved from the UI.
+
+  **Per-version provenance** is `source`, and it is the question the bit
+  deliberately did not answer: who wrote v3. It follows rhizome, which keeps the
+  same column on `items` and on `history`, so it sits where the version it
+  describes sits — on the row for the current version, on each history row for the
+  superseded ones. Its values are `'ui'` and `'machine'`, plus NULL for a version
+  written before the column existed, which is a third category and a synonym for
+  neither (see migration 005).
+
+  The bit stays, and the two cannot disagree: `has_human_edit` is true exactly
+  when some version reads `'ui'`, and the same write sets both. Keeping the bit is
+  what keeps `?human=true` a plain `:where` on the row instead of an aggregate
+  over history on every listing read — the thing this namespace avoided when it
+  put the version number on the row.
+
+  The one ordering that matters is in `archive!`: a save pushes the outgoing
+  version into history together with **its own** source, and only the statement
+  after that stamps the row with the new save's."
   (:require [clojure.string :as str]
             [next.jdbc :as jdbc]
             [honey.sql :as sql]
@@ -45,10 +62,50 @@
 (def lean-select-columns
   "Everything but the body. This *is* the default API shape."
   [:id :title :useful_when :version :published :published_at :created_at :modified_at
-   :has_human_edit])
+   :has_human_edit :source])
 
 (defn- select-columns [lean?]
   (if lean? lean-select-columns (conj lean-select-columns :description)))
+
+(defn- qualify
+  "The same columns, `recipes.`-prefixed. Only the listing needs this, and only
+  because the provenance join below puts a second table in scope that has a column
+  of the same name for most of them — `title`, `useful_when`, `description`,
+  `version`, `created_at` and `source` are all on `recipe_history` too. Read back
+  through `db/jdbc-opts`, which builds unqualified maps, so the shape a caller
+  sees is exactly what it was."
+  [columns]
+  (mapv #(keyword (str "recipes." (name %))) columns))
+
+(defn- versions-with-source
+  "One bucket of the provenance split, as a SQL expression over the joined
+  `recipe_history`: how many of a recipe's versions carry `label` — the history
+  rows, plus the current row itself when it matches. `nil` asks for the unrecorded
+  bucket, which needs `IS NULL` rather than a comparison with NULL.
+
+  The `recipe_id IS NOT NULL` guard is what keeps a recipe with no history at all
+  from counting the LEFT JOIN's single all-NULL phantom row as an unrecorded
+  version — without it every brand-new Recipe would read one version too many."
+  [label]
+  (let [carries (fn [column] (if label [:= column [:inline label]] [:is column nil]))]
+    [:+
+     [:sum [:case [:and [:is-not :recipe_history.recipe_id nil]
+                   (carries :recipe_history.source)]
+            [:inline 1]
+            :else [:inline 0]]]
+     [:case (carries :recipes.source) [:inline 1] :else [:inline 0]]]))
+
+(def ^:private source-split-columns
+  "The card's `3(machine)/17(ui)` split, computed from the `source` columns
+  themselves. **One source of truth**: no counter column that a write would have
+  to keep in step, because a count that could drift from the labels the version
+  list shows is worse than no count at all.
+
+  The three always sum to `version` — history holds 1..N-1 and the row is N — so
+  that is an invariant and not just an expectation."
+  [[(versions-with-source "machine") :machine_versions]
+   [(versions-with-source "ui") :ui_versions]
+   [(versions-with-source nil) :unrecorded_versions]])
 
 (def visitor-scope
   "What an anonymous caller may read: the published recipes, whoever owns them.
@@ -85,6 +142,14 @@
   `has_human_edit` bit described above. It composes with the search rather than
   competing with it: both are clauses on the same query.
 
+  Every row also carries the **provenance split** — `machine_versions`,
+  `ui_versions` and `unrecorded_versions` — because the badge that shows it sits on
+  a collapsed card, which is to say on a lean listing row. It is aggregated in the
+  query from a LEFT JOIN on `recipe_history`, and the join is deliberately
+  invisible in the projection: every selected column is `recipes.`-qualified, so a
+  lean read still cannot reach a `description` — not the row's, and not a history
+  row's either.
+
   Both narrowings are `:where` clauses and not filters over the rows, so they
   narrow *inside* the scope they are given. A visitor's search runs against the
   published recipes rather than against everything followed by a hiding step, and
@@ -92,15 +157,23 @@
   that caller could already see."
   ([ds scope] (list-recipes ds scope {}))
   ([ds scope {:keys [search-term human-only? lean?] :or {lean? true}}]
-   (let [search-clause (db/build-word-prefix-search-clause search-term :title)
+   ;; The search clause names `recipes.title` for the same reason the projection
+   ;; is qualified: `recipe_history` has a `title` too, and an unqualified one
+   ;; would have SQLite refuse the query as ambiguous. The scope and `human-only?`
+   ;; clauses need no prefix — `user_id`, `published` and `has_human_edit` exist
+   ;; on `recipes` alone — and an ambiguity introduced later would be an error
+   ;; SQLite raises, not a filter that quietly reads the wrong column.
+   (let [search-clause (db/build-word-prefix-search-clause search-term :recipes.title)
          where (cond-> [:and (scope-clause scope)]
                  search-clause (conj search-clause)
                  human-only? (conj [:= :has_human_edit 1]))]
      (jdbc/execute! (db/get-conn ds)
-       (sql/format {:select (select-columns lean?)
+       (sql/format {:select (into (qualify (select-columns lean?)) source-split-columns)
                     :from [:recipes]
+                    :left-join [:recipe_history [:= :recipe_history.recipe_id :recipes.id]]
                     :where where
-                    :order-by [[:modified_at :desc] [:id :desc]]})
+                    :group-by [:recipes.id]
+                    :order-by [[:recipes.modified_at :desc] [:recipes.id :desc]]})
        db/jdbc-opts))))
 
 (defn get-recipe
@@ -114,28 +187,52 @@
                   :where [:and [:= :id id] (scope-clause scope)]})
      db/jdbc-opts)))
 
+(defn- source-of
+  "Which source to attribute a write to: `'ui'` when the caller says it is not a
+  machine, `'machine'` when it says it is, and nil when it said nothing at all.
+
+  Nil is the third bucket, and leaving it reachable is deliberate. Every write
+  through a handler passes `:human?` — it comes from the token's `:machine?`
+  claim, so there is always an answer — which leaves the absent case to callers
+  that made no claim about themselves at all. `create-recipe` already describes
+  those as leaving the row of *unknown* provenance, and stamping `'machine'` on
+  them would turn 'nobody said' into a positive claim about an agent, which is the
+  same mistake migration 005 refuses to make with a column default.
+
+  There is deliberately no second way of deciding who the caller is: this reads
+  the flag the handlers already pass down for `has_human_edit`."
+  [opts]
+  (when (contains? opts :human?)
+    (if (:human? opts) "ui" "machine")))
+
 (defn create-recipe
   "A new recipe: version 1, no history rows, and private — `published` is left
   at its column default, because publishing is its own deliberate act.
 
   `:human?` records that this came from a caller that is not a machine — see
   `update-recipe` for what that means and why it is the fact worth recording. It
-  defaults to false, which is the conservative reading: a caller that says nothing
-  about itself leaves the row of unknown provenance rather than claiming the
-  owner's hand for it."
+  sets both halves of the record on the one insert: `has_human_edit` for the row,
+  and `source` for the version being created, which is v1. It defaults to false,
+  which is the conservative reading: a caller that says nothing about itself leaves
+  the row of unknown provenance rather than claiming the owner's hand for it —
+  `has_human_edit` 0 and `source` NULL, the two ways this schema has of not
+  asserting something."
   ([ds user-id fields] (create-recipe ds user-id fields {}))
-  ([ds user-id {:keys [title useful_when description]} {:keys [human?]}]
-   (let [result (jdbc/execute-one! (db/get-conn ds)
+  ([ds user-id {:keys [title useful_when description]} opts]
+   (let [human? (:human? opts)
+         result (jdbc/execute-one! (db/get-conn ds)
                   (sql/format {:insert-into :recipes
                                :values [{:title (str/trim title)
                                          :useful_when (or useful_when "")
                                          :description (or description "")
                                          :version 1
                                          :has_human_edit (if human? 1 0)
+                                         :source (source-of opts)
                                          :user_id user-id}]
                                :returning (select-columns false)})
                   db/jdbc-opts)]
-     (tel/log! {:level :info :data {:id (:id result) :user-id user-id :human? (boolean human?)}}
+     (tel/log! {:level :info :data {:id (:id result) :user-id user-id :human? (boolean human?)
+                                    :source (source-of opts)}}
                "Recipe created")
      result)))
 
@@ -150,14 +247,25 @@
    :useful_when (if (some? useful_when) useful_when (:useful_when current))
    :description (if (some? description) description (:description current))})
 
-(defn- archive! [tx current]
+(defn- archive!
+  "Push the outgoing state into history — with **its own** `source`, taken off the
+  row alongside its own text and its own version number, and never the source of
+  the save that is displacing it. Only the statement after this one stamps the row
+  with the new save's source.
+
+  Backwards, every version would be attributed to whoever wrote the *next* one: an
+  agent's edit would retroactively relabel the owner's previous version as machine
+  work. That reads as plausible in the UI and is wrong everywhere, which is why
+  `archive-order-is-the-whole-design` in the db tests pins it."
+  [tx current]
   (jdbc/execute-one! tx
     (sql/format {:insert-into :recipe_history
                  :values [{:recipe_id (:id current)
                            :version (:version current)
                            :title (:title current)
                            :useful_when (:useful_when current)
-                           :description (:description current)}]})))
+                           :description (:description current)
+                           :source (:source current)}]})))
 
 (defn update-recipe
   "Save the given fields as the new current state and archive the outgoing one.
@@ -183,10 +291,16 @@
   The recorded fact is deliberately 'not a machine token' rather than 'came from
   the browser'. Today the web UI is the only client that authenticates as the
   human — `cookbook-tui` logs in as `machine-user`, so its writes count as a
-  machine's — and a token is checkable where a claim about a browser is not."
+  machine's — and a token is checkable where a claim about a browser is not.
+
+  The same flag also labels the **version**: the row's `source` becomes `'ui'` or
+  `'machine'` on that same statement, which is what keeps the bit and the labels
+  from ever disagreeing. Unlike the bit, `source` is per-version and so it is
+  written rather than latched — the outgoing version keeps the label it was saved
+  under, because `archive!` carried it into history one statement earlier."
   ([ds user-id id fields expected-modified-at]
    (update-recipe ds user-id id fields expected-modified-at {}))
-  ([ds user-id id fields expected-modified-at {:keys [human?]}]
+  ([ds user-id id fields expected-modified-at {:keys [human?] :as opts}]
    (jdbc/with-transaction [tx (db/get-conn ds)]
      (let [current (get-recipe tx user-id id {:lean? false})
            incoming (merge-content current fields)]
@@ -204,6 +318,7 @@
                           (sql/format {:update :recipes
                                        :set (cond-> (assoc incoming
                                                            :version (inc (:version current))
+                                                           :source (source-of opts)
                                                            :modified_at [:raw "datetime('now')"])
                                               human? (assoc :has_human_edit 1))
                                        :where [:= :id id]
@@ -211,7 +326,8 @@
                           db/jdbc-opts)]
              (tel/log! {:level :info :data {:id id :user-id user-id
                                             :version (:version result)
-                                            :human? (boolean human?)}}
+                                            :human? (boolean human?)
+                                            :source (source-of opts)}}
                        "Recipe saved")
              result)))))))
 
@@ -228,7 +344,10 @@
 
   It does not set `has_human_edit` either, for the same reason it writes no
   version: that bit says a human wrote the text, and putting your name to text an
-  agent wrote is not writing it.
+  agent wrote is not writing it. It leaves `source` alone for a stricter reason
+  still — publishing is not a version at all, so there is no version of it whose
+  provenance could be recorded, and touching the row's label would be relabelling
+  somebody else's work.
 
   nil when the id matches nothing the user owns."
   [ds user-id id]
@@ -267,11 +386,18 @@
   "Every state of a recipe, newest first. The current row is included as version
   N and flagged `:current true`, so a reader can step from today's text back
   through the history in one uniform list. nil when the id matches nothing the
-  user owns."
+  user owns.
+
+  Every entry carries `:source` — where that one version came from — and it comes
+  from two places, mirroring rhizome's `get-description-history`: the current
+  entry's off the row, the older ones off their own history rows. The key is always
+  present and its value may be nil, which is a version written before anything
+  recorded this rather than a version whose author was withheld."
   [ds user-id id]
   (when-let [current (get-recipe ds user-id id {:lean? false})]
     (let [history (jdbc/execute! (db/get-conn ds)
-                    (sql/format {:select [:version :title :useful_when :description :created_at]
+                    (sql/format {:select [:version :title :useful_when :description :created_at
+                                          :source]
                                  :from [:recipe_history]
                                  :where [:= :recipe_id id]
                                  :order-by [[:version :desc]]})
@@ -279,6 +405,7 @@
       {:versions (into [(assoc (content-of current)
                                :version (:version current)
                                :created_at (:modified_at current)
+                               :source (:source current)
                                :current true)]
                        history)
        :total (inc (count history))})))
