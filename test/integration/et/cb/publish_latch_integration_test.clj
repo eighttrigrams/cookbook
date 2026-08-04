@@ -151,7 +151,14 @@
 
     (testing "a search cannot widen what a visitor sees"
       (is (empty? (:body (anon :get "/api/recipes?search=Draft"))))
-      (is (= #{signed} (ids-in (anon :get "/api/recipes?search=Signed")))))
+      (is (= #{signed} (ids-in (anon :get "/api/recipes?search=Signed"))))
+      (testing "nor can a bare prefix of the draft's title, now that a prefix is
+                what search matches"
+        (is (empty? (:body (anon :get "/api/recipes?search=dra"))))
+        (is (empty? (:body (anon :get "/api/recipes?search=d")))))
+      (testing "and the owner does see it under the same term, so what the
+                visitor is missing is the latch and not the search"
+        (is (= #{drafted} (ids-in (GET-json "/api/recipes?search=dra"))))))
 
     (testing "the published one is lean by default for a visitor too"
       (let [lean (:body (anon :get (str "/api/recipes/" signed)))]

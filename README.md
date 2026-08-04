@@ -92,7 +92,7 @@ A Recipe has three fields, and the split between them is a retrieval index, not
 a bandwidth optimisation:
 
 - `title` and `useful_when` — what an agent scans to decide whether a Recipe is
-  relevant;
+  relevant, the title being the one `?search=` matches on;
 - `description` — the body, fetched for exactly the one Recipe that turned out
   to be relevant.
 
@@ -159,7 +159,10 @@ are the interface, not decoration.
 ### Recipes
 
 - `GET /api/recipes` — the listing, most recently saved first. `?search=` narrows
-  over title and useful-when. **Lean**: no `description` key at all.
+  over the **title** by **word-prefix**, AND across whitespace-separated terms:
+  `ab cd` finds `abc cde` but not `ad cd`, and `cd` does not find `abcd`. A word
+  is a run of letters and digits, so `heating` finds `Re-heating`. `%` and `_`
+  are ordinary characters. **Lean**: no `description` key at all.
 - `GET /api/recipes/:id` — one recipe, lean the same way.
 - **`?detail=full`** on either of those adds the description. That is the only
   way to get a body, and it is meant to be asked for one recipe at a time.

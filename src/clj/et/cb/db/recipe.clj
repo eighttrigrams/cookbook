@@ -61,11 +61,21 @@
 (defn list-recipes
   "The recipes visible in `scope` — a user-id for their owner, `visitor-scope`
   for an anonymous caller — most recently touched first, optionally narrowed by
-  a substring search over title and useful-when. `lean?` (the default) leaves
-  the description out of the projection entirely."
+  a **word-prefix search over the title**. `lean?` (the default) leaves the
+  description out of the projection entirely.
+
+  Every whitespace-separated term of the search has to be the prefix of some
+  word in the title, case-insensitively — see
+  `db/build-word-prefix-search-clause` for what a word is. Neither useful-when
+  nor the description is searched: the title is the name of the thing, and a
+  match in a line of prose was never what made a recipe the one you meant.
+
+  The search is a `:where` clause and not a filter over the rows, so it narrows
+  *inside* the scope it is given. A visitor's search runs against the published
+  recipes rather than against everything followed by a hiding step."
   ([ds scope] (list-recipes ds scope {}))
   ([ds scope {:keys [search-term lean?] :or {lean? true}}]
-   (let [search-clause (db/build-search-clause search-term [:title :useful_when])
+   (let [search-clause (db/build-word-prefix-search-clause search-term :title)
          where (cond-> [:and (scope-clause scope)]
                  search-clause (conj search-clause))]
      (jdbc/execute! (db/get-conn ds)

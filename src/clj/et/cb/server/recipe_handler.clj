@@ -21,7 +21,15 @@
 
 (defn list-recipes-handler
   "GET /api/recipes — the caller's recipes, most recently saved first, optionally
-  narrowed by ?search over title and useful-when.
+  narrowed by ?search over the **title**.
+
+  **?search is a word-prefix match, AND across terms.** The search splits on
+  whitespace, and a recipe matches when every term is the prefix of some word in
+  its title, case-insensitively: `?search=ab cd` finds `abc cde` but not
+  `ad cd`, and `?search=cd` does not find `abcd` — a prefix is not a substring.
+  A word is a run of letters and digits, so `heating` finds `Re-heating` and
+  `start` finds `make/start`. Nothing else is searched: not useful-when, not the
+  description. `%` and `_` are ordinary characters here, not wildcards.
 
   **Lean by default**: the response carries no `description` key at all. Pass
   ?detail=full to include it. The two short fields are meant as a retrieval

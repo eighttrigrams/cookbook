@@ -73,6 +73,57 @@
                             (map (fn [col] [:like [:lower col] (str "%" term "%")]) columns)))
                     terms)))))))
 
+(def word-separator-chars
+  "What ends a word for `build-word-prefix-search-clause`.
+
+  **The call:** a word is a run of letters and digits, and *every* other ASCII
+  character ends one — whitespace, but punctuation too. One rule with no
+  exceptions to remember, and it is the one that makes the real titles behave:
+  `re-heating` is two words, so `heating` finds it, and `make/start` is two, so
+  `start` does. A curated list would have to answer why `.` separates and `+`
+  does not.
+
+  Anything **outside** ASCII is a word character, deliberately: `Käse` stays one
+  word, so `se` does not find it. Treating every non-alphanumeric byte as a
+  separator would have made every accented letter a word boundary."
+  (str " \t\n\r"
+       "!\"#$%&'()*+,-./"
+       ":;<=>?@"
+       "[\\]^_`"
+       "{|}~"))
+
+(defn build-word-prefix-search-clause
+  "Case-insensitive AND-of-terms **word-prefix** match over `column`.
+
+  The search string splits on whitespace, and a row matches when *every* term is
+  a prefix of *some* word in `column`: `ab cd` matches `abc cde` — `ab` prefixes
+  `abc`, `cd` prefixes `cde` — but not `ad cd`, since `ab` prefixes neither
+  word. A prefix is not a substring, so `cd` does not match `abcd`. What counts
+  as a word is `word-separator-chars`.
+
+  Matching is **literal**: it goes through SQLite's `instr` rather than `LIKE`,
+  so `%` and `_` in a term are the characters they look like rather than
+  wildcards — searching `%` looks for a word starting with `%` instead of
+  matching every row — and there is no escaping to get right. Prepending a space
+  to the value turns 'at the start of the value' into 'after a separator', so
+  the first word needs no case of its own.
+
+  nil for a blank search, which every caller reads as 'no narrowing'."
+  [search-term column]
+  (when-not (str/blank? search-term)
+    (let [terms (->> (str/split (str/trim search-term) #"\s+")
+                     (remove str/blank?)
+                     (map str/lower-case))
+          value [:|| [:inline " "] [:lower column]]]
+      (when (seq terms)
+        (into [:and]
+              (map (fn [term]
+                     (into [:or]
+                           (map (fn [separator]
+                                  [:> [:instr value (str separator term)] [:inline 0]])
+                                word-separator-chars)))
+                   terms))))))
+
 (defn reset-all-data!
   "Dev-only: wipe user data (keeps schema). Child rows first, so nothing is left
   pointing at a row that is already gone."

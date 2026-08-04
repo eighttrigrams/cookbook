@@ -78,14 +78,41 @@
     (is (= 404 (:status (GET-json (str "/api/recipes/" id)))))
     (is (empty? (:body (GET-json "/api/recipes"))))))
 
-(deftest search-narrows-over-the-two-short-fields
+(deftest search-narrows-over-the-title
   (create! "Sourdough")
   (:body (POST-json "/api/recipes" {:title "Risotto" :useful_when "rice night"
                                     :description "sourdough is not involved"}))
   (is (= ["Sourdough"] (map :title (:body (GET-json "/api/recipes?search=sourdough")))))
-  (is (= ["Risotto"] (map :title (:body (GET-json "/api/recipes?search=rice")))))
+  (is (= ["Risotto"] (map :title (:body (GET-json "/api/recipes?search=riso")))))
+  (testing "useful-when is not searched any more — `rice night` is Risotto's, and
+            the whole listing now says no"
+    (is (empty? (:body (GET-json "/api/recipes?search=rice")))))
   (testing "and not over the body, which a lean read never loads"
     (is (= 1 (count (:body (GET-json "/api/recipes?search=sourdough")))))))
+
+(defn- titles-found [query]
+  (set (map :title (:body (GET-json (str "/api/recipes?search=" query))))))
+
+(deftest search-is-a-word-prefix-match-over-http
+  (create! "abc cde")
+  (create! "ad cd")
+  (create! "abcd")
+  (create! "50 % rye")
+  (testing "the owner's example, with the query string carrying the space either
+            way it can be encoded"
+    (is (= #{"abc cde"} (titles-found "ab%20cd")))
+    (is (= #{"abc cde"} (titles-found "ab+cd"))))
+  (testing "a prefix is not a substring, over HTTP as at the db layer: cd is a
+            prefix of the word cde and of the word cd, but not of abcd"
+    (is (= #{"abc cde" "ad cd"} (titles-found "cd"))))
+  (testing "a % arrives as a %: it finds the title with one in it, and it is not
+            a wildcard that drags in the other three"
+    (is (= #{"50 % rye"} (titles-found "%25"))))
+  (testing "the semantics are published where a caller will read them"
+    (let [doc (:doc (first (filter #(and (= "/api/recipes" (:path %)) (= "GET" (:method %)))
+                                   (:body (GET-json "/api/describe")))))]
+      (is (re-find #"(?i)word-prefix" doc))
+      (is (re-find #"(?i)title" doc)))))
 
 (deftest recipes-are-in-describe
   (let [entries (:body (GET-json "/api/describe"))
