@@ -164,8 +164,11 @@
   (let [{:keys [recipes search logged-in? open details editing publishing]} @state/*app-state]
     [:div.shelf
      (when logged-in? [compose-form])
+     ;; The endpoint matches words from their start and only in the title, so
+     ;; the placeholder says titles, and says beginnings of words rather than
+     ;; letting a typist expect a substring to hit.
      [:input.search
-      {:type "text" :placeholder "Search titles and useful-when"
+      {:type "text" :placeholder "Search titles — start of any word"
        :value search
        :on-change #(state/set-search (-> % .-target .-value))}]
      (if (empty? recipes)
