@@ -21,6 +21,13 @@
     (repl/migrate config)))
 
 (defn rollback!
-  [connectable]
-  (let [config (migration-config connectable)]
-    (repl/rollback config)))
+  "Roll the datastore back one migration, or as far as `amount-or-id` says —
+  ragtime's own two readings of that argument: a count, or the id to roll back
+  *to*, which is exclusive of the named migration itself.
+
+  The id form is what a test naming one particular migration wants. The count
+  form silently means something different every time a migration is added, since
+  what 'one back' reverses is whatever happens to be last."
+  ([connectable] (rollback! connectable 1))
+  ([connectable amount-or-id]
+   (repl/rollback (migration-config connectable) amount-or-id)))

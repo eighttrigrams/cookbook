@@ -85,6 +85,13 @@
 ;;
 ;; Its own temp file database: rolling back the suite's shared in-memory schema
 ;; would take every other test with it.
+;;
+;; Both tests below roll back **to 002**, not one step. `repl/rollback` with no
+;; argument reverses whatever migration happens to be last, which was 003 when
+;; these were written and stopped being 003 the moment 004 was added — the tests
+;; then asserted about 003's columns after rolling back somebody else's
+;; migration. Naming the floor says what they mean and keeps saying it: ragtime's
+;; id form is exclusive, so "to 002" is "003 and everything above it, gone".
 
 (defn- temp-file-db
   "A migrated database of its own in a temp directory, and a thunk that deletes it.
@@ -112,7 +119,7 @@
   ;; would have succeeded.
   (let [[ds clean!] (temp-file-db "cb-migration-partial")]
     (try
-      (migrations/rollback! (:conn ds))
+      (migrations/rollback! (:conn ds) "002-recipes")
       (is (not (contains? (columns ds) "is_machine_user")) "003 is rolled back")
 
       (jdbc/execute-one! (db/get-conn ds)
@@ -150,7 +157,7 @@
       (db.user/set-machine-user-password! ds (:id owner) "machine-secret")
       (is (contains? (columns ds) "is_machine_user"))
 
-      (migrations/rollback! (:conn ds))
+      (migrations/rollback! (:conn ds) "002-recipes")
 
       (testing "all three columns and the index are gone"
         (is (not (contains? (columns ds) "is_machine_user")))
