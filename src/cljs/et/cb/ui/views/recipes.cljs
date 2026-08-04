@@ -12,6 +12,11 @@
   Recipes are versioned. The card shows which version it is on; every save that
   changes something makes the next one.
 
+  The shelf can be narrowed two ways at once — by a title search, and to the
+  Recipes a human has edited here rather than an agent. Both are the listing
+  endpoint's own `:where` clauses; nothing on this side filters rows it was
+  given.
+
   Publishing happens from the card, behind a confirmation, and only the owner
   sees the affordance. It is one way — the API has no unpublish — so a published
   card loses its Publish button and wears a badge instead.
@@ -188,19 +193,47 @@
          [:button.secondary {:on-click #(state/start-editing id)} "Edit"]
          [:button.secondary.danger {:on-click #(state/start-deleting id)} "Delete"]]])]))
 
+(defn- empty-message
+  "Why the shelf is empty, and never a lie about it. 'No recipes yet.' is a claim
+  about the shelf, so it may only be said when nothing is narrowing the view —
+  with a filter on, what is empty is the result and not the shelf.
+
+  The human filter gets a sentence of its own rather than sharing 'Nothing
+  matches.', because its empty case is the expected one at first: the provenance
+  bit is only recorded going forward, so every Recipe reads as not-human-edited
+  until it is next saved from here. A reader who is told that will not read it as
+  a broken filter."
+  [search human-only?]
+  (cond
+    (seq search) "Nothing matches."
+    human-only?  "Nothing here has been edited in this UI yet."
+    :else        "No recipes yet."))
+
 (defn recipes-tab []
-  (let [{:keys [recipes search logged-in? open details editing publishing deleting]} @state/*app-state]
+  (let [{:keys [recipes search human-only? logged-in? open details editing publishing deleting]}
+        @state/*app-state]
     [:div.shelf
      (when logged-in? [compose-form])
-     ;; The endpoint matches words from their start and only in the title, so
-     ;; the placeholder says titles, and says beginnings of words rather than
-     ;; letting a typist expect a substring to hit.
-     [:input.search
-      {:type "text" :placeholder "Search titles — start of any word"
-       :value search
-       :on-change #(state/set-search (-> % .-target .-value))}]
+     [:div.shelf-controls
+      ;; The endpoint matches words from their start and only in the title, so
+      ;; the placeholder says titles, and says beginnings of words rather than
+      ;; letting a typist expect a substring to hit.
+      [:input.search
+       {:type "text" :placeholder "Search titles — start of any word"
+        :value search
+        :on-change #(state/set-search (-> % .-target .-value))}]
+      ;; Shown signed out as well as in. A visitor is served the published
+      ;; Recipes and has no version history to consult, so 'which of these did the
+      ;; human write himself' is a question only this control can answer for them
+      ;; — and it is a narrowing of what they can already see, never a way past
+      ;; the latch.
+      [:label.human-filter {:title "Recipes with at least one edit made here, rather than by an agent"}
+       [:input {:type "checkbox"
+                :checked (boolean human-only?)
+                :on-change #(state/set-human-only (-> % .-target .-checked))}]
+       "Human-edited only"]]
      (if (empty? recipes)
-       [:div.empty (if (seq search) "Nothing matches." "No recipes yet.")]
+       [:div.empty (empty-message search human-only?)]
        (for [recipe recipes]
          ^{:key (:id recipe)}
          [card recipe {:logged-in? logged-in? :open open :details details}]))

@@ -30,6 +30,7 @@
            :publishing nil       ;; id of the recipe awaiting a publish confirmation
            :deleting nil         ;; id of the recipe awaiting a delete confirmation
            :search ""
+           :human-only? false    ;; show only what a human has edited here
            :recipes-request 0    ;; only the newest listing request may land
            :settings-open? false ;; the owner's settings panel, asked for like the login form
            :machine-user nil}))  ;; {:exists :username :password_set_at} — never a password
@@ -142,11 +143,22 @@
 ;; Anything that changes a body writes the fresh full row back into that map, so
 ;; an open card never shows a stale one.
 
-(defn- recipes-url []
-  (let [{:keys [search]} @*app-state]
-    (if (str/blank? search)
+(defn- recipes-url
+  "The listing URL carrying whichever narrowings are on. Assembled from a list
+  rather than branched on, so search and the human filter compose — the endpoint
+  applies both as `:where` clauses, and either of them winning here would have
+  been this client's invention."
+  []
+  (let [{:keys [search human-only?]} @*app-state
+        params (cond-> []
+                 (not (str/blank? search))
+                 (conj (str "search=" (js/encodeURIComponent search)))
+
+                 human-only?
+                 (conj "human=true"))]
+    (if (empty? params)
       "/api/recipes"
-      (str "/api/recipes?search=" (js/encodeURIComponent search)))))
+      (str "/api/recipes?" (str/join "&" params)))))
 
 (defn fetch-recipes
   "The search changes faster than the list comes back and responses can arrive
@@ -179,6 +191,14 @@
 
 (defn set-search [s]
   (swap! *app-state assoc :search s)
+  (fetch-recipes))
+
+(defn set-human-only
+  "Narrow the shelf to the Recipes a human has edited here, or stop narrowing.
+  Same shape as `set-search`, and the request numbering there covers this too:
+  toggling while a search response is in flight cannot land the older listing."
+  [on?]
+  (swap! *app-state assoc :human-only? on?)
   (fetch-recipes))
 
 (defn add-recipe [{:keys [title useful_when description]} on-success]

@@ -3,6 +3,10 @@
 @media (max-width: 640px) {
   body { padding: 14px 12px 32px; }
   .top-bar { flex-wrap: wrap; gap: 10px; margin-bottom: 16px; }
+  /* Not enough width for both: the filter drops under the search box rather
+     than squeezing it down to a few characters. */
+  .shelf-controls { flex-wrap: wrap; gap: 10px; }
+  .search { flex: 1 1 100%; }
   .card { padding: 14px; }
   .card-title { font-size: 1em; }
   .card-footer { flex-wrap: wrap; gap: 8px 12px; }

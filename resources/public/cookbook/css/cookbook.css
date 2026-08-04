@@ -96,7 +96,28 @@ textarea:focus {
   box-shadow: 0 0 0 3px rgba(180, 83, 9, 0.18);
 }
 
-.search { width: 100%; margin-bottom: 16px; }
+/* The two narrowings sit on one line: the search takes the room that is left and
+   the filter keeps its label intact, since a wrapped checkbox label reads as a
+   stray word. */
+.shelf-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.search { flex: 1; min-width: 0; }
+
+.human-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 0.85em;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+.human-filter input { accent-color: var(--accent); cursor: pointer; }
 
 /* --------------------------------------------------------------------------
    the shelf of recipes */
