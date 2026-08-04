@@ -31,7 +31,9 @@
   (:require [reagent.core :as r]
             [clojure.string :as str]
             [et.cb.ui.markdown :as markdown]
-            [et.cb.ui.state :as state]))
+            [et.cb.ui.provenance :as provenance]
+            [et.cb.ui.state :as state]
+            [et.cb.ui.views.diff :as diff]))
 
 (defn- day [timestamp]
   (when (seq (str timestamp))
@@ -171,20 +173,23 @@
 (def ^:private source-badge-title
   "Spelled out because `(?)` is the bucket every Recipe written before this
   shipped falls into, and a reader who is not told would read it as the app being
-  unsure rather than as nothing having been recorded."
-  (str "Where this Recipe's versions came from — "
-       "(ui) saved here by hand, "
-       "(machine) written by an agent, "
-       "(?) not recorded, which is every version from before cookbook noted this"))
+  unsure rather than as nothing having been recorded. The sentence itself comes
+  from `et.cb.ui.provenance`, so this badge and the version viewer's label cannot
+  end up naming the same fact differently."
+  (str "Where this Recipe's versions came from — " provenance/explanation))
 
 (defn- source-split
   "`3(machine)/17(ui)`, and only the buckets that have something in them: a
   Recipe nothing has written by machine says `17(ui)` rather than carrying a `0`
   around. All three empty cannot happen — the counts sum to the version number, so
   there is always at least one — but a listing row from an older server would have
-  no counts at all, and that renders as nothing rather than as `0(?)`."
+  no counts at all, and that renders as nothing rather than as `0(?)`.
+
+  The bucket names are the shared ones, for the reason above the tooltip."
   [{:keys [machine_versions ui_versions unrecorded_versions]}]
-  (let [buckets (->> [[machine_versions "machine"] [ui_versions "ui"] [unrecorded_versions "?"]]
+  (let [buckets (->> [[machine_versions provenance/machine-label]
+                      [ui_versions provenance/ui-label]
+                      [unrecorded_versions provenance/unrecorded-label]]
                      (filter (fn [[n _]] (and (number? n) (pos? n))))
                      (map (fn [[n label]] (str n "(" label ")"))))]
     (when (seq buckets)
@@ -217,6 +222,15 @@
          (when-not published?
            [:button.secondary {:on-click #(state/start-publishing id)} "Publish"])
          [:button.secondary {:on-click #(state/start-editing id)} "Edit"]
+         ;; Named for what it shows rather than for the merge view inside it: a
+         ;; one-version Recipe has nothing to diff and this still answers the
+         ;; question, which is what the `v1` badge next to the title is pointing
+         ;; at. Owner-only here because the whole footer is, and owner-only at
+         ;; the API too — a visitor gets a 404 from /versions for every id.
+         [:button.secondary
+          {:on-click #(state/start-diff id)
+           :title "Step through every version and see what each save changed"}
+          "Versions"]
          [:button.secondary.danger {:on-click #(state/start-deleting id)} "Delete"]]])]))
 
 (defn- empty-message
@@ -236,7 +250,8 @@
     :else        "No recipes yet."))
 
 (defn recipes-tab []
-  (let [{:keys [recipes search human-only? logged-in? open details editing publishing deleting]}
+  (let [{:keys [recipes search human-only? logged-in? open details editing publishing deleting
+                diffing]}
         @state/*app-state]
     [:div.shelf
      (when logged-in? [compose-form])
@@ -275,4 +290,9 @@
      ;; Same again: the question needs the title and the version count, both of
      ;; which the listing carries, so this one never fetches a body either.
      (when-let [recipe (first (filter #(= deleting (:id %)) recipes))]
-       [delete-modal recipe])]))
+       [delete-modal recipe])
+     ;; And out here for the same reason, more so: the version viewer is
+     ;; full-screen, so a card's backdrop-filter becoming its containing block
+     ;; would pin a supposedly full-screen overlay to the inside of one card.
+     (when diffing
+       [diff/component])]))

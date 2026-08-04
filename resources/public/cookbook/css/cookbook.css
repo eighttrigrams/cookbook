@@ -325,3 +325,147 @@ html.dark-mode .published-badge { background: rgba(245, 158, 11, 0.18); }
 .settings-absent { color: var(--muted-text); }
 .settings-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .settings-row input { flex: 1 1 220px; max-width: 320px; }
+
+/* --------------------------------------------------------------------------
+   the version viewer
+
+   Full-screen and fixed to the viewport, and rendered outside the cards for the
+   reason the modals are — see the comment at the bottom of `recipes-tab`. It sits
+   above them at 25 rather than beside them at 20; the two are never open at once,
+   but a full-screen surface that could land under a dialog is not worth relying
+   on argument for.
+
+   The page's own gradient rather than a wash, because this replaces the page
+   instead of veiling it: the shelf underneath is not something the reader is
+   comparing against, and a translucent full-screen panel over a list of cards is
+   unreadable in either theme. Which is why the gradient goes on as
+   `background-image` over an opaque `background-color` — in dark mode
+   `--body-bg`'s first stop has an alpha, and on its own it let the whole shelf
+   read through. */
+.diff-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 25;
+  overflow-y: auto;
+  background-color: var(--opaque-bg);
+  background-image: var(--body-bg);
+}
+.diff-page {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 24px;
+}
+.diff-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 0 0 16px;
+}
+/* Outline rather than the app's filled accent pill: there are five of them in a
+   row here, and five filled pills read as five things demanding to be pressed. */
+.diff-header button {
+  padding: 0 10px;
+  min-width: 34px;
+  height: 34px;
+  background: none;
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  border-radius: 8px;
+  font-size: 0.95em;
+  line-height: 1;
+}
+.diff-header button:hover:not(:disabled) {
+  background: var(--surface-subtle);
+  color: var(--text-primary);
+  transform: none;
+}
+.diff-header button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  transform: none;
+}
+.diff-step { font-variant-numeric: tabular-nums; }
+.diff-mode-toggle { margin-left: auto; }
+.diff-mode-toggle:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+/* Capped and clipped rather than allowed to push the mode toggle onto a second
+   line. A cap and not just `flex-shrink`, because the row above wraps: a flex
+   container breaks lines *before* it shrinks anything, so a shrinkable title
+   never gets the chance. Nothing is lost by clipping — the full title of both
+   versions is spelled out in the strip below, and the card it was opened from
+   named it. */
+.diff-recipe-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 32ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-size: 0.9em;
+}
+.diff-version-label {
+  flex: 0 0 auto;
+  font-weight: 600;
+  font-size: 0.9em;
+  font-variant-numeric: tabular-nums;
+  cursor: help;
+}
+
+/* The two sides' metadata, older left and newer right, which is how the split
+   merge view below is laid out too. Kept in both modes: in unified the columns no
+   longer mirror the pane, but what they are for is the change the pane cannot
+   show, and that is when a reader needs them most. */
+.diff-meta {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.diff-meta-side {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  background: var(--glass-bg-subtle);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  font-size: 0.85em;
+  min-width: 0;
+}
+.diff-meta-version { font-weight: 600; font-variant-numeric: tabular-nums; }
+.diff-meta-when { color: var(--muted-text); font-size: 0.9em; margin-bottom: 2px; }
+.diff-meta-row {
+  display: flex;
+  gap: 6px;
+  padding: 2px 6px;
+  margin: 0 -6px;
+  border-radius: 6px;
+  min-width: 0;
+}
+.diff-meta-key { color: var(--text-secondary); flex: 0 0 auto; }
+.diff-meta-value { overflow-wrap: anywhere; }
+.diff-meta-empty { color: var(--muted-text); font-style: italic; }
+/* Marked on both sides, not only the newer one — the reader is comparing, and a
+   mark on one column alone makes them hunt for what it replaced. Same accent wash
+   as `.published-badge`, which is likewise the one hardcoded rgba in both themes. */
+.diff-meta-row.changed { background: rgba(180, 83, 9, 0.12); }
+.diff-meta-row.changed .diff-meta-value { color: var(--accent); font-weight: 600; }
+
+.diff-editor {
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  overflow: hidden;
+}
+/* What a reader is told instead of being shown an unchanged pane and left to
+   guess whether it is broken. */
+.diff-note, .diff-loading {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  max-width: 80ch;
+  background: var(--surface-subtle);
+  border-radius: 10px;
+  color: var(--text-secondary);
+  font-size: 0.9em;
+  line-height: 1.5;
+}

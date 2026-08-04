@@ -25,10 +25,15 @@
            :dark-mode (initial-dark-mode)
            :recipes []           ;; the lean rows — these never carry a body
            :details {}           ;; id -> the full row, fetched when a card opens
+           :versions {}          ;; id -> every version of it, fetched when the viewer opens
+           :versions-request {}  ;; id -> the number of the newest /versions request for it
            :open #{}             ;; ids of the expanded cards
            :editing nil          ;; id of the recipe whose Edit modal is open
            :publishing nil       ;; id of the recipe awaiting a publish confirmation
            :deleting nil         ;; id of the recipe awaiting a delete confirmation
+           :diffing nil          ;; id of the recipe whose version viewer is open
+           :diff-version-idx 0   ;; which step of that history is on show
+           :diff-unified? false  ;; the merge view's mode — split unless asked otherwise
            :search ""
            :human-only? false    ;; show only what a human has edited here
            :recipes-request 0    ;; only the newest listing request may land
@@ -95,12 +100,20 @@
 
 (defn logout
   "Signing out has to drop what was fetched, not just hide it: the bodies
-  already pulled into `:details` are the owner's."
+  already pulled into `:details` are the owner's, and so is every superseded
+  draft in `:versions` — more so, since the API serves a history to nobody else
+  at all.
+
+  `:versions-request` goes with it, and that is the half that does the work: it
+  is what a landing `/versions` response checks itself against, so clearing it
+  makes an in-flight request from before the sign-out find no match and drop its
+  body instead of writing a history into a signed-out shelf."
   []
   (clear-token!)
   (swap! *app-state assoc
          :logged-in? false :token nil :current-user nil
          :recipes [] :details {} :open #{} :editing nil :publishing nil :deleting nil
+         :versions {} :versions-request {} :diffing nil
          ;; the machine user's state is the owner's business too, and the panel
          ;; must not stay open over a signed-out shelf
          :settings-open? false :machine-user nil)
@@ -189,6 +202,70 @@
     (swap! *app-state update :open #(if open? (disj % id) (conj % id)))
     (when-not open? (fetch-detail id nil))))
 
+;; ---------------------------------------------------------------------------
+;; the version history
+;;
+;; Same on-demand, cached-by-id shape as `:details`, and for the same reason: a
+;; shelf of thirteen cards must not pull thirteen histories nobody asked to read.
+;; Only the viewer ever wants one, and only for the recipe it is open on. The
+;; card's provenance badge is fed by counts the listing endpoint aggregates,
+;; precisely so a collapsed card never has to come here.
+
+(defn fetch-versions
+  "Every version of one recipe, into `[:versions id]`.
+
+  Numbered per id, the way the listing is numbered by `:recipes-request`: a save
+  drops the cached list, so reopening the viewer can put a second request for the
+  same id in flight behind the first, and the older response must not be the one
+  that lands. The counter is per id rather than global so that a request for one
+  recipe cannot invalidate another's, and it is only ever incremented — never
+  cleared alongside the cache — because a reset would let two live requests share
+  a number."
+  [id]
+  (let [request (-> (swap! *app-state update-in [:versions-request id] (fnil inc 0))
+                    (get-in [:versions-request id]))]
+    (api/fetch-json (str "/api/recipes/" id "/versions") (auth-headers)
+      (fn [{:keys [versions]}]
+        (when (= request (get-in @*app-state [:versions-request id]))
+          (swap! *app-state assoc-in [:versions id] (vec versions)))))))
+
+(defn- forget-versions!
+  "Anything that makes a new version makes the cached list short by one, and a
+  history one version behind the count on the card is exactly the contradiction
+  the viewer exists not to show. Dropped rather than refetched: nothing is
+  looking at it — the viewer covers the footer the Edit button sits in — so the
+  next open pays for it.
+
+  Publishing is not one of those things. It writes no history row and no version
+  bump, and it touches none of the three fields a version is made of, so the
+  cached list is still true after one."
+  [id]
+  (swap! *app-state update :versions dissoc id))
+
+(defn start-diff
+  "Open the version viewer on a recipe, at the newest step. Fetches only on a
+  miss; a save is what drops the cache, so what is kept is what is current."
+  [id]
+  (swap! *app-state assoc :diffing id :diff-version-idx 0)
+  (when-not (get-in @*app-state [:versions id])
+    (fetch-versions id)))
+
+(defn stop-diff
+  "`:diff-unified?` deliberately survives this: which of the two layouts a reader
+  can read is about the reader, not about the recipe they closed."
+  []
+  (swap! *app-state assoc :diffing nil :diff-version-idx 0))
+
+(defn step-diff
+  "+1 goes one version older, -1 one newer. The list is newest-first, so this is
+  an index step; the component clamps it against how many versions there are,
+  which is the only place that knows."
+  [delta]
+  (swap! *app-state update :diff-version-idx #(+ (or % 0) delta)))
+
+(defn toggle-diff-unified []
+  (swap! *app-state update :diff-unified? not))
+
 (defn set-search [s]
   (swap! *app-state assoc :search s)
   (fetch-recipes))
@@ -218,6 +295,7 @@
                   (auth-headers)
       (fn [recipe]
         (cache-detail! recipe)
+        (forget-versions! id)
         (fetch-recipes)
         (when on-success (on-success)))
       (err-handler "Could not save"))))
@@ -252,9 +330,14 @@
   (let [done #(when on-done (on-done))]
     (api/delete-simple (str "/api/recipes/" id) (auth-headers)
       (fn [_]
+        ;; The whole history went with it server-side, so the cached copy of it
+        ;; goes too — and the viewer closes if it was the thing being read,
+        ;; rather than stepping through versions of a recipe that is gone.
         (swap! *app-state (fn [s] (-> s
                                       (update :details dissoc id)
-                                      (update :open disj id))))
+                                      (update :versions dissoc id)
+                                      (update :open disj id)
+                                      (cond-> (= id (:diffing s)) (assoc :diffing nil)))))
         (fetch-recipes)
         (done))
       (fn [resp]

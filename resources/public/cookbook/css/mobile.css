@@ -16,6 +16,11 @@
   .top-bar-right { flex-wrap: wrap; }
   .modal-backdrop { padding: 12px; align-items: flex-start; }
   .modal { margin-top: 12px; }
+  .diff-page { padding: 14px 12px 32px; }
+  /* The version viewer's two sides stack rather than becoming two columns too
+     narrow to read a title in — older on top, which keeps the reading order the
+     wide layout has left to right. */
+  .diff-meta { grid-template-columns: 1fr; }
 }
 
 /* Touch screens: the lift-on-hover reads as a stuck state after a tap. */
