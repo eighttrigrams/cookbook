@@ -422,7 +422,11 @@ html.dark-mode .published-badge { background: rgba(245, 158, 11, 0.18); }
 /* One row per Scope. `auto 1fr auto auto` so the title column is as wide as the
    longest title and no wider, the description takes the slack, and the count and
    the buttons stay put — a row whose buttons moved with the length of its
-   description would be a row you cannot aim at. */
+   description would be a row you cannot aim at.
+   `as wide as the longest title` needs the cap on `.scope-row-title` below to
+   mean anything: an `auto` track sizes to max-content, so one long title pushed
+   the count and the buttons off the right of the viewport and left the row
+   unusable — Edit and Delete for the very Scope you would want to fix. */
 .scope-row {
   display: grid;
   grid-template-columns: auto 1fr auto auto;
@@ -432,7 +436,16 @@ html.dark-mode .published-badge { background: rgba(245, 158, 11, 0.18); }
   border-bottom: 1px solid var(--glass-border);
 }
 .scope-row:last-child { border-bottom: none; }
-.scope-row-title { font-weight: 600; }
+/* Wraps rather than widening its column, the same call `.card-tags` and
+   `.scope-row-description` make: a long title is still a line of words, and
+   `anywhere` is what breaks the one that is a single unbroken word — without it a
+   200-character word measured 2019px and put that row's Edit and Delete at
+   x=2397 in a 1400px window, out of reach of the Scope you would want to fix. */
+.scope-row-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  max-width: 320px;
+}
 .scope-row-description {
   color: var(--text-secondary);
   font-size: 0.9em;
