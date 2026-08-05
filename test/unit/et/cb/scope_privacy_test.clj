@@ -45,7 +45,14 @@
   (let [id (setup!)
         visitor db.recipe/visitor-audience]
     (testing "not on the listing"
-      (is (false? (contains? (first (db.recipe/list-recipes h/*ds* visitor)) :scopes))))
+      ;; The row count first, the shape the HTTP twin uses: `(contains? nil
+      ;; :scopes)` is `false`, so a visitor listing that came back empty would
+      ;; pass the line below while testing nothing at all — and the listing
+      ;; losing its rows is exactly the regression that would take this
+      ;; assertion with it.
+      (let [rows (db.recipe/list-recipes h/*ds* visitor)]
+        (is (= 1 (count rows)))
+        (is (false? (contains? (first rows) :scopes)))))
     (testing "not on the single read, and not when it asks for everything —
               ?detail=full is about verbosity and this is not"
       (is (false? (contains? (db.recipe/get-recipe h/*ds* visitor id) :scopes)))
