@@ -26,6 +26,15 @@
   with no `tags` key at all. The `logged-in?` gate on `card-tags` is cosmetic, and
   the comment there says why that distinction has to be kept.
 
+  **Scopes** are the other half of the filing, and they sit in the collapsed card's
+  header beside the version and published badges — which is where they belong,
+  because that header is the retrieval index and a Scope is how a Recipe is found
+  again. Same arrangement as the tags: the server sends a visitor no `scopes` key
+  at all and the `logged-in?` gate here is cosmetic. Picking them happens in the
+  compose form and the Edit modal, from the owner's own list; making them happens
+  on the Scopes page (`et.cb.ui.views.scopes`), not here. There is deliberately
+  **no filter by Scope** on the shelf — the owner asked for the badges.
+
   Publishing happens from the card, behind a confirmation, and only the owner
   sees the affordance. It is one way — the API has no unpublish — so a published
   card loses its Publish button and wears a badge instead.
@@ -47,23 +56,55 @@
 
 (def ^:private tags-placeholder "Tags — extra words to find this by")
 
+(defn- scope-picker
+  "Which Scopes this Recipe is filed under, as a row of toggles over the owner's
+  own list. Rendered as nothing at all when he has made no Scopes yet: an empty
+  picker would be a control that cannot do anything, and the place to make one is
+  the Scopes page.
+
+  `selected` is a ratom holding a set of ids, so this component owns no state of
+  its own — the form around it is what sends the set, and reading it back out of a
+  child would be the same fact in two places."
+  [selected]
+  ;; Both derefs happen out here, before the `for`. A deref inside the body of a
+  ;; lazy seq is evaluated after reagent has stopped watching, so the chips would
+  ;; not repaint when one was clicked — and reagent says so at the console rather
+  ;; than silently.
+  (let [scopes (:scopes @state/*app-state)
+        chosen @selected]
+    (when (seq scopes)
+      [:div.scope-picker
+       [:span.scope-picker-label {:title "Categories this Recipe is filed under"}
+        "Scopes"]
+       (for [{:keys [id title description]} scopes]
+         ^{:key id}
+         [:button.scope-chip
+          {:type "button"
+           :class (when (contains? chosen id) "on")
+           :title description
+           :on-click #(swap! selected (fn [s] (if (contains? s id) (disj s id) (conj s id))))}
+          title])])))
+
 (defn- compose-form []
   (let [title (r/atom "")
         useful-when (r/atom "")
         tags (r/atom "")
-        description (r/atom "")]
+        description (r/atom "")
+        scope-ids (r/atom #{})]
     (fn []
       (let [submit (fn []
                      (when-not (str/blank? @title)
                        (state/add-recipe {:title @title
                                           :useful_when @useful-when
                                           :tags @tags
-                                          :description @description}
+                                          :description @description
+                                          :scope_ids @scope-ids}
                                          (fn []
                                            (reset! title "")
                                            (reset! useful-when "")
                                            (reset! tags "")
-                                           (reset! description "")))))]
+                                           (reset! description "")
+                                           (reset! scope-ids #{})))))]
         [:div.compose
          [:input.compose-title
           {:type "text" :placeholder "Title"
@@ -85,19 +126,27 @@
            :rows 4
            :value @description
            :on-change #(reset! description (-> % .-target .-value))}]
+         [scope-picker scope-ids]
          [:button {:on-click submit :disabled (str/blank? @title)} "Add"]]))))
 
 (defn- edit-modal
-  "Tags sit in here with the three content fields even though a save that
-  touches only them makes no version — the modal is where you edit a Recipe, and
-  which of its fields the version ladder is about is the API's business. The
-  subtitle says the version this is editing, and a tags-only save deliberately
-  leaves that number where it is."
+  "Tags and Scopes sit in here with the three content fields even though a save
+  that touches only them makes no version — the modal is where you edit a Recipe,
+  and which of its fields the version ladder is about is the API's business. The
+  subtitle says the version this is editing, and a filing-only save deliberately
+  leaves that number where it is.
+
+  The Scopes are prefilled from the Recipe's own `:scopes`, which came in with the
+  body when the card was expanded. Sending them on every save is what makes the
+  server's rule work for this client: an omitted `scope_ids` would keep the filing,
+  and this form has a picker showing a set that the owner may just have emptied
+  on purpose."
   [recipe]
   (let [title (r/atom (or (:title recipe) ""))
         useful-when (r/atom (or (:useful_when recipe) ""))
         tags (r/atom (or (:tags recipe) ""))
-        description (r/atom (or (:description recipe) ""))]
+        description (r/atom (or (:description recipe) ""))
+        scope-ids (r/atom (set (map :id (:scopes recipe))))]
     (fn [recipe]
       [:div.modal-backdrop {:on-click state/stop-editing}
        [:div.modal {:on-click #(.stopPropagation %)}
@@ -117,13 +166,15 @@
           :rows 8
           :value @description
           :on-change #(reset! description (-> % .-target .-value))}]
+        [scope-picker scope-ids]
         [:div.modal-actions
          [:button {:disabled (str/blank? @title)
                    :on-click #(state/update-recipe (:id recipe)
                                                    {:title @title
                                                     :useful_when @useful-when
                                                     :tags @tags
-                                                    :description @description}
+                                                    :description @description
+                                                    :scope_ids (vec @scope-ids)}
                                                    state/stop-editing)}
           "Save"]
          [:button.secondary {:on-click state/stop-editing} "Cancel"]]]])))
@@ -241,7 +292,38 @@
   [:div.card-tags {:title "Extra words this Recipe can be found by — yours alone"}
    tags])
 
-(defn- card [{:keys [id title useful_when tags version published published_at modified_at]
+(defn- card-scopes
+  "The Scopes this Recipe is filed under, as badges in the collapsed card's header.
+
+  They belong here rather than under the useful-when line: the header **is** the
+  retrieval index — title, useful-when, which version, where its versions came from
+  — and 'which shelf is this on' is that same question. The description rides along
+  as the tooltip, which is the only place a reader meets it outside the Scopes page.
+
+  **This gate is cosmetic and must not be read as the privacy boundary**, exactly
+  as with `card-tags`. The boundary is the server: for a visitor the join is not run
+  at all, so a signed-out client holds no `scopes` key to draw and `logged-in?` here
+  would be redundant if the client could be trusted — which is precisely why it is
+  not the mechanism. Do not 'simplify' `db.recipe/with-scopes` on the grounds that
+  this hides them; deleting this line would show a signed-out reader nothing extra,
+  and deleting the server half would publish the owner's filing.
+
+  The badges are wrapped in an element rather than returned as a bare seq. A
+  component whose return value *is* a seq is handed to React as a fragment whose
+  children are the raw hiccup vectors — and a cljs vector is iterable, so React
+  walks into one and tries to render `:span.scope-badge`, the keyword, as a child.
+  A seq of children inside a hiccup vector is the shape reagent converts, and it is
+  what every other `for` in this file does."
+  [scopes]
+  [:span.card-scopes
+   (for [{:keys [id title description]} scopes]
+     ^{:key id}
+     [:span.scope-badge {:title (if (str/blank? description)
+                                  "A Scope this Recipe is filed under"
+                                  description)}
+      title])])
+
+(defn- card [{:keys [id title useful_when tags scopes version published published_at modified_at]
               :as recipe}
              {:keys [logged-in? open details]}]
   (let [expanded? (contains? open id)
@@ -256,6 +338,8 @@
         [:span.published-badge {:title (str "Published " (day published_at)
                                             " — public, and one way")}
          "published"])
+      (when (and logged-in? (seq scopes))
+        [card-scopes scopes])
       [:span.version-badge {:title "Every edit makes a new version"} (str "v" version)]
       [source-split recipe]
       [:span.card-date (day modified_at)]]

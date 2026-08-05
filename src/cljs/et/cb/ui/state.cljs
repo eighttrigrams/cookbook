@@ -38,7 +38,11 @@
            :human-only? false    ;; show only what a human has edited here
            :recipes-request 0    ;; only the newest listing request may land
            :settings-open? false ;; the owner's settings panel, asked for like the login form
-           :machine-user nil}))  ;; {:exists :username :password_set_at} — never a password
+           :machine-user nil     ;; {:exists :username :password_set_at} — never a password
+           :scopes []            ;; the owner's Scopes — [{:id :title :description :recipe_count}]
+           :scopes-open? false   ;; the Scopes page, revealed like the settings panel
+           :editing-scope nil    ;; id of the Scope being edited in place
+           :deleting-scope nil})) ;; id of the Scope awaiting a delete confirmation
 
 ;; ---------------------------------------------------------------------------
 ;; helpers
@@ -70,6 +74,17 @@
   (.removeItem js/localStorage "cookbook-user"))
 
 (declare fetch-recipes)
+(declare fetch-scopes)
+
+(defn- fetch-shelf!
+  "Everything the shelf is drawn from. The Scopes go with the Recipes rather than
+  waiting for the Scopes page to be opened, because the compose form's picker
+  needs them before anybody has opened anything — and they are only fetched for a
+  signed-in caller, since the endpoint answers 403 to anybody else and a 403 in
+  the console reads as a bug."
+  []
+  (fetch-recipes)
+  (when (:logged-in? @*app-state) (fetch-scopes)))
 
 (defn fetch-auth-required
   "Reading published Recipes is public, so the page renders either way.
@@ -87,14 +102,14 @@
                    :logged-in? true
                    :token token
                    :current-user (js->clj (js/JSON.parse user-str) :keywordize-keys true)))))
-      (fetch-recipes))))
+      (fetch-shelf!))))
 
 (defn login [username password on-success]
   (api/post-json "/api/auth/login" {:username username :password password} {}
     (fn [{:keys [token user]}]
       (swap! *app-state assoc :logged-in? true :token token :current-user user :error nil)
       (save-token! token user)
-      (fetch-recipes)
+      (fetch-shelf!)
       (when on-success (on-success)))
     (err-handler "Invalid credentials")))
 
@@ -116,7 +131,11 @@
          :versions {} :versions-request {} :diffing nil
          ;; the machine user's state is the owner's business too, and the panel
          ;; must not stay open over a signed-out shelf
-         :settings-open? false :machine-user nil)
+         :settings-open? false :machine-user nil
+         ;; and the Scopes more so: the server sends a signed-out client no
+         ;; `scopes` key at all, so keeping the fetched list here would be the one
+         ;; copy of the owner's filing left on a signed-out page
+         :scopes [] :scopes-open? false :editing-scope nil :deleting-scope nil)
   (fetch-recipes))
 
 ;; ---------------------------------------------------------------------------
@@ -146,6 +165,83 @@
       (swap! *app-state assoc :machine-user m :error nil)
       (when on-success (on-success)))
     (err-handler "Could not set the machine user's password")))
+
+;; ---------------------------------------------------------------------------
+;; Scopes
+;;
+;; The owner's categories: a title, a description, and 0 to n of them on any
+;; Recipe. Owner-only on the server — a signed-out caller gets a 403 from
+;; `/api/scopes` and no `scopes` key on any Recipe — so everything here is only
+;; ever called while signed in, and `logout` drops the list rather than hiding it.
+;;
+;; Anything that changes a Scope refetches the **Recipes** too, not just the list:
+;; the badges on the cards carry each Scope's title, so a rename that refreshed
+;; only this list would leave the shelf showing the old word.
+
+(defn fetch-scopes []
+  (api/fetch-json "/api/scopes" (auth-headers)
+    (fn [scopes] (swap! *app-state assoc :scopes (vec scopes)))))
+
+(defn toggle-scopes
+  "Opening re-reads the list rather than trusting what was fetched before, the way
+  the settings panel does: an agent may have added a Scope through the API since."
+  []
+  (let [open? (not (:scopes-open? @*app-state))]
+    ;; both dialogs are dropped on the way through: the only buttons that open
+    ;; them are inside the panel, so a closed panel with one still latched would
+    ;; be a confirmation nobody could have asked for waiting for the next open
+    (swap! *app-state assoc :scopes-open? open? :editing-scope nil :deleting-scope nil)
+    (when open? (fetch-scopes))))
+
+(defn add-scope [{:keys [title description]} on-success]
+  (api/post-json "/api/scopes" {:title title :description (or description "")}
+                 (auth-headers)
+    (fn [_]
+      (fetch-scopes)
+      (when on-success (on-success)))
+    (err-handler "Could not add that Scope")))
+
+(defn save-scope [id fields on-success]
+  (api/put-json (str "/api/scopes/" id) fields (auth-headers)
+    (fn [_]
+      (fetch-scopes)
+      ;; the cards carry the title, so a rename has to reach them
+      (fetch-recipes)
+      (when on-success (on-success)))
+    (err-handler "Could not save that Scope")))
+
+(defn delete-scope
+  "Takes the Scope and every association to it. The Recipes survive untouched —
+  each keeps all of its text and loses a badge — but the filing itself does not
+  come back, which is why a confirmation stands in front of this call.
+
+  `on-done` runs on failure too, for the reason it does in `publish-recipe`: it is
+  what closes the confirmation, and the error banner renders under the modal's
+  fixed overlay."
+  [id on-done]
+  (let [done #(when on-done (on-done))]
+    (api/delete-simple (str "/api/scopes/" id) (auth-headers)
+      (fn [_]
+        (fetch-scopes)
+        ;; every card filed under it is now showing a badge for a Scope that is
+        ;; gone; the server has already unfiled them, so this is what catches up
+        (fetch-recipes)
+        (done))
+      (fn [resp]
+        (done)
+        ((err-handler "Could not delete that Scope") resp)))))
+
+(defn start-editing-scope [id]
+  (swap! *app-state assoc :editing-scope id))
+
+(defn stop-editing-scope []
+  (swap! *app-state assoc :editing-scope nil))
+
+(defn start-deleting-scope [id]
+  (swap! *app-state assoc :deleting-scope id))
+
+(defn stop-deleting-scope []
+  (swap! *app-state assoc :deleting-scope nil))
 
 ;; ---------------------------------------------------------------------------
 ;; recipes
@@ -278,17 +374,27 @@
   (swap! *app-state assoc :human-only? on?)
   (fetch-recipes))
 
-(defn add-recipe [{:keys [title useful_when description tags]} on-success]
+(defn add-recipe [{:keys [title useful_when description tags scope_ids]} on-success]
   (api/post-json "/api/recipes"
                  {:title title :useful_when (or useful_when "") :description (or description "")
-                  :tags (or tags "")}
+                  :tags (or tags "")
+                  ;; a vector, always: the endpoint refuses anything that is not an
+                  ;; array of ids, and an empty one is the honest 'filed under
+                  ;; nothing' for a Recipe that did not exist a moment ago
+                  :scope_ids (vec (or scope_ids []))}
                  (auth-headers)
-    (fn [_] (fetch-recipes) (when on-success (on-success)))
+    (fn [_]
+      (fetch-recipes)
+      ;; the counts on the Scopes page moved
+      (fetch-scopes)
+      (when on-success (on-success)))
     (err-handler "Could not add that recipe")))
 
 (defn update-recipe
   "Sends `modified_at` from the row we last read, so a save that raced somebody
-  else comes back 409 instead of quietly winning."
+  else comes back 409 instead of quietly winning. That guard covers the Scope
+  associations too — the server moves `modified_at` when the filing changes,
+  precisely so this one field still speaks for everything the modal sends."
   [id fields on-success]
   (let [known (get-in @*app-state [:details id])]
     (api/put-json (str "/api/recipes/" id)
@@ -298,6 +404,8 @@
         (cache-detail! recipe)
         (forget-versions! id)
         (fetch-recipes)
+        ;; a save may have refiled the Recipe, so the per-Scope counts moved
+        (fetch-scopes)
         (when on-success (on-success)))
       (err-handler "Could not save"))))
 
@@ -340,6 +448,8 @@
                                       (update :open disj id)
                                       (cond-> (= id (:diffing s)) (assoc :diffing nil)))))
         (fetch-recipes)
+        ;; its associations went with it server-side, so the counts moved here too
+        (fetch-scopes)
         (done))
       (fn [resp]
         (done)

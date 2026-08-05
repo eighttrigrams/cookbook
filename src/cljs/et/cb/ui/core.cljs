@@ -3,6 +3,7 @@
             [reagent.core :as r]
             [et.cb.ui.state :as state]
             [et.cb.ui.views.recipes :as recipes]
+            [et.cb.ui.views.scopes :as scopes]
             [et.cb.ui.views.settings :as settings]))
 
 (defn login-form []
@@ -23,12 +24,25 @@
          [:button {:on-click do-login} "Sign in"]]))))
 
 (defn- top-bar []
-  (let [{:keys [auth-required? logged-in? show-login? dark-mode settings-open?]} @state/*app-state]
+  (let [{:keys [auth-required? logged-in? show-login? dark-mode settings-open? scopes-open?]}
+        @state/*app-state]
     [:div.top-bar
      [:div.brand
       [:span.brand-mark "▤"]
       [:span.brand-name "Cookbook"]]
      [:div.top-bar-right
+      ;; The Scopes page. Owner-only, and gated the same way the settings panel is
+      ;; — this shell has no router, so a private page is a flag in the atom and a
+      ;; button that flips it. The gate is `logged-in?` and not a claim about
+      ;; safety: the endpoints behind it answer 403 to anybody else, which is the
+      ;; boundary. It borrows `.settings-toggle`'s styling because it is the same
+      ;; kind of control in the same corner.
+      (when logged-in?
+        [:button.settings-toggle.scopes-toggle
+         {:on-click state/toggle-scopes
+          :class (when scopes-open? "active")
+          :title "Scopes"}
+         "▦"])
       ;; only the owner has a setting to make: the machine user's password
       (when logged-in?
         [:button.settings-toggle
@@ -48,7 +62,8 @@
                {:on-click #(swap! state/*app-state assoc :show-login? true)} "Sign in"])]]))
 
 (defn app []
-  (let [{:keys [auth-required? logged-in? show-login? error settings-open?]} @state/*app-state]
+  (let [{:keys [auth-required? logged-in? show-login? error settings-open? scopes-open?]}
+        @state/*app-state]
     (if (nil? auth-required?)
       [:div.loading "Loading…"]
       [:div
@@ -57,6 +72,8 @@
          [:div.error error [:button.error-dismiss {:on-click state/clear-error} "×"]])
        (when (and auth-required? (not logged-in?) show-login?)
          [login-form])
+       (when (and logged-in? scopes-open?)
+         [scopes/scopes-page])
        (when (and logged-in? settings-open?)
          [settings/machine-user-block])
        [:div.main-layout

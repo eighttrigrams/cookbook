@@ -178,6 +178,25 @@ textarea:focus {
   cursor: help;
 }
 
+/* Which Scopes a Recipe is filed under. In the accent's own colour rather than
+   the neutral of the version pair beside it, because this is the only badge on
+   the header that is a *choice* the owner made about the Recipe — the others
+   report facts the app recorded. Rounder and lower-case where `.published-badge`
+   is a squared-off uppercase label: the latch is an announcement, a Scope is a
+   filing card. Never shown to a visitor, like `.card-tags`, and that is the
+   server's doing rather than this stylesheet's. */
+.card-scopes { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.scope-badge {
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--glass-border);
+  color: var(--accent);
+  font-size: 0.72em;
+  white-space: nowrap;
+  cursor: help;
+}
+
 /* The latch, at a glance. A published Recipe is public and cannot be taken
    back, so the card says so on its own rather than only in the footer — where
    the Publish button is gone precisely because there is nothing left to do. */
@@ -337,6 +356,119 @@ html.dark-mode .published-badge { background: rgba(245, 158, 11, 0.18); }
 .settings-absent { color: var(--muted-text); }
 .settings-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .settings-row input { flex: 1 1 220px; max-width: 320px; }
+
+/* --------------------------------------------------------------------------
+   the Scopes page
+
+   The same panel shape as the settings block above — it is the second surface
+   reached the same way, from a button in the same corner, so it should not look
+   like a different kind of thing. What it adds is a list, and the list is a grid
+   rather than a flex row so that the titles line up down the page: scanning a
+   column of names is what this page is for. */
+
+.scopes {
+  padding: 16px 18px;
+  margin-bottom: 20px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--glass-radius);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+}
+.scopes h2 { margin: 0 0 8px; font-size: 1.05em; }
+.scopes-compose {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--glass-border);
+}
+.scope-title-input { flex: 0 1 200px; }
+.scope-description-input { flex: 1 1 260px; }
+.scopes-empty {
+  padding: 14px 0 4px;
+  color: var(--muted-text);
+  font-size: 0.9em;
+}
+.scopes-list { display: flex; flex-direction: column; }
+
+/* One row per Scope. `auto 1fr auto auto` so the title column is as wide as the
+   longest title and no wider, the description takes the slack, and the count and
+   the buttons stay put — a row whose buttons moved with the length of its
+   description would be a row you cannot aim at. */
+.scope-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--glass-border);
+}
+.scope-row:last-child { border-bottom: none; }
+.scope-row-title { font-weight: 600; }
+.scope-row-description {
+  color: var(--text-secondary);
+  font-size: 0.9em;
+  overflow-wrap: anywhere;
+}
+.scope-row-count {
+  color: var(--muted-text);
+  font-size: 0.8em;
+  white-space: nowrap;
+  cursor: help;
+}
+.scope-row-actions { display: flex; gap: 6px; }
+.scope-row-actions button { padding: 5px 11px; font-size: 0.85em; }
+
+/* Editing in place keeps the row's outer shape and swaps the two spans for their
+   inputs, so the list does not jump when one row opens. It loses the grid because
+   the inputs want to flow. */
+.scope-row.editing {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* --------------------------------------------------------------------------
+   the Scope picker, in the compose form and the Edit modal
+
+   Toggles rather than a multi-select: the whole set is visible at a glance and
+   filing is one click, which is the difference between a shelf that gets curated
+   and one that does not. An unselected chip is quiet and a selected one wears the
+   accent — the same colour the badge on the card will be, so what you pick here
+   and what you see there read as one thing. */
+
+.scope-picker {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.scope-picker-label {
+  color: var(--muted-text);
+  font-size: 0.8em;
+  cursor: help;
+}
+.scope-chip {
+  padding: 3px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--input-border);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.8em;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.scope-chip:hover { border-color: var(--accent); color: var(--text-primary); transform: none; }
+.scope-chip.on {
+  border-color: var(--accent);
+  background: var(--surface-subtle);
+  color: var(--accent);
+  font-weight: 600;
+}
 
 /* --------------------------------------------------------------------------
    the version viewer
