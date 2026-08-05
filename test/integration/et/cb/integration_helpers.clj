@@ -111,8 +111,16 @@
 
 (defn API
   "One request. Without :token the dev skip-logins header identifies the owner
-  (:as-user to make that somebody else); with :anonymous? neither is sent, which
-  is the only way to see what a visitor sees."
+  (:as-user to make that somebody else); with :anonymous? neither is sent.
+
+  **`:anonymous?` alone does not make a visitor — wrap it in `with-real-auth`.**
+  This fixture runs with `:dangerously-skip-logins? true`, and
+  `common/get-user-from-request` falls through to the first human user whenever
+  the token is missing *or* invalid: so a request with no credentials is served as
+  the **owner**, and so is one carrying a bogus `Bearer`. Sending nothing is only
+  half of being nobody; `with-real-auth` turns the flag off, which is what makes
+  the other half true. A privacy assertion made on `:anonymous?` on its own is an
+  assertion about the owner's view, and it will pass for the wrong reason."
   [method path opts]
   (update (API-raw method path opts) :body #(when (seq %) (json/parse-string % true))))
 
