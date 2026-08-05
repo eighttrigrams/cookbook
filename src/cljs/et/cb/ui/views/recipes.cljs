@@ -15,10 +15,16 @@
   because a collapsed card is exactly the place that cannot go and fetch a version
   list.
 
-  The shelf can be narrowed two ways at once — by a title search, and to the
-  Recipes a human has edited here rather than an agent. Both are the listing
-  endpoint's own `:where` clauses; nothing on this side filters rows it was
-  given.
+  The shelf can be narrowed two ways at once — by a search over titles and tags,
+  and to the Recipes a human has edited here rather than an agent. Both are the
+  listing endpoint's own `:where` clauses; nothing on this side filters rows it
+  was given.
+
+  **Tags** are the owner's extra search words. They are searched for everybody,
+  including a signed-out visitor, and displayed to nobody but the owner — and the
+  displaying half is the *server's* doing, not this file's: a visitor's rows arrive
+  with no `tags` key at all. The `logged-in?` gate on `card-tags` is cosmetic, and
+  the comment there says why that distinction has to be kept.
 
   Publishing happens from the card, behind a confirmation, and only the owner
   sees the affordance. It is one way — the API has no unpublish — so a published
@@ -39,19 +45,24 @@
   (when (seq (str timestamp))
     (first (str/split (str timestamp) #" "))))
 
+(def ^:private tags-placeholder "Tags — extra words to find this by")
+
 (defn- compose-form []
   (let [title (r/atom "")
         useful-when (r/atom "")
+        tags (r/atom "")
         description (r/atom "")]
     (fn []
       (let [submit (fn []
                      (when-not (str/blank? @title)
                        (state/add-recipe {:title @title
                                           :useful_when @useful-when
+                                          :tags @tags
                                           :description @description}
                                          (fn []
                                            (reset! title "")
                                            (reset! useful-when "")
+                                           (reset! tags "")
                                            (reset! description "")))))]
         [:div.compose
          [:input.compose-title
@@ -64,6 +75,11 @@
            :value @useful-when
            :on-change #(reset! useful-when (-> % .-target .-value))
            :on-key-down #(when (= (.-key %) "Enter") (submit))}]
+         [:input.compose-tags
+          {:type "text" :placeholder tags-placeholder
+           :value @tags
+           :on-change #(reset! tags (-> % .-target .-value))
+           :on-key-down #(when (= (.-key %) "Enter") (submit))}]
          [:textarea.compose-description
           {:placeholder "The recipe itself"
            :rows 4
@@ -71,9 +87,16 @@
            :on-change #(reset! description (-> % .-target .-value))}]
          [:button {:on-click submit :disabled (str/blank? @title)} "Add"]]))))
 
-(defn- edit-modal [recipe]
+(defn- edit-modal
+  "Tags sit in here with the three content fields even though a save that
+  touches only them makes no version — the modal is where you edit a Recipe, and
+  which of its fields the version ladder is about is the API's business. The
+  subtitle says the version this is editing, and a tags-only save deliberately
+  leaves that number where it is."
+  [recipe]
   (let [title (r/atom (or (:title recipe) ""))
         useful-when (r/atom (or (:useful_when recipe) ""))
+        tags (r/atom (or (:tags recipe) ""))
         description (r/atom (or (:description recipe) ""))]
     (fn [recipe]
       [:div.modal-backdrop {:on-click state/stop-editing}
@@ -86,6 +109,9 @@
         [:input {:type "text" :placeholder "Useful when…"
                  :value @useful-when
                  :on-change #(reset! useful-when (-> % .-target .-value))}]
+        [:input.modal-tags {:type "text" :placeholder tags-placeholder
+                            :value @tags
+                            :on-change #(reset! tags (-> % .-target .-value))}]
         [:textarea.modal-description
          {:placeholder "The recipe itself"
           :rows 8
@@ -96,6 +122,7 @@
                    :on-click #(state/update-recipe (:id recipe)
                                                    {:title @title
                                                     :useful_when @useful-when
+                                                    :tags @tags
                                                     :description @description}
                                                    state/stop-editing)}
           "Save"]
@@ -195,7 +222,27 @@
     (when (seq buckets)
       [:span.source-badge {:title source-badge-title} (str/join "/" buckets)])))
 
-(defn- card [{:keys [id title useful_when version published published_at modified_at] :as recipe}
+(defn- card-tags
+  "The owner's extra search words, on his own card.
+
+  **This gate is cosmetic and must not be read as the privacy boundary.** The
+  boundary is the server: a visitor's projection does not name the `tags` column,
+  so a signed-out client is not holding tags it has been asked not to draw — there
+  is no `tags` key in what it was sent, and `logged-in?` here would be redundant if
+  the client could be trusted, which is exactly why it is not the mechanism.
+  Do not 'simplify' `select-columns` on the grounds that this hides them; deleting
+  this line would show nothing extra, and deleting the server half would publish
+  the owner's filing.
+
+  Rendered as plain text rather than through the markdown renderer the other
+  fields use: these are search words, not prose, and a stray `_` in one is a
+  character and not emphasis — the same reading the search itself gives it."
+  [tags]
+  [:div.card-tags {:title "Extra words this Recipe can be found by — yours alone"}
+   tags])
+
+(defn- card [{:keys [id title useful_when tags version published published_at modified_at]
+              :as recipe}
              {:keys [logged-in? open details]}]
   (let [expanded? (contains? open id)
         ;; JSON gives 0/1 and 0 is truthy in cljs, so this has to be a
@@ -214,6 +261,8 @@
       [:span.card-date (day modified_at)]]
      (when (seq useful_when)
        [:div.card-useful-when [markdown/render-inline useful_when]])
+     (when (and logged-in? (seq tags))
+       [card-tags tags])
      (when expanded?
        [card-body (get details id)])
      (when logged-in?
@@ -256,11 +305,13 @@
     [:div.shelf
      (when logged-in? [compose-form])
      [:div.shelf-controls
-      ;; The endpoint matches words from their start and only in the title, so
-      ;; the placeholder says titles, and says beginnings of words rather than
-      ;; letting a typist expect a substring to hit.
+      ;; The endpoint matches words from their start, in the title and in the
+      ;; tags, so the placeholder names both and says beginnings of words rather
+      ;; than letting a typist expect a substring to hit. It says the same thing
+      ;; signed out, and truthfully: tags are searched for everyone — only the
+      ;; values are the owner's.
       [:input.search
-       {:type "text" :placeholder "Search titles — start of any word"
+       {:type "text" :placeholder "Search titles and tags — start of any word"
         :value search
         :on-change #(state/set-search (-> % .-target .-value))}]
       ;; Shown signed out as well as in. A visitor is served the published

@@ -278,9 +278,10 @@
   (swap! *app-state assoc :human-only? on?)
   (fetch-recipes))
 
-(defn add-recipe [{:keys [title useful_when description]} on-success]
+(defn add-recipe [{:keys [title useful_when description tags]} on-success]
   (api/post-json "/api/recipes"
-                 {:title title :useful_when (or useful_when "") :description (or description "")}
+                 {:title title :useful_when (or useful_when "") :description (or description "")
+                  :tags (or tags "")}
                  (auth-headers)
     (fn [_] (fetch-recipes) (when on-success (on-success)))
     (err-handler "Could not add that recipe")))

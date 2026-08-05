@@ -201,6 +201,18 @@ html.dark-mode .published-badge { background: rgba(245, 158, 11, 0.18); }
   font-size: 0.92em;
 }
 
+/* The owner's extra search words. Quieter than the useful-when line above it and
+   in the muted colour the dates and the provenance badge use, because it is not
+   part of the Recipe — it is filing, and it is the one thing on this card that a
+   visitor is never shown at all. Wraps rather than scrolls: a long tag line is
+   still one line of words. */
+.card-tags {
+  margin-top: 6px;
+  color: var(--muted-text);
+  font-size: 0.82em;
+  overflow-wrap: anywhere;
+}
+
 /* Holds the rendered body, so wrapping is markdown.css's business now — a
    `pre-wrap` here would be inherited into a rendered block and turn every
    source newline into a break. */
