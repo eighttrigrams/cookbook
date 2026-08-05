@@ -45,6 +45,14 @@
   (:n (jdbc/execute-one! (db/get-conn h/*ds*)
         (sql/format {:select [[[:count :*] :n]] :from [:recipes]}) db/jdbc-opts)))
 
+(defn- table-count
+  "Rows in any table, for the same reason `row-count` reads the table rather than a
+  listing: what `/api/test/reset` clears is the thing under test, and a count taken
+  through a handler could be narrowed by an audience."
+  [table]
+  (:n (jdbc/execute-one! (db/get-conn h/*ds*)
+        (sql/format {:select [[[:count :*] :n]] :from [table]}) db/jdbc-opts)))
+
 (defn- owner-recipe!
   "A recipe belonging to the owner, published or not. Created as the owner, since
   a machine may not publish and an anonymous caller may not write at all."
@@ -322,7 +330,18 @@
 (deftest resetting-the-database-is-the-owners-alone
   (let [signed (owner-recipe! :published "The owner's signed recipe")
         drafted (owner-recipe! :unpublished "The owner's draft")
+        ;; A Scope, and a Recipe filed under it, because this route drops those
+        ;; too and the Recipe count alone cannot see it: a reset that stopped
+        ;; clearing `recipe_scopes` would leave join rows pointing at Recipes that
+        ;; no longer exist — ghosts waiting for an id to be reused — and every
+        ;; assertion below would still have passed.
+        scope (:id (:body (POST-json "/api/scopes" {:title "Bread"
+                                                    :description "Loaves"})))
+        _ (is (= 200 (:status (h/PUT-json (str "/api/recipes/" drafted)
+                                          {:scope_ids [scope]}))))
         before (row-count)]
+    (is (= 1 (table-count :scopes)))
+    (is (= 1 (table-count :recipe_scopes)))
     (testing "a machine token is refused — the same caller the guard refuses an
               edit and a delete on the published one"
       (is (= 403 (:status (request :machine :put (str "/api/recipes/" signed)
@@ -337,13 +356,21 @@
     ;; pass on the codes alone, and this is the assertion that cannot
     (testing "nothing was dropped by either refusal"
       (is (= before (row-count)))
+      (is (= 1 (table-count :scopes)))
+      (is (= 1 (table-count :recipe_scopes)))
       (is (some? (row signed)))
       (is (some? (row drafted))))
 
     (testing "while the owner may still use it — the 403s are about the caller,
               not the route being switched off"
       (is (= 200 (:status (request :owner :post "/api/test/reset"))))
-      (is (zero? (row-count))))))
+      (is (zero? (row-count))))
+
+    (testing "and it takes the Scopes and the filing with it: a fixture that
+              half-resets is one a later test can pass because of the half that
+              stayed"
+      (is (zero? (table-count :recipe_scopes)))
+      (is (zero? (table-count :scopes))))))
 
 ;; ---------------------------------------------------------------------------
 ;; the gate that must not come back

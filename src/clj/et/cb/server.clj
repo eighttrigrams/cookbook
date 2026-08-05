@@ -27,9 +27,18 @@
     default))
 
 (defn reset-test-db-handler
-  "POST /api/test/reset — drop every Recipe and its whole version history. Dev
-  only: 403 in production. The owner's alone, like the machine-user routes — a
-  machine token is refused and so is a caller with no credentials.
+  "POST /api/test/reset — drop every Recipe and its whole version history, **and
+  every Scope with it**: `recipes`, `recipe_history`, `scopes` and the
+  `recipe_scopes` filing between them, all of it, for every user. Nothing is kept
+  and there is no undo. Dev only: 403 in production. The owner's alone, like the
+  machine-user routes — a machine token is refused and so is a caller with no
+  credentials.
+
+  The Scopes are named here because this catalogue is what an agent reads before
+  calling a route, and 'drop every Recipe' would have it believe the owner's
+  filing survived. A reset that spared the Scopes would be worse than one that
+  takes them: `recipe_scopes` rows pointing at deleted Recipes are ghosts waiting
+  for AUTOINCREMENT to reuse an id.
 
   It is a sibling of `/api/recipes` and so outside both recipe guards, which is
   how it came to be the one destructive route in this app with no caller check at

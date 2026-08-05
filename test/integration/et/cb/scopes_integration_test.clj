@@ -267,4 +267,8 @@
       ;; would be asserting where the line breaks fall
       (is (re-find #"(?i)no\s+`?scopes`?\s+key" (doc-for "GET" "/api/recipes/:id"))))
     (testing "and the delete says what it does to the Recipes filed under it"
-      (is (re-find #"(?i)badge|not touched|untouched" (doc-for "DELETE" "/api/scopes/:id"))))))
+      (is (re-find #"(?i)badge|not touched|untouched" (doc-for "DELETE" "/api/scopes/:id"))))
+    (testing "and the one destructive route says it takes the Scopes with it: this
+              catalogue is what an agent reads before calling something, and this
+              route has been under-described in it once already"
+      (is (re-find #"(?i)scope" (doc-for "POST" "/api/test/reset"))))))
