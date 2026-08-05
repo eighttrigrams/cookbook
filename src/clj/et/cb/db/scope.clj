@@ -116,20 +116,40 @@
         (tel/log! {:level :info :data {:id (:id result) :user-id user-id}} "Scope created")
         result))))
 
+(def no-such-scope
+  "`update-scope`'s answer for 'there is no such Scope of yours'. A named value
+  rather than a bare keyword at both ends, the shape `db.recipe/visitor-audience`
+  already uses: the caller compares against this var, so the two namespaces cannot
+  come to spell the same refusal differently."
+  ::no-such-scope)
+
+(def title-taken
+  "`update-scope`'s answer for 'you already have a Scope with that title'. See
+  `no-such-scope`."
+  ::title-taken)
+
 (defn update-scope
   "Save a Scope's fields. **A field the caller left out keeps its value**, the
   rule `db.recipe/merge-content` already sets for a Recipe, so an edit meant for
   the description cannot silently blank the title.
 
-  nil when the id matches nothing the user owns *or* when the new title is one of
-  their other Scopes' — the caller cannot tell those apart, and does not need to:
-  both mean 'this did not happen'. The two are separated by status code one layer
-  up, where the handler has already established that the row exists."
+  Three outcomes: the saved Scope, `no-such-scope` when the id matches nothing the
+  user owns, or `title-taken` when the new title is one of their other Scopes'.
+
+  **The two refusals are told apart here rather than by the caller**, which used
+  to answer both with nil and work out which it was from a separate, earlier
+  `get-scope`. Two reads mean two moments, and between them the row can go: the
+  caller would then say 'you already have a Scope with that title' about a Scope
+  that no longer exists — the one answer that is wrong in both directions, since
+  it names a clash that is not there and hides the deletion that is. Both
+  decisions here are made inside one transaction off the same read, so the refusal
+  cannot disagree with the state it was decided from."
   [ds user-id id {:keys [title description]}]
   (jdbc/with-transaction [tx (db/get-conn ds)]
-    (when-let [current (get-scope tx user-id id)]
+    (if-let [current (get-scope tx user-id id)]
       (let [title (if (some? title) (str/trim (str title)) (:title current))]
-        (when-not (title-taken? tx user-id title id)
+        (if (title-taken? tx user-id title id)
+          title-taken
           (let [result (jdbc/execute-one! tx
                          (sql/format {:update :scopes
                                       :set {:title title
@@ -140,7 +160,8 @@
                                       :returning scope-columns})
                          db/jdbc-opts)]
             (tel/log! {:level :info :data {:id id :user-id user-id}} "Scope saved")
-            result))))))
+            result)))
+      no-such-scope)))
 
 (defn delete-scope
   "Remove a Scope of this user's **together with every association to it**, in one

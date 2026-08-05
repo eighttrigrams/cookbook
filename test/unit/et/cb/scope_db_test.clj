@@ -108,7 +108,11 @@
 (deftest a-rename-onto-another-title-is-refused-but-onto-its-own-is-not
   (let [{bread :id} (scope! "Bread")
         {deploy :id} (scope! "Deployment")]
-    (is (nil? (db.scope/update-scope h/*ds* h/*user-id* deploy {:title "Bread"})))
+    ;; `title-taken` and not nil, and not `no-such-scope` either: the two refusals
+    ;; have to be distinguishable *here*, or the caller has to take a second read
+    ;; to guess which one it was and can be told the wrong one.
+    (is (= db.scope/title-taken
+           (db.scope/update-scope h/*ds* h/*user-id* deploy {:title "Bread"})))
     (testing "and the refused save left the row alone"
       (is (= "Deployment" (:title (db.scope/get-scope h/*ds* h/*user-id* deploy)))))
     (testing "saving a Scope's own title back is not a clash with itself"
@@ -121,7 +125,8 @@
         stranger (inc h/*user-id*)]
     (is (nil? (db.scope/get-scope h/*ds* stranger id)))
     (is (empty? (db.scope/list-scopes h/*ds* stranger)))
-    (is (nil? (db.scope/update-scope h/*ds* stranger id {:title "Theirs"})))
+    (is (= db.scope/no-such-scope
+           (db.scope/update-scope h/*ds* stranger id {:title "Theirs"})))
     (is (nil? (db.scope/delete-scope h/*ds* stranger id)))
     (testing "and all that refusing changed nothing"
       (is (= "Bread" (:title (db.scope/get-scope h/*ds* h/*user-id* id)))))))

@@ -95,7 +95,15 @@
   Renaming a Scope does not touch which Recipes are filed under it: the
   association is by id, so the badges follow the rename. 200 with the saved Scope,
   400 on a blank title, 409 when the new title is one of your other Scopes', 404
-  when the id matches nothing you own, 403 when nobody is signed in."
+  when the id matches nothing you own, 403 when nobody is signed in.
+
+  **The 404 and the 409 come out of the write itself**, not out of a read taken
+  before it. This used to establish that the row existed with its own `get-scope`
+  and read a nil from `db.scope/update-scope` as 'the title is taken' — which is
+  the wrong answer if the Scope was deleted between the two calls, and it is wrong
+  twice over: it claims a clash that is not there and it hides the deletion that
+  is. `update-scope` now says which of the two it was, off one read inside its own
+  transaction."
   [req]
   (if (common/authenticated? req)
     (let [ds (common/ensure-ds)
@@ -103,17 +111,27 @@
           id (common/path-id req)
           {:keys [title] :as body} (:body req)]
       (cond
-        (nil? (when id (db.scope/get-scope ds user-id id)))
+        ;; A path that names no id at all never reaches the db: `nil` there would
+        ;; be a `WHERE id IS NULL`, which matches nothing and would answer 404
+        ;; anyway — but by way of a transaction opened for a request that was
+        ;; already malformed.
+        (nil? id)
         {:status 404 :body {:error "Scope not found"}}
 
         (and (some? title) (str/blank? (str title)))
         {:status 400 :body {:error "title cannot be blank"}}
 
         :else
-        (if-let [saved (db.scope/update-scope ds user-id id
-                                              (select-keys body [:title :description]))]
-          {:status 200 :body saved}
-          {:status 409 :body {:error "You already have a Scope with that title"}})))
+        (let [saved (db.scope/update-scope ds user-id id
+                                           (select-keys body [:title :description]))]
+          (condp = saved
+            db.scope/no-such-scope
+            {:status 404 :body {:error "Scope not found"}}
+
+            db.scope/title-taken
+            {:status 409 :body {:error "You already have a Scope with that title"}}
+
+            {:status 200 :body saved}))))
     forbidden))
 
 (defn delete-scope-handler
