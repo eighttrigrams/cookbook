@@ -141,7 +141,13 @@ textarea:focus {
   cursor: pointer;
 }
 .card-toggle { color: var(--accent); font-size: 0.9em; }
-.card-title { flex: 1; }
+/* `1 1 auto` and not `flex: 1`: with a zero basis the title's whole width *is*
+   the space the other items left over, so one item beside it that refused to
+   shrink took the title down to a single character per line — it shared none of
+   the shrinking and all of the loss. A content basis makes it shrink in
+   proportion with whatever is beside it, and `min-width: 0` lets it wrap down to
+   the share it gets instead of forcing the header wider than the card. */
+.card-title { flex: 1 1 auto; min-width: 0; }
 .card-date {
   color: var(--muted-text);
   font-size: 0.8em;
@@ -185,7 +191,18 @@ textarea:focus {
    is a squared-off uppercase label: the latch is an announcement, a Scope is a
    filing card. Never shown to a visitor, like `.card-tags`, and that is the
    server's doing rather than this stylesheet's. */
-.card-scopes { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+/* Half the header at most, and shrinkable to nothing: the filing is the least
+   important thing on this line and must never be what decides how much room the
+   title gets. Without the cap and the `min-width` a single long Scope title made
+   this the one item the flex algorithm could not shrink, and it took the space out
+   of the `h2`. */
+.card-scopes {
+  display: inline-flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 50%;
+}
 .scope-badge {
   padding: 2px 9px;
   border-radius: 999px;
@@ -193,7 +210,15 @@ textarea:focus {
   border: 1px solid var(--glass-border);
   color: var(--accent);
   font-size: 0.72em;
+  /* Capped and ellipsised rather than as wide as the owner's title happens to
+     be. `.card-tags` wraps instead, and the difference is the tooltip: the whole
+     title is already on hover here, so a clipped badge loses nothing — where a
+     wrapped one would grow the header downwards to say the same thing. */
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  max-width: 200px;
   cursor: help;
 }
 
@@ -459,6 +484,13 @@ html.dark-mode .published-badge { background: rgba(245, 158, 11, 0.18); }
   background: transparent;
   color: var(--text-secondary);
   font-size: 0.8em;
+  /* Wraps where the badge on the card ellipsises, because a chip is a control:
+     its tooltip carries the *description*, so the title has to stay readable to be
+     clickable. `anywhere` for the same reason `.card-tags` has it — a title that
+     is one unbroken word wraps at nothing and measured 1460px, off the right of
+     a 1400px window. */
+  overflow-wrap: anywhere;
+  max-width: 320px;
   cursor: pointer;
   transition: all 0.15s ease;
 }
