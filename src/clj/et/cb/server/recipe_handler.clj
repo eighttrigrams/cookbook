@@ -29,6 +29,30 @@
   [req]
   (not (common/machine-caller? req)))
 
+(def ^:private writable-fields
+  "What a recipe write may carry. Named once so the create and the save cannot
+  drift apart about it, and as an allowlist rather than a dissoc of the fields that
+  are refused: `published`, `has_human_edit` and `source` are not writable from a
+  body, and a key nobody selected is a key nobody can smuggle in."
+  [:title :useful_when :description :tags :scope_ids])
+
+(defn- bad-scope-ids?
+  "Whether `scope_ids` is present and is not an array of integers.
+
+  Refused with a 400 rather than coerced, because the two ways it can be wrong
+  mean opposite things and neither should be guessed at: a bare number would have
+  to be read as a one-element array, and a string as either an id or a title. What
+  is *not* a 400 is an id the caller does not own — that is well-formed and simply
+  drops out (see `db.scope/set-recipe-scopes!`), and answering 404 for it would
+  tell a caller which ids exist."
+  [body]
+  (and (contains? body :scope_ids)
+       (let [ids (:scope_ids body)]
+         (not (and (sequential? ids) (every? int? ids))))))
+
+(def ^:private bad-scope-ids-response
+  {:status 400 :body {:error "scope_ids must be an array of Scope ids"}})
+
 (defn- read-audience
   "Owner or visitor, decided once per read. A visitor is deliberately *not*
   described by a user-id: `common/get-user-id` gives nil for one, and the db
@@ -119,25 +143,38 @@
   never names `tags`, at any ?detail, so the key is absent rather than empty. The
   owner and a machine token (which reads in his audience) get it. Note the asymmetry
   that goes with it: ?search still matches tags for a visitor — see the listing —
-  so their presence is testable even though their contents are not readable."
+  so their presence is testable even though their contents are not readable.
+
+  **`scopes` is the same, and stricter.** A caller who may see them gets
+  `[{id, title, description}]`, empty for an unfiled Recipe; a visitor gets no
+  `scopes` key at any ?detail, and there is no query that would produce one for
+  them — the join is not run rather than run and then hidden. Unlike the tags,
+  their presence is not testable either: nothing searches them."
   [req]
   (let [id (common/recipe-id req)
         recipe (when id (db.recipe/get-recipe (common/ensure-ds) (read-audience req) id
-                                              {:lean? (lean? req)}))]
+                                              {:lean? (lean? req) :scopes? true}))]
     (if recipe
       {:status 200 :body recipe}
       {:status 404 :body {:error "Recipe not found"}})))
 
 (defn add-recipe-handler
   "POST /api/recipes — create a recipe from {:title :useful_when :description
-  :tags}. The title is required and must be non-blank; the other three default to
-  empty.
+  :tags :scope_ids}. The title is required and must be non-blank; the others
+  default to empty.
 
   `tags` is a plain string of extra words to find this Recipe by — whatever the
   owner or an agent would search for that the title does not say. It is searched
   for everybody and shown to nobody but the owner (see GET /api/recipes), and it
   is not versioned: changing it later writes no history row. There is no syntax to
   get right, no separator that means anything and no list to keep deduplicated.
+
+  `scope_ids` is an **array of Scope ids** — the categories to file this Recipe
+  under, 0 to n of them, from GET /api/scopes. Omit it and the Recipe is filed
+  under none, which for a row that did not exist yet is the only thing an omission
+  could mean. Ids you do not own are dropped rather than refused, so the `scopes`
+  on the response is the receipt for what was actually filed. 400 if it is not an
+  array of integers.
 
   The new recipe is version 1 with no history, and it is **private**:
   `published` is not accepted here, because publishing is its own deliberate
@@ -151,17 +188,23 @@
   [req]
   (let [user-id (common/get-user-id req)
         {:keys [title] :as body} (:body req)]
-    (if (str/blank? (str title))
+    (cond
+      (str/blank? (str title))
       {:status 400 :body {:error "title is required"}}
+
+      (bad-scope-ids? body)
+      bad-scope-ids-response
+
+      :else
       {:status 201
        :body (db.recipe/create-recipe (common/ensure-ds) user-id
-                                      (select-keys body [:title :useful_when :description :tags])
+                                      (select-keys body writable-fields)
                                       {:human? (human-write? req)})})))
 
 (defn update-recipe-handler
-  "PUT /api/recipes/:id — save {:title :useful_when :description :tags}. A field
-  you leave out keeps its current value, so an edit meant for one field cannot
-  silently clear the others; a blank title is refused with 400.
+  "PUT /api/recipes/:id — save {:title :useful_when :description :tags
+  :scope_ids}. A field you leave out keeps its current value, so an edit meant for
+  one field cannot silently clear the others; a blank title is refused with 400.
 
   Every save that changes **content** archives the outgoing state as a version
   and moves the row to the next one. A save that changes nothing is a no-op —
@@ -179,6 +222,15 @@
   new tags with no 409. `published` is not writable here —
   POST /api/recipes/:id/publish is the only thing that sets it, and nothing
   clears it. 404 when the id matches nothing you own.
+
+  **`scope_ids` behaves exactly like that**, being the other half of the filing:
+  omit the key and the Recipe stays filed where it is, send an array and it
+  replaces the whole set, **send an empty array and it clears them**. Changing it
+  makes no version either — a Scope is a way back to a Recipe, not part of it — and
+  it moves `modified_at` for the same reason tags do, so one 409 guard still covers
+  everything this route can write. Ids you do not own are dropped and the response's
+  `scopes` is the receipt; 400 if `scope_ids` is not an array of integers. Renaming
+  or deleting a Scope is not done here — see PUT and DELETE /api/scopes/:id.
 
   A save from a caller without a machine token also sets `has_human_edit`, which
   is what ?human=true on the listing narrows by. Like `published` it cannot be
@@ -203,15 +255,22 @@
       (and (some? title) (str/blank? (str title)))
       {:status 400 :body {:error "title cannot be blank"}}
 
+      (bad-scope-ids? body)
+      bad-scope-ids-response
+
       :else
       (if-let [result (db.recipe/update-recipe ds user-id id
-                                               (select-keys body [:title :useful_when :description
-                                                                  :tags])
+                                               (select-keys body writable-fields)
                                                modified_at
                                                {:human? (human-write? req)})]
         {:status 200 :body result}
+        ;; The 409 carries the row as it now is, and it carries the filing with
+        ;; it: the client is about to redraw its copy from this, and a `:current`
+        ;; without `scopes` would blank the badges as a side effect of a refused
+        ;; save.
         {:status 409 :body {:error "Recipe was modified elsewhere"
-                            :current (db.recipe/get-recipe ds user-id id {:lean? false})}}))))
+                            :current (db.recipe/get-recipe ds user-id id
+                                                           {:lean? false :scopes? true})}}))))
 
 (defn delete-recipe-handler
   "DELETE /api/recipes/:id — remove a recipe together with its whole version

@@ -185,7 +185,7 @@
 (deftest the-shape-is-documented-in-describe
   (let [doc-for (fn [method path]
                   (:doc (first (filter #(and (= path (:path %)) (= method (:method %)))
-                                       (:body (GET-json "/api/describe"))))))]
+                                       (h/describe-endpoints)))))]
     (testing "the version list says what `source` is, including that a null in it
               means never-recorded rather than withheld"
       (let [doc (doc-for "GET" "/api/recipes/:id/versions")]

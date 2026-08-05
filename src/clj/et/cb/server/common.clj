@@ -117,6 +117,17 @@
     (try (Integer/parseInt (str/trim (str s)))
          (catch NumberFormatException _ nil))))
 
+(defn path-id
+  "The id a request's path names, or nil when it names none.
+
+  One parser for every route with an `:id` in it, so no two of them can disagree
+  about which row a path names — see `recipe-id`, which is this under the name the
+  recipe guards call it by, and where the whole argument is written down. The Scope
+  routes call this directly: they have no guard in front of them that would need to
+  reach the same answer independently."
+  [req]
+  (parse-int-opt (get-in req [:params :id])))
+
 (defn recipe-id
   "The recipe a request names, or nil when it names none.
 
@@ -130,6 +141,10 @@
   more than `\\d+` does — a leading `+`, and non-ASCII decimal digits via
   `Character/digit` — so `+11` and `١١` are that recipe too. A guard that
   disagreed with its handler about which row a path named was a guard that could be
-  walked past by respelling the id."
+  walked past by respelling the id.
+
+  It is `path-id` under this name rather than a second copy of it: the property
+  being relied on is that there is exactly one implementation, and two functions
+  that merely happened to agree would be the thing this docstring warns about."
   [req]
-  (parse-int-opt (get-in req [:params :id])))
+  (path-id req))

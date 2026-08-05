@@ -172,7 +172,7 @@
 
 (deftest the-filter-is-documented-where-a-caller-will-read-it
   (let [doc (:doc (first (filter #(and (= "/api/recipes" (:path %)) (= "GET" (:method %)))
-                                 (:body (GET-json "/api/describe")))))]
+                                 (h/describe-endpoints))))]
     (is (re-find #"\?human=true" doc))
     (testing "including the two things that would otherwise read as bugs: that
               only `true` narrows, and that the mark is recorded going forward"

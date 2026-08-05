@@ -110,12 +110,12 @@
     (is (= #{"50 % rye"} (titles-found "%25"))))
   (testing "the semantics are published where a caller will read them"
     (let [doc (:doc (first (filter #(and (= "/api/recipes" (:path %)) (= "GET" (:method %)))
-                                   (:body (GET-json "/api/describe")))))]
+                                   (h/describe-endpoints))))]
       (is (re-find #"(?i)word-prefix" doc))
       (is (re-find #"(?i)title" doc)))))
 
 (deftest recipes-are-in-describe
-  (let [entries (:body (GET-json "/api/describe"))
+  (let [entries (h/describe-endpoints)
         by-path (group-by :path entries)]
     (is (contains? by-path "/api/recipes"))
     (is (contains? by-path "/api/recipes/:id"))

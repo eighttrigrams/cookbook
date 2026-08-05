@@ -190,7 +190,7 @@
 ;; the catalogue an agent reads before it calls anything
 
 (deftest the-tag-rules-are-in-describe
-  (let [entries (:body (GET-json "/api/describe"))
+  (let [entries (h/describe-endpoints)
         doc-for (fn [method path]
                   (:doc (first (filter #(and (= path (:path %)) (= method (:method %)))
                                        entries))))]

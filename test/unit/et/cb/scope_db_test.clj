@@ -167,6 +167,18 @@
               not own clears the filing rather than keeping it"
       (is (= [] (titles-on (save! (:id created) {:scope_ids [stranger-scope]})))))))
 
+(deftest asking-for-scopes-does-not-conjure-a-recipe
+  (testing "a miss is still nil with `scopes?` on. Attaching to a one-element
+            vector holding nil would put an empty `:scopes` on it and hand back a
+            truthy `{:scopes []}`, which every caller here reads as 'found' — so
+            this one nil check is what keeps a 404 a 404"
+    (is (nil? (db.recipe/get-recipe h/*ds* h/*user-id* 99999 {:scopes? true})))
+    (is (nil? (db.recipe/get-recipe h/*ds* h/*user-id* 99999 {:lean? false
+                                                             :scopes? true}))))
+  (testing "and so is a Recipe that exists but belongs to somebody else"
+    (let [{:keys [id]} (recipe! "Sourdough")]
+      (is (nil? (db.recipe/get-recipe h/*ds* (inc h/*user-id*) id {:scopes? true}))))))
+
 (deftest changing-the-filing-writes-no-version
   (let [{bread :id} (scope! "Bread")
         {:keys [id]} (recipe! "Sourdough")

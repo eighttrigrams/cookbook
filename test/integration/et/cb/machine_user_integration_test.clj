@@ -261,7 +261,7 @@
       (is (not (contains? (db.user/get-machine-user h/*ds*) :password_hash))))))
 
 (deftest describe-lists-every-route-and-nothing-else
-  (let [routes (:body (h/API :get "/api/describe" {}))
+  (let [routes (h/describe-endpoints)
         paths (set (map (juxt :method :path) routes))]
     (testing "the two new routes are published in the catalogue"
       (is (contains? paths ["GET" "/api/machine-user"]))
@@ -281,6 +281,8 @@
                ["GET" "/api/recipes/:id"] ["PUT" "/api/recipes/:id"]
                ["DELETE" "/api/recipes/:id"]
                ["POST" "/api/recipes/:id/publish"] ["GET" "/api/recipes/:id/versions"]
+               ["GET" "/api/scopes"] ["POST" "/api/scopes"]
+               ["PUT" "/api/scopes/:id"] ["DELETE" "/api/scopes/:id"]
                ["POST" "/api/test/reset"]}
              paths)))
     (testing "and the destructive one says so, and says who may call it"

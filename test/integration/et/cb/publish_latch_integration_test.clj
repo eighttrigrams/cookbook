@@ -98,14 +98,14 @@
       (is (= 404 (:status (h/API :post (str "/api/recipes/" id "/unpublish") {}))))
       (is (= 404 (:status (DELETE-json (str "/api/recipes/" id "/publish"))))))
     (testing "and the API catalogue offers none"
-      (let [entries (:body (GET-json "/api/describe"))]
+      (let [entries (h/describe-endpoints)]
         (is (empty? (filter #(re-find #"unpublish" (:path %)) entries)))
         (is (empty? (filter #(re-find #"(?i)unpublish" (:name %)) entries)))))
     (testing "the recipe is still published after all that"
       (is (= 1 (:published (:body (GET-json (str "/api/recipes/" id)))))))))
 
 (deftest the-publish-route-is-in-describe
-  (let [entries (:body (GET-json "/api/describe"))
+  (let [entries (h/describe-endpoints)
         publish (first (filter #(= "/api/recipes/:id/publish" (:path %)) entries))]
     (is (some? publish))
     (is (= "POST" (:method publish)))

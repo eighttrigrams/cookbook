@@ -4,7 +4,9 @@
             [et.cb.server.common :as common]
             [et.cb.server.user-handler :as user-handler]
             [et.cb.server.recipe-handler :as recipe-handler]
+            [et.cb.server.scope-handler :as scope-handler]
             [et.cb.db.recipe :as db.recipe]
+            [et.cb.db.scope :as db.scope]
             [et.cb.auth :as auth]
             [et.cb.middleware.rate-limit :as rate-limit :refer [wrap-rate-limit]]
             [clojure.java.io :as io]
@@ -92,7 +94,8 @@
   this API, so keeping the list current is not housekeeping."
   '[et.cb.server
     et.cb.server.user-handler
-    et.cb.server.recipe-handler])
+    et.cb.server.recipe-handler
+    et.cb.server.scope-handler])
 
 (def ^:private route-doc-re
   "Route handlers document themselves as `METHOD /path — explanation`. Matching
@@ -100,25 +103,55 @@
   listing only ever advertises things you can actually call."
   #"(?s)^(GET|POST|PUT|DELETE|PATCH)\s+(\S+)\s")
 
+(defn- describe-endpoints
+  "Every route handler with its method, path and docstring, read off var metadata —
+  so the docstring on each handler *is* the API documentation and there is no second
+  catalogue to keep in step."
+  []
+  (->> describe-namespaces
+       (mapcat (fn [ns-sym] (when-let [n (find-ns ns-sym)] (ns-publics n))))
+       (keep (fn [[sym v]]
+               (let [doc (:doc (meta v))]
+                 (when-let [[_ method path] (some->> doc (re-find route-doc-re))]
+                   {:name (str sym)
+                    :ns (str (ns-name (.ns ^clojure.lang.Var v)))
+                    :method method
+                    :path path
+                    :arglists (pr-str (:arglists (meta v)))
+                    :doc doc}))))
+       (sort-by (juxt :path :method))
+       vec))
+
 (defn describe-handler
-  "GET /api/describe — enumerate the API surface: every route handler with its
-  method, path and docstring. Read-only and unauthenticated; lets an agent
-  discover the endpoints before calling them."
-  [_req]
+  "GET /api/describe — enumerate the API surface: `{:endpoints [...], :scopes
+  [...]}`. Read-only; lets an agent discover the endpoints before calling them.
+
+  `:endpoints` is every route handler with its method, path and docstring.
+  `:scopes` is **the owner's Scopes, each with its title and description** —
+  generated from the table on every request rather than maintained by hand, so an
+  agent that reads this once knows both what it can call and the categories it may
+  file a Recipe under. That was the point of asking for it here: discovering the
+  API and discovering the filing are one round trip.
+
+  **A map with named sections, which is a change of shape from the bare vector this
+  returned before.** It had to be: a second section cannot be a member of a list
+  whose every other member is something you can call, and appending a pseudo-route
+  entry for a Scope would have made the catalogue lie about what a route is. The
+  keys are tracker's (`et.tr.server/describe-handler` answers `{:endpoints :skill}`),
+  so an agent that has read one of these apps' describe already knows the other's
+  shape.
+
+  **`:scopes` is absent for an anonymous caller, not empty.** Anonymous describe
+  keeps working and keeps listing every route — the API surface is public — and it
+  simply says nothing at all about Scopes, because an empty list is still an answer
+  about how the owner files his shelf. A machine token gets them, like every other
+  read of them."
+  [req]
   {:status 200
-   :body (->> describe-namespaces
-              (mapcat (fn [ns-sym] (when-let [n (find-ns ns-sym)] (ns-publics n))))
-              (keep (fn [[sym v]]
-                      (let [doc (:doc (meta v))]
-                        (when-let [[_ method path] (some->> doc (re-find route-doc-re))]
-                          {:name (str sym)
-                           :ns (str (ns-name (.ns ^clojure.lang.Var v)))
-                           :method method
-                           :path path
-                           :arglists (pr-str (:arglists (meta v)))
-                           :doc doc}))))
-              (sort-by (juxt :path :method))
-              vec)})
+   :body (cond-> {:endpoints (describe-endpoints)}
+           (common/authenticated? req)
+           (assoc :scopes (db.scope/list-scopes (common/ensure-ds)
+                                                (common/get-user-id req))))})
 
 (defn- mutating-request? [req]
   (#{:post :put :delete} (:request-method req)))
@@ -274,6 +307,20 @@
             (PUT    "/:id"          [] recipe-handler/update-recipe-handler)
             (DELETE "/:id"          [] recipe-handler/delete-recipe-handler))
           wrap-machine-recipe-rules)))
+
+    ;; Siblings of `/api/recipes` and so **outside both recipe guards** — which is
+    ;; deliberate and is why every one of these four handlers asks
+    ;; `common/authenticated?` for itself. A Scope is not a Recipe: the 401 guard
+    ;; and the machine rules are about recipe ids and the publish latch, and
+    ;; neither has an answer for this context. Do not add these routes inside the
+    ;; recipes context to "get the guard for free"; the guard would then also
+    ;; refuse a machine caller a Scope on a published Recipe, which is not a rule
+    ;; anybody asked for.
+    (context "/scopes" []
+      (GET    "/"    [] scope-handler/list-scopes-handler)
+      (POST   "/"    [] scope-handler/add-scope-handler)
+      (PUT    "/:id" [] scope-handler/update-scope-handler)
+      (DELETE "/:id" [] scope-handler/delete-scope-handler))
 
     (context "/test" []
       (POST "/reset" [] reset-test-db-handler))))

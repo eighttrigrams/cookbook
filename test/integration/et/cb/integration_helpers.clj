@@ -116,6 +116,20 @@
   [method path opts]
   (update (API-raw method path opts) :body #(when (seq %) (json/parse-string % true))))
 
+(defn describe-endpoints
+  "The route catalogue out of GET /api/describe.
+
+  It lives under `:endpoints` now: describe answers a **map with named sections**
+  (`{:endpoints […] :scopes […]}`, tracker's shape) rather than the bare vector of
+  routes it used to be, because the owner's Scopes had to be listed there too and
+  a second section cannot be a member of a list of callable routes.
+
+  Every test that reads the catalogue goes through this one function, so the next
+  time that shape moves it is one edit and not eight. Takes the same opts as `API`,
+  which is what lets a test ask as an anonymous caller."
+  ([] (describe-endpoints {}))
+  ([opts] (:endpoints (:body (API :get "/api/describe" opts)))))
+
 (defn GET-json [path] (API :get path {}))
 (defn POST-json [path body] (API :post path {:body body}))
 (defn PUT-json [path body] (API :put path {:body body}))
