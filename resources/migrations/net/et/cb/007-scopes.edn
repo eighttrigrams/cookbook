@@ -1,0 +1,59 @@
+{:up ["CREATE TABLE scopes (
+         id          INTEGER PRIMARY KEY AUTOINCREMENT,
+         title       TEXT NOT NULL,
+         description TEXT NOT NULL DEFAULT '',
+         user_id     INTEGER REFERENCES users(id),
+         UNIQUE(title, user_id)
+       )"
+      "CREATE TABLE recipe_scopes (
+         recipe_id INTEGER NOT NULL REFERENCES recipes(id),
+         scope_id  INTEGER NOT NULL REFERENCES scopes(id),
+         PRIMARY KEY (recipe_id, scope_id)
+       )"]
+ ;; **Scope**: a title and a description a Recipe can be filed under, any number
+ ;; of them to a Recipe. Cookbook's own word, and from here on its only meaning —
+ ;; the visibility argument the db layer used to call `scope` is now `audience`
+ ;; (see the rename commit before this one, and `db.recipe/audience-clause`).
+ ;;
+ ;; The shape follows tracker's categories — its
+ ;; `007-fix-category-unique-per-user` for the entity and
+ ;; `018-add-resource-categories` for the join — with two departures, both
+ ;; deliberate.
+ ;;
+ ;; **`title`, not tracker's `name`.** Cookbook's own entity calls that field
+ ;; `title`, and so did the owner when he asked for this. One app, one word for
+ ;; the thing a row is called by.
+ ;;
+ ;; **No `category_type` column.** Tracker's join table carries one because it has
+ ;; four kinds of category sharing a table; cookbook has one kind, so the
+ ;; discriminator would have exactly one possible value. A column that can only
+ ;; ever hold one answer answers nothing, and it would have to be threaded through
+ ;; every query and every insert to keep saying it.
+ ;;
+ ;; `UNIQUE(title, user_id)` and not `UNIQUE(title)`: a global uniqueness
+ ;; constraint on a per-user entity is the bug tracker's migration 007 exists to
+ ;; fix, so this starts where tracker ended up. `user_id` is nullable for the same
+ ;; reason `recipes.user_id` is — dev's owner has no `users` row, and
+ ;; `db/user-id-where-clause` reads a missing id as `user_id IS NULL`, which is a
+ ;; real owner in this schema. SQLite treats NULLs as distinct in a UNIQUE index,
+ ;; so the constraint does not bind the nil owner's rows; that is the pre-existing
+ ;; shape of every table here and not a decision made now.
+ ;;
+ ;; **The `REFERENCES` clauses are documentation, not enforcement.** `PRAGMA
+ ;; foreign_keys` is 0 on this connection and nothing in `src/` or the JDBC URLs
+ ;; turns it on, so no cascade fires and no orphan is refused. They are declared
+ ;; anyway, matching the house style — every other table here says what it points
+ ;; at — but the code does the work: `db.recipe/delete-recipe` deletes a Recipe's
+ ;; `recipe_scopes` rows in its own transaction, the way it already deletes its
+ ;; `recipe_history` rows, and `db.scope/delete-scope` deletes the join rows of
+ ;; the Scope going away. Both are pinned by a test that reads the join table
+ ;; afterwards rather than only checking the parent row is gone.
+ ;;
+ ;; **The join table carries no `user_id`.** Both of its parents have one, and an
+ ;; association only ever links a Recipe and a Scope with the same owner —
+ ;; `db.scope/set-recipe-scopes!` intersects the incoming ids with the caller's
+ ;; own — so a third copy of that fact could only ever be the one that goes stale.
+ ;; Reads still join through `scopes` and narrow on its `user_id`, so the
+ ;; ownership question is answered from the row that owns it.
+ :down ["DROP TABLE IF EXISTS recipe_scopes"
+        "DROP TABLE IF EXISTS scopes"]}

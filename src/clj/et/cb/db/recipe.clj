@@ -80,12 +80,21 @@
 
   The one ordering that matters is in `archive!`: a save pushes the outgoing
   version into history together with **its own** source, and only the statement
-  after that stamps the row with the new save's."
+  after that stamps the row with the new save's.
+
+  **Scopes** are the other half of the filing, and the half that is a relation
+  rather than a column: `et.cb.db.scope` owns them, this namespace only ever asks
+  it two things. On a read, whether to attach them — no, for a visitor, and the
+  join is not run at all rather than run and hidden. On a write, to replace them,
+  which is a touch and not a version: `modified_at` moves, nothing is archived.
+  Everything else about them, including why the boundary is the missing key rather
+  than a client that declines to draw it, is documented over there."
   (:require [clojure.string :as str]
             [next.jdbc :as jdbc]
             [honey.sql :as sql]
             [taoensso.telemere :as tel]
-            [et.cb.db :as db]))
+            [et.cb.db :as db]
+            [et.cb.db.scope :as db.scope]))
 
 (def visitor-audience
   "What an anonymous caller may read: the published recipes, whoever owns them.
@@ -193,6 +202,24 @@
 (defn- published? [recipe]
   (= 1 (:published recipe)))
 
+(defn- with-scopes
+  "Attach `:scopes` to rows the caller may see them on, and **do nothing at all
+  for a visitor** — not attach an empty vector, and not run the join.
+
+  This is `select-columns`' rule for tags in the shape a join has to take it: the
+  privacy of the owner's filing is a query that does not happen, so there is no
+  key for a caller to leak and no `scopes: []` making a claim about how the owner
+  files a published Recipe. It is the one function that decides this, and it takes
+  the audience precisely so that no caller can decide it instead.
+
+  A published Recipe is no exception. Publishing says who may read the Recipe;
+  this says who may see where the owner filed it, and the owner's answer to the
+  second was *to logged-in users only, no matter what*."
+  [ds audience rows]
+  (if (visitor? audience)
+    rows
+    (db.scope/attach ds audience rows)))
+
 (defn list-recipes
   "The recipes visible in `audience` — a user-id for their owner, `visitor-audience`
   for an anonymous caller — most recently touched first, optionally narrowed by
@@ -234,7 +261,14 @@
   narrow *inside* the audience they are given. A visitor's search runs against the
   published recipes rather than against everything followed by a hiding step, and
   so does a visitor's human filter — it can only ever take rows away from what
-  that caller could already see."
+  that caller could already see.
+
+  Every row also carries its **Scopes** — `[{:id :title :description}]`, empty for
+  an unfiled Recipe — for a caller who may see them, and **no `scopes` key at all**
+  for a visitor. That is one extra statement for the whole listing rather than one
+  per row (`db.scope/attach`), which is what lets a collapsed card wear its badges
+  without going and fetching anything. Nothing filters the shelf by them: the
+  Scopes are on the rows this query already chose."
   ([ds audience] (list-recipes ds audience {}))
   ([ds audience {:keys [search-term human-only? lean?] :or {lean? true}}]
    ;; The search clause names `recipes.title` for the same reason the projection
@@ -253,27 +287,47 @@
          where (cond-> [:and (audience-clause audience)]
                  search-clause (conj search-clause)
                  human-only? (conj [:= :has_human_edit 1]))]
-     (jdbc/execute! (db/get-conn ds)
-       (sql/format {:select (into (qualify (select-columns lean? audience)) source-split-columns)
-                    :from [:recipes]
-                    :left-join [:recipe_history [:= :recipe_history.recipe_id :recipes.id]]
-                    :where where
-                    :group-by [:recipes.id]
-                    :order-by [[:recipes.modified_at :desc] [:recipes.id :desc]]})
-       db/jdbc-opts))))
+     (->> (jdbc/execute! (db/get-conn ds)
+            (sql/format {:select (into (qualify (select-columns lean? audience))
+                                      source-split-columns)
+                         :from [:recipes]
+                         :left-join [:recipe_history [:= :recipe_history.recipe_id :recipes.id]]
+                         :where where
+                         :group-by [:recipes.id]
+                         :order-by [[:recipes.modified_at :desc] [:recipes.id :desc]]})
+            db/jdbc-opts)
+          (with-scopes ds audience)))))
 
 (defn get-recipe
   "One recipe visible in `audience` — see `list-recipes` — or nil. Lean like the
   listing unless asked otherwise, and tagless like the listing for a visitor
   however it is asked: `lean?` widens the description and nothing widens the
-  tags."
+  tags.
+
+  `scopes?` asks for the Recipe's Scopes, and unlike the tags it is **off by
+  default**, because it is a second statement rather than a column: the callers
+  that want them are the read handlers, feeding a client that has to show which
+  Scopes a Recipe is already filed under. The guards and the write paths call this
+  to find out whether a row exists and what its text is, and none of them has any
+  use for the filing.
+
+  Asking for them is not the same as getting them. A visitor never does, at any
+  `lean?` and at any `scopes?` — `with-scopes` refuses, so the flag is a request
+  and the audience is the answer."
   ([ds audience id] (get-recipe ds audience id {}))
-  ([ds audience id {:keys [lean?] :or {lean? true}}]
-   (jdbc/execute-one! (db/get-conn ds)
-     (sql/format {:select (select-columns lean? audience)
-                  :from [:recipes]
-                  :where [:and [:= :id id] (audience-clause audience)]})
-     db/jdbc-opts)))
+  ([ds audience id {:keys [lean? scopes?] :or {lean? true}}]
+   ;; The nil check is not defensive noise: `with-scopes` on a one-element vector
+   ;; holding nil would attach an empty `:scopes` to it and hand back a truthy
+   ;; `{:scopes []}` for a recipe that does not exist, turning every 404 in this
+   ;; app into a 200.
+   (let [recipe (jdbc/execute-one! (db/get-conn ds)
+                  (sql/format {:select (select-columns lean? audience)
+                               :from [:recipes]
+                               :where [:and [:= :id id] (audience-clause audience)]})
+                  db/jdbc-opts)]
+     (if (and recipe scopes?)
+       (first (with-scopes ds audience [recipe]))
+       recipe))))
 
 (defn- source-of
   "Which source to attribute a write to: `'ui'` when the caller says it is not a
@@ -309,26 +363,37 @@
   which is the conservative reading: a caller that says nothing about itself leaves
   the row of unknown provenance rather than claiming the owner's hand for it —
   `has_human_edit` 0 and `source` NULL, the two ways this schema has of not
-  asserting something."
+  asserting something.
+
+  `scope_ids` files the new Recipe under the caller's own Scopes, in the same
+  transaction as the insert — so a Recipe is never briefly visible unfiled, and a
+  failed association takes the Recipe with it rather than leaving a half-filed
+  row. An absent key means no Scopes, which is the only thing it can mean for a
+  row that did not exist a statement ago. The returned Recipe carries `:scopes`
+  either way: a write is never anonymous, so there is nobody here to withhold it
+  from."
   ([ds user-id fields] (create-recipe ds user-id fields {}))
-  ([ds user-id {:keys [title useful_when description tags]} opts]
-   (let [human? (:human? opts)
-         result (jdbc/execute-one! (db/get-conn ds)
-                  (sql/format {:insert-into :recipes
-                               :values [{:title (str/trim title)
-                                         :useful_when (or useful_when "")
-                                         :description (or description "")
-                                         :tags (or tags "")
-                                         :version 1
-                                         :has_human_edit (if human? 1 0)
-                                         :source (source-of opts)
-                                         :user_id user-id}]
-                               :returning (select-columns false user-id)})
-                  db/jdbc-opts)]
-     (tel/log! {:level :info :data {:id (:id result) :user-id user-id :human? (boolean human?)
-                                    :source (source-of opts)}}
-               "Recipe created")
-     result)))
+  ([ds user-id {:keys [title useful_when description tags scope_ids]} opts]
+   (jdbc/with-transaction [tx (db/get-conn ds)]
+     (let [human? (:human? opts)
+           result (jdbc/execute-one! tx
+                    (sql/format {:insert-into :recipes
+                                 :values [{:title (str/trim title)
+                                           :useful_when (or useful_when "")
+                                           :description (or description "")
+                                           :tags (or tags "")
+                                           :version 1
+                                           :has_human_edit (if human? 1 0)
+                                           :source (source-of opts)
+                                           :user_id user-id}]
+                                 :returning (select-columns false user-id)})
+                    db/jdbc-opts)]
+       (when (seq scope_ids)
+         (db.scope/set-recipe-scopes! tx user-id (:id result) scope_ids))
+       (tel/log! {:level :info :data {:id (:id result) :user-id user-id :human? (boolean human?)
+                                      :source (source-of opts)}}
+                 "Recipe created")
+       (db.scope/attach-one tx user-id result)))))
 
 (defn- content-of [recipe]
   (select-keys recipe [:title :useful_when :description]))
@@ -382,12 +447,13 @@
   Callers must have established that the recipe exists; nil here means the
   version guard failed, not that the id was wrong.
 
-  **A save that changes only the tags is a third case, between those two.** Tags
-  are not versioned — see the namespace docstring — so this writes them and stops
-  there: no history row, no version bump, and `source` untouched, because there is
-  no new version for a label to be about. `has_human_edit` is untouched for the
-  same reason `publish-recipe` leaves it alone: the bit says a human wrote the
-  *text*, and filing a Recipe under a word is not writing it.
+  **A save that changes only the filing is a third case, between those two** —
+  the tags, the `scope_ids`, or both. Neither is versioned — see the namespace
+  docstring — so this writes them and stops there: no history row, no version
+  bump, and `source` untouched, because there is no new version for a label to be
+  about. `has_human_edit` is untouched for the same reason `publish-recipe` leaves
+  it alone: the bit says a human wrote the *text*, and filing a Recipe under a
+  word or under a Scope is not writing it.
 
   It does move `modified_at`, and that is the one thing here that had to be
   decided rather than followed. Publishing is the precedent for leaving it alone,
@@ -398,6 +464,20 @@
   over the new ones with no 409 to stop it. Moving the stamp is what keeps one
   guard covering everything the modal can send. It also reads true: the shelf is
   ordered by `modified_at`, and curating a tag is touching a Recipe.
+
+  **`scope_ids` inherits that whole argument**, including the hazard: the Scope
+  picker is in the same modal, and the associations are the one thing a save sends
+  that is not on the row at all, so a stale client's `scope_ids` would silently
+  unfile what somebody else had just filed. Absent leaves the associations alone,
+  present replaces them, and present-but-empty clears them — the same
+  absent-keeps/present-replaces rule as every other field, which is why an empty
+  array had to mean something rather than being read as 'no opinion'. Ids the
+  caller does not own are dropped; `db.scope/set-recipe-scopes!` says why, and the
+  returned Recipe's `:scopes` is the receipt.
+
+  The association write happens **after** the `expected-modified-at` guard and
+  inside the same transaction as the row write. Before the guard it would be a
+  write that a 409 then claimed had not happened.
 
   `:human?` — this save came from a caller carrying no *machine* token — sets
   `has_human_edit` on the row, on the same statement that bumps the version. Three
@@ -427,46 +507,53 @@
            incoming-tags (merge-tags current fields)
            content-changed? (not= incoming (content-of current))
            tags-changed? (not= incoming-tags (:tags current))]
-       (cond
-         (and expected-modified-at (not= expected-modified-at (:modified_at current)))
+       (if (and expected-modified-at (not= expected-modified-at (:modified_at current)))
          nil
+         ;; Past the guard, so a write here is one the caller is allowed to make.
+         ;; The associations go first because the row write below is what stamps
+         ;; `modified_at`, and a change to the filing has to move it.
+         (let [scopes-changed? (when (contains? fields :scope_ids)
+                                 (db.scope/set-recipe-scopes! tx user-id id
+                                                              (:scope_ids fields)))
+               result
+               (cond
+                 (not (or content-changed? tags-changed? scopes-changed?))
+                 current
 
-         (not (or content-changed? tags-changed?))
-         current
+                 (not content-changed?)
+                 (let [result (jdbc/execute-one! tx
+                                (sql/format {:update :recipes
+                                             :set {:tags incoming-tags
+                                                   :modified_at [:raw "datetime('now')"]}
+                                             :where [:= :id id]
+                                             :returning (select-columns false user-id)})
+                                db/jdbc-opts)]
+                   (tel/log! {:level :info :data {:id id :user-id user-id
+                                                  :version (:version result)}}
+                             "Recipe filing saved")
+                   result)
 
-         (not content-changed?)
-         (let [result (jdbc/execute-one! tx
-                        (sql/format {:update :recipes
-                                     :set {:tags incoming-tags
-                                           :modified_at [:raw "datetime('now')"]}
-                                     :where [:= :id id]
-                                     :returning (select-columns false user-id)})
-                        db/jdbc-opts)]
-           (tel/log! {:level :info :data {:id id :user-id user-id
-                                          :version (:version result)}}
-                     "Recipe tags saved")
-           result)
-
-         :else
-         (do
-           (archive! tx current)
-           (let [result (jdbc/execute-one! tx
-                          (sql/format {:update :recipes
-                                       :set (cond-> (assoc incoming
-                                                           :tags incoming-tags
-                                                           :version (inc (:version current))
-                                                           :source (source-of opts)
-                                                           :modified_at [:raw "datetime('now')"])
-                                              human? (assoc :has_human_edit 1))
-                                       :where [:= :id id]
-                                       :returning (select-columns false user-id)})
-                          db/jdbc-opts)]
-             (tel/log! {:level :info :data {:id id :user-id user-id
-                                            :version (:version result)
-                                            :human? (boolean human?)
-                                            :source (source-of opts)}}
-                       "Recipe saved")
-             result)))))))
+                 :else
+                 (do
+                   (archive! tx current)
+                   (let [result (jdbc/execute-one! tx
+                                  (sql/format {:update :recipes
+                                               :set (cond-> (assoc incoming
+                                                                   :tags incoming-tags
+                                                                   :version (inc (:version current))
+                                                                   :source (source-of opts)
+                                                                   :modified_at [:raw "datetime('now')"])
+                                                      human? (assoc :has_human_edit 1))
+                                               :where [:= :id id]
+                                               :returning (select-columns false user-id)})
+                                  db/jdbc-opts)]
+                     (tel/log! {:level :info :data {:id id :user-id user-id
+                                                    :version (:version result)
+                                                    :human? (boolean human?)
+                                                    :source (source-of opts)}}
+                               "Recipe saved")
+                     result)))]
+           (db.scope/attach-one tx user-id result)))))))
 
 (defn publish-recipe
   "Set the latch on a recipe the user owns: `published` on, `published_at`
@@ -479,10 +566,11 @@
   leaves `modified_at` alone, so an edit the owner already has in flight is not
   turned into a 409 by it.
 
-  It does not touch the tags, and publishing does not make them public: the
-  latch decides who may *see the Recipe*, and the projection decides who may see
-  its tags. A published Recipe's tags stay the owner's — that is the one place in
-  this app where those two questions come apart.
+  It does not touch the tags or the Scopes, and publishing makes neither public:
+  the latch decides who may *see the Recipe*, and the projection decides who may
+  see how it is filed. A published Recipe's tags and Scopes stay the owner's —
+  that is where those two questions come apart, and the owner said so in as many
+  words about the Scopes: *to logged in users only, no matter what*.
 
   It does not set `has_human_edit` either, for the same reason it writes no
   version: that bit says a human wrote the text, and putting your name to text an
@@ -495,23 +583,36 @@
   [ds user-id id]
   (jdbc/with-transaction [tx (db/get-conn ds)]
     (when-let [current (get-recipe tx user-id id {:lean? false})]
-      (if (published? current)
-        current
-        (let [result (jdbc/execute-one! tx
-                       (sql/format {:update :recipes
-                                    :set {:published 1
-                                          :published_at [:raw "datetime('now')"]}
-                                    :where [:= :id id]
-                                    :returning (select-columns false user-id)})
-                       db/jdbc-opts)]
-          (tel/log! {:level :info :data {:id id :user-id user-id}} "Recipe published")
-          result)))))
+      ;; `:scopes` on the way out of both branches, not just the one that wrote:
+      ;; the client caches this response as the Recipe it holds, so a no-op
+      ;; publish that answered without the key would blank the badges on a card
+      ;; the server never unfiled.
+      (db.scope/attach-one
+        tx user-id
+        (if (published? current)
+          current
+          (let [result (jdbc/execute-one! tx
+                         (sql/format {:update :recipes
+                                      :set {:published 1
+                                            :published_at [:raw "datetime('now')"]}
+                                      :where [:= :id id]
+                                      :returning (select-columns false user-id)})
+                         db/jdbc-opts)]
+            (tel/log! {:level :info :data {:id id :user-id user-id}} "Recipe published")
+            result))))))
 
 (defn delete-recipe
-  "Remove a recipe the user owns together with its whole version history.
-  History rows first, like every other delete path in the suite — foreign keys
-  are not enforced on this connection, so ON DELETE CASCADE would be a promise
-  nothing keeps."
+  "Remove a recipe the user owns together with its whole version history **and
+  every association to a Scope**. Child rows first, like every other delete path
+  in the suite — foreign keys are not enforced on this connection, so ON DELETE
+  CASCADE would be a promise nothing keeps.
+
+  The `recipe_scopes` rows are the newer half of that and the easier one to
+  forget, because nothing breaks visibly when they are left behind: the Recipe is
+  gone from every listing and the orphans are only reachable by joining a table
+  that no longer has the row. They would come back as somebody else's badge the
+  day AUTOINCREMENT reuses the id. `deleting-a-recipe-takes-its-associations-with-it`
+  reads the join table after the delete rather than trusting the parent's absence."
   [ds user-id id]
   (jdbc/with-transaction [tx (db/get-conn ds)]
     (let [own [:and [:= :id id] (db/user-id-where-clause user-id)]]
@@ -520,6 +621,7 @@
               db/jdbc-opts)
         (jdbc/execute-one! tx (sql/format {:delete-from :recipe_history
                                            :where [:= :recipe_id id]}))
+        (db.scope/delete-recipe-scopes! tx id)
         (jdbc/execute-one! tx (sql/format {:delete-from :recipes :where own}))
         (tel/log! {:level :info :data {:id id :user-id user-id}} "Recipe deleted")
         {:success true}))))

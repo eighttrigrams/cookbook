@@ -60,3 +60,34 @@
                      :where [:= :recipe_id recipe-id]})
         db/jdbc-opts)
       :n))
+
+(defn insert-scope-row!
+  "An association written straight at the join table, bypassing
+  `db.scope/set-recipe-scopes!` and the ownership intersection it does.
+
+  Reaches past the writer for the same reason `clear-source!` does: no request can
+  produce this row — a caller's Scope ids are intersected with their own — and a
+  test about what the *reader* narrows on has nothing to read otherwise."
+  [recipe-id scope-id]
+  (jdbc/execute-one! (db/get-conn *ds*)
+    (sql/format {:insert-into :recipe_scopes
+                 :values [{:recipe_id recipe-id :scope_id scope-id}]})))
+
+(defn scope-row-count
+  "Rows in `recipe_scopes`, optionally only those naming one recipe or one Scope.
+  Straight at the join table for the same reason `history-row-count` is: nothing
+  enforces the foreign keys here, so 'the parent row is gone' and 'the join rows
+  are gone' are two different facts and only this one can check the second. A
+  delete that left orphans behind would pass every assertion made through a
+  handler."
+  ([] (scope-row-count nil nil))
+  ([recipe-id scope-id]
+   (-> (jdbc/execute-one! (db/get-conn *ds*)
+         (sql/format {:select [[[:count :*] :n]]
+                      :from [:recipe_scopes]
+                      :where (cond-> [:and]
+                               recipe-id (conj [:= :recipe_id recipe-id])
+                               scope-id (conj [:= :scope_id scope-id])
+                               (and (nil? recipe-id) (nil? scope-id)) (conj [:inline true]))})
+         db/jdbc-opts)
+       :n)))

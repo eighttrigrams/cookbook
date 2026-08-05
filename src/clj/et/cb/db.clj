@@ -123,8 +123,16 @@
 
 (defn reset-all-data!
   "Dev-only: wipe user data (keeps schema). Child rows first, so nothing is left
-  pointing at a row that is already gone."
+  pointing at a row that is already gone — and that ordering is the whole reason
+  this is a list and not a `DELETE FROM` per table wherever it was convenient:
+  nothing enforces a foreign key on this connection, so the order here *is* the
+  referential integrity.
+
+  `recipe_scopes` and `scopes` are in it because a Scope is user data too. Leaving
+  the join rows would strand them against deleted Recipes, and leaving the Scopes
+  would make 'reset' mean 'reset except the filing' — a fixture that half-resets
+  is one a test can pass because of the half that stayed."
   [ds]
   (let [conn (get-conn ds)]
-    (doseq [table [:recipe_history :recipes]]
+    (doseq [table [:recipe_history :recipe_scopes :recipes :scopes]]
       (jdbc/execute-one! conn (sql/format {:delete-from table})))))
