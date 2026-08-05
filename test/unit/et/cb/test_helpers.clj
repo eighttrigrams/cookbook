@@ -38,6 +38,18 @@
                  :set {:published_at value}
                  :where [:= :id recipe-id]})))
 
+(defn backdate-modified-at!
+  "Put a distinguishable timestamp on a row's `modified_at`, for the same reason
+  `backdate-published-at!` exists: `datetime('now')` is second-resolution, so a
+  save in the same second as the write before it would leave the stamp looking
+  untouched whether or not it was rewritten. This is what gives 'a tags-only save
+  does move modified_at' something to bite on."
+  [recipe-id value]
+  (jdbc/execute-one! (db/get-conn *ds*)
+    (sql/format {:update :recipes
+                 :set {:modified_at value}
+                 :where [:= :id recipe-id]})))
+
 (defn history-row-count
   "Straight at the table, so a test can tell 'the API stopped showing them' from
   'the rows are gone'."

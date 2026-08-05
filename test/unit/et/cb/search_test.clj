@@ -1,5 +1,6 @@
 (ns et.cb.search-test
-  "What `?search=` means: the title only, by word-prefix, AND across terms.
+  "What `?search=` means: the title and the tags, by word-prefix, AND across
+  terms.
 
   Written at the db layer on purpose. The whole thing is a `:where` clause, so
   SQLite is what evaluates it — a test of the clause *shape* would pass while
@@ -14,11 +15,13 @@
 (defn- create!
   "A recipe whose useful-when and description hold words the title does not, so
   every assertion below also says something about *where* search looks."
-  [title]
-  (db.recipe/create-recipe h/*ds* h/*user-id*
-                           {:title title
-                            :useful_when "when testing zzz"
-                            :description "body mentioning qqq"}))
+  ([title] (create! title nil))
+  ([title tags]
+   (db.recipe/create-recipe h/*ds* h/*user-id*
+                            (cond-> {:title title
+                                     :useful_when "when testing zzz"
+                                     :description "body mentioning qqq"}
+                              tags (assoc :tags tags)))))
 
 (defn- titles-for [search-term]
   (set (map :title (db.recipe/list-recipes h/*ds* h/*user-id*
@@ -83,14 +86,84 @@
   (testing "and so does no :search-term key at all"
     (is (= 2 (count (db.recipe/list-recipes h/*ds* h/*user-id*))))))
 
-(deftest only-the-title-is-searched
-  (create! "Risotto")
+(deftest only-the-title-and-the-tags-are-searched
+  (create! "Risotto" "rice arborio")
   (testing "useful-when is not searched — every recipe here has zzz in it"
     (is (empty? (titles-for "zzz"))))
   (testing "nor the description, which a lean read never even loads"
     (is (empty? (titles-for "qqq"))))
   (testing "while the title still narrows"
-    (is (= #{"Risotto"} (titles-for "riso")))))
+    (is (= #{"Risotto"} (titles-for "riso"))))
+  (testing "and so do the tags, which is the point of them: a word that is
+            nowhere in the title finds it"
+    (is (= #{"Risotto"} (titles-for "arbo")))
+    (is (= #{"Risotto"} (titles-for "rice")))))
+
+;; ---------------------------------------------------------------------------
+;; the tags column, and the fact that the two searched columns are one condition
+
+(deftest a-term-may-land-in-either-column
+  (create! "Sourdough starter" "bread baking")
+  (create! "Risotto" "rice")
+  (testing "the order's own example: one term prefixes a word of the title and
+            the other a word of the tags"
+    (is (= #{"Sourdough starter"} (titles-for "sour bak"))))
+  (testing "either way round, and either column alone"
+    (is (= #{"Sourdough starter"} (titles-for "bak sour")))
+    (is (= #{"Sourdough starter"} (titles-for "star sour")))
+    (is (= #{"Sourdough starter"} (titles-for "bread bak"))))
+  (testing "the terms are still ANDed across the pair — a term that prefixes
+            nothing in *either* column fails the row"
+    (is (empty? (titles-for "sour rice")))
+    (is (empty? (titles-for "bak zzz")))))
+
+(deftest the-word-rules-are-the-same-in-the-tags
+  ;; Not tracker's `LIKE 'term%'` over the whole column: cookbook's word
+  ;; semantics apply to the second column exactly as they do to the first.
+  (create! "Nothing in the title" "re-heating make/start Käse 100 % a_b")
+  (testing "punctuation ends a word there too"
+    (is (= 1 (count (titles-for "heating"))))
+    (is (= 1 (count (titles-for "start"))))
+    (is (= 1 (count (titles-for "re")))))
+  (testing "a prefix is not a substring"
+    (is (empty? (titles-for "eating"))))
+  (testing "non-ASCII is a word character"
+    (is (= 1 (count (titles-for "kä"))))
+    (is (empty? (titles-for "se"))))
+  (testing "and % and _ are ordinary characters rather than wildcards"
+    (is (= 1 (count (titles-for "%"))))
+    (is (= 1 (count (titles-for "a_b"))))
+    (is (empty? (titles-for "axb")))))
+
+(deftest an-untagged-recipe-is-searched-as-before
+  (create! "Sourdough starter")
+  (is (= "" (:tags (first (db.recipe/list-recipes h/*ds* h/*user-id*)))))
+  (testing "an empty tags column narrows nothing and matches nothing"
+    (is (= #{"Sourdough starter"} (titles-for "sour")))
+    (is (empty? (titles-for "bak")))))
+
+(deftest a-visitor-searches-tags-too-and-still-cannot-read-them
+  ;; **The owner's decision, pinned both ways in one place.** The searched
+  ;; columns do not depend on the caller — "this way we have a uniform
+  ;; expectation about search hits" — while the projection does. So a visitor can
+  ;; find a published Recipe by a word only its tags carry, and never learn what
+  ;; the tags say. The HTTP end of the same pair is in the integration namespace.
+  (let [{signed :id} (create! "Signed" "sekrit filing")
+        {drafted :id} (create! "Draft" "sekrit filing")]
+    (db.recipe/publish-recipe h/*ds* h/*user-id* signed)
+    (let [hits (db.recipe/list-recipes h/*ds* db.recipe/visitor-scope
+                                       {:search-term "sekrit"})]
+      (testing "the term is in neither title, and it finds the published one"
+        (is (= [signed] (map :id hits))))
+      (testing "and what comes back still carries no tags key"
+        (is (false? (contains? (first hits) :tags)))))
+    (testing "the search cannot widen the scope either — the draft carries the
+              same tags and stays invisible, however the terms are put"
+      (is (= [signed] (map :id (db.recipe/list-recipes h/*ds* db.recipe/visitor-scope
+                                                       {:search-term "filing sekrit"}))))
+      (is (= #{signed drafted}
+             (set (map :id (db.recipe/list-recipes h/*ds* h/*user-id*
+                                                   {:search-term "sekrit"}))))))))
 
 (deftest punctuation-ends-a-word
   (create! "Re-heating pizza")

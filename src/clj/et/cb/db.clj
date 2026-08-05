@@ -78,35 +78,47 @@
        "{|}~"))
 
 (defn build-word-prefix-search-clause
-  "Case-insensitive AND-of-terms **word-prefix** match over `column`.
+  "Case-insensitive AND-of-terms **word-prefix** match over `columns`, a vector
+  of them.
 
   The search string splits on whitespace, and a row matches when *every* term is
-  a prefix of *some* word in `column`: `ab cd` matches `abc cde` — `ab` prefixes
-  `abc`, `cd` prefixes `cde` — but not `ad cd`, since `ab` prefixes neither
-  word. A prefix is not a substring, so `cd` does not match `abcd`. What counts
-  as a word is `word-separator-chars`.
+  a prefix of *some* word in *some* column: `ab cd` matches `abc cde` — `ab`
+  prefixes `abc`, `cd` prefixes `cde` — but not `ad cd`, since `ab` prefixes
+  neither word. A prefix is not a substring, so `cd` does not match `abcd`. What
+  counts as a word is `word-separator-chars`.
+
+  **The terms are ANDed and each one may land in a different column.** With
+  `[:title :tags]`, a recipe titled `Sourdough starter` tagged `bread baking`
+  matches `sour bak` — `sour` prefixes a word of the title and `bak` a word of
+  the tags — and it matches `star sour` and `bread bak` just as well. What it
+  does *not* mean is that one column has to carry them all: a search is a set of
+  conditions on the row, not on any one field of it. The vector-of-columns shape
+  is tracker's `build-search-clause`; the word semantics above are cookbook's own
+  and are what stays.
 
   Matching is **literal**: it goes through SQLite's `instr` rather than `LIKE`,
   so `%` and `_` in a term are the characters they look like rather than
   wildcards — searching `%` looks for a word starting with `%` instead of
   matching every row — and there is no escaping to get right. Prepending a space
-  to the value turns 'at the start of the value' into 'after a separator', so
-  the first word needs no case of its own.
+  to each value turns 'at the start of the value' into 'after a separator', so
+  the first word of each column needs no case of its own.
 
   nil for a blank search, which every caller reads as 'no narrowing'."
-  [search-term column]
+  [search-term columns]
   (when-not (str/blank? search-term)
     (let [terms (->> (str/split (str/trim search-term) #"\s+")
                      (remove str/blank?)
-                     (map str/lower-case))
-          value [:|| [:inline " "] [:lower column]]]
+                     (map str/lower-case))]
       (when (seq terms)
         (into [:and]
               (map (fn [term]
                      (into [:or]
-                           (map (fn [separator]
-                                  [:> [:instr value (str separator term)] [:inline 0]])
-                                word-separator-chars)))
+                           (mapcat (fn [column]
+                                     (let [value [:|| [:inline " "] [:lower column]]]
+                                       (map (fn [separator]
+                                              [:> [:instr value (str separator term)] [:inline 0]])
+                                            word-separator-chars)))
+                                   columns)))
                    terms))))))
 
 (defn reset-all-data!

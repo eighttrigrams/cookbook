@@ -1,0 +1,30 @@
+{:up ["ALTER TABLE recipes ADD COLUMN tags TEXT NOT NULL DEFAULT ''"]
+ ;; Extra words to find a Recipe by, which its title does not contain. One TEXT
+ ;; column holding whatever the owner typed, following tracker's
+ ;; `014-add-task-tags` and rhizome's `items.tags` — **not** a tags table and not
+ ;; a join table. The house pattern is why no tag ever needs migrating, splitting
+ ;; or deduplicating: there is nothing to keep in step with anything.
+ ;;
+ ;; `NOT NULL DEFAULT ''` rather than a nullable column, and here the default is
+ ;; not a claim about anything the way 004's and 005's were. Untagged is the
+ ;; honest reading of a Recipe nobody has tagged: the column records what the
+ ;; owner curated, so 'he curated nothing here yet' is the true state of every
+ ;; existing row, and there is no third category to preserve. Empty rather than
+ ;; NULL also keeps the search clause free of a null case — `instr` on a NULL is
+ ;; NULL, which is not `> 0`, so it would work either way, but only one of the two
+ ;; is a thing a reader has to check.
+ ;;
+ ;; **Deliberately not on `recipe_history`.** Tags are not versioned, for the
+ ;; reason `published` is not: versions are about content, and a tag is a
+ ;; retrieval aid rather than part of the Recipe. Versioning them would put filing
+ ;; bookkeeping into the history a reader steps through, and — now that 005
+ ;; records provenance — would make a tag tweak count as a whole `ui` version on
+ ;; the card's split. So `update-recipe` writes a tag change without archiving
+ ;; anything and without moving the version. See the "History model" docstring in
+ ;; `et.cb.db.recipe`.
+ ;;
+ ;; The column is on the row and read by everyone's search but sent to nobody but
+ ;; the owner — that half is a projection choice in `select-columns`, not a schema
+ ;; one, and it could not be a schema one: the same column has to be searchable
+ ;; by an anonymous caller and invisible to them.
+ :down ["ALTER TABLE recipes DROP COLUMN tags"]}

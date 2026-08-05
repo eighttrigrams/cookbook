@@ -27,6 +27,29 @@
   not create a version: versions are about content, the latch is a separate fact
   about the row. A table that half-answered both questions would answer neither.
 
+  **Tags** are one TEXT column on the row — extra words to find a Recipe by,
+  which its title does not contain — following tracker's `tasks.tags` and
+  rhizome's `items.tags` rather than any table of its own. Two things about them,
+  and they pull in opposite directions on purpose.
+
+  They are **not versioned**, for exactly the reason `published` is not: a tag is
+  a retrieval aid and not the Recipe, so versioning one would put filing
+  bookkeeping into the history a reader steps through, and would make a tag tweak
+  count as a whole `ui` version on the card's provenance split. `update-recipe`
+  therefore has a branch for a save that changes only tags: it writes them,
+  archives nothing and leaves the version where it is.
+
+  And they are **searched for everybody but sent only to the owner**. The search
+  covers `[:title :tags]` whatever the scope — one search behaves one way, so a
+  term returns the same recipes no matter who is asking — while a visitor's
+  projection simply does not name the column, the way a lean read does not name
+  `description`. So an anonymous caller can *test* whether a published Recipe
+  carries a word without ever *reading* its tags, and that is the owner's own
+  decision rather than an oversight: the hiding is about display. A machine token
+  is on the owner's side of that line by design (it acts in the owner's scope),
+  which is right for an agentic memory store — a curated retrieval index is most
+  of what an agent gets out of one.
+
   **Provenance** is one bit on the row too: `has_human_edit`, set by a write from
   a caller that is not a machine and never cleared. It is denormalised for the
   same reason the version is — deriving it would mean a correlated subquery per
@@ -64,21 +87,68 @@
             [taoensso.telemere :as tel]
             [et.cb.db :as db]))
 
+(def visitor-scope
+  "What an anonymous caller may read: the published recipes, whoever owns them.
+
+  A visitor has no user-id, and `db/user-id-where-clause` reads a missing one as
+  `user_id IS NULL` — a real category in this schema, not an empty one — so a
+  visitor described by a nil user-id would quietly be served the nil-owner's
+  rows. This marker keeps a visitor's query from ever naming an owner, and it
+  narrows on `published` in the query itself, so an unpublished row is outside
+  the result set rather than filtered out of it afterwards.
+
+  It sits up here because the **projection** consults it too now, not only the
+  `:where` clause: tags are the owner's, so which columns a read selects depends
+  on who is asking. Everything that is not this marker is somebody's user-id, the
+  nil owner included, and a nil owner is an owner."
+  ::visitor)
+
+(defn- visitor? [scope]
+  (= scope visitor-scope))
+
+(defn- scope-clause [scope]
+  (if (visitor? scope)
+    [:= :published 1]
+    (db/user-id-where-clause scope)))
+
 (def lean-select-columns
-  "Everything but the body. This *is* the default API shape."
+  "Everything but the body and the tags. This *is* the default API shape for a
+  visitor, and the owner's default is this plus `tags`."
   [:id :title :useful_when :version :published :published_at :created_at :modified_at
    :has_human_edit :source])
 
-(defn- select-columns [lean?]
-  (if lean? lean-select-columns (conj lean-select-columns :description)))
+(defn- select-columns
+  "Which columns a read selects, and it is a *select-column* choice for both of
+  the things it varies on — never a dissoc afterwards. A key that was never
+  selected is a key no caller can leak.
+
+  `lean?` is the description: the retrieval index does not load a body.
+
+  `scope` is the tags: **a visitor's projection does not name the column**, so
+  the response carries no `tags` key at all rather than an empty one. Absent and
+  empty are different answers — an empty string would say 'this Recipe is
+  untagged', which is a claim about the owner's filing that a visitor is not being
+  told. The client's own hiding is cosmetic on top of this; this is the boundary.
+
+  Note what the two do *not* compose into: `?detail=full` widens the description
+  for anybody, visitor included, and it never widens the tags. Verbosity and
+  privacy are different axes, which is the change tags made to this app — until
+  now the publish latch was the whole privacy boundary."
+  [lean? scope]
+  (cond-> lean-select-columns
+    (not lean?) (conj :description)
+    (not (visitor? scope)) (conj :tags)))
 
 (defn- qualify
   "The same columns, `recipes.`-prefixed. Only the listing needs this, and only
   because the provenance join below puts a second table in scope that has a column
   of the same name for most of them — `title`, `useful_when`, `description`,
-  `version`, `created_at` and `source` are all on `recipe_history` too. Read back
-  through `db/jdbc-opts`, which builds unqualified maps, so the shape a caller
-  sees is exactly what it was."
+  `version`, `created_at` and `source` are all on `recipe_history` too. `tags` is
+  not, since tags are not versioned, and it is prefixed anyway: the rule is 'the
+  listing qualifies what it selects', which cannot rot the way a list of the
+  columns that currently happen to be ambiguous would. Read back through
+  `db/jdbc-opts`, which builds unqualified maps, so the shape a caller sees is
+  exactly what it was."
   [columns]
   (mapv #(keyword (str "recipes." (name %))) columns))
 
@@ -112,36 +182,33 @@
    [(versions-with-source "ui") :ui_versions]
    [(versions-with-source nil) :unrecorded_versions]])
 
-(def visitor-scope
-  "What an anonymous caller may read: the published recipes, whoever owns them.
-
-  A visitor has no user-id, and `db/user-id-where-clause` reads a missing one as
-  `user_id IS NULL` — a real category in this schema, not an empty one — so a
-  visitor described by a nil user-id would quietly be served the nil-owner's
-  rows. This marker keeps a visitor's query from ever naming an owner, and it
-  narrows on `published` in the query itself, so an unpublished row is outside
-  the result set rather than filtered out of it afterwards."
-  ::visitor)
-
-(defn- scope-clause [scope]
-  (if (= scope visitor-scope)
-    [:= :published 1]
-    (db/user-id-where-clause scope)))
-
 (defn- published? [recipe]
   (= 1 (:published recipe)))
 
 (defn list-recipes
   "The recipes visible in `scope` — a user-id for their owner, `visitor-scope`
   for an anonymous caller — most recently touched first, optionally narrowed by
-  a **word-prefix search over the title**. `lean?` (the default) leaves the
-  description out of the projection entirely.
+  a **word-prefix search over the title and the tags**. `lean?` (the default)
+  leaves the description out of the projection entirely, and a visitor's
+  projection leaves out the tags — see `select-columns`.
 
   Every whitespace-separated term of the search has to be the prefix of some
-  word in the title, case-insensitively — see
-  `db/build-word-prefix-search-clause` for what a word is. Neither useful-when
-  nor the description is searched: the title is the name of the thing, and a
-  match in a line of prose was never what made a recipe the one you meant.
+  word in *one of the two searched columns*, case-insensitively, and different
+  terms may land in different ones: a recipe titled `Sourdough starter` tagged
+  `bread baking` matches `sour bak`. See `db/build-word-prefix-search-clause` for
+  what a word is. Neither useful-when nor the description is searched: the title
+  is the name of the thing and a tag is a word the owner chose to find it by,
+  while a match in a line of prose was never what made a recipe the one you meant.
+  A tag does not weaken that argument — it is curated where prose is not.
+
+  **The searched columns do not depend on the scope, and that is the owner's own
+  decision.** An anonymous caller's search covers tags too, so one search behaves
+  one way and a term returns the same recipes whoever asks; columns that shifted
+  with the caller would make the same query mean two things and nobody reading the
+  docs could predict which. What follows from it, stated rather than discovered
+  later: a visitor can learn that a published Recipe carries some word by probing
+  search terms, even though the values are never sent. Presence is testable, the
+  tags are not readable, and the hiding was only ever about display.
 
   `human-only?` narrows to the Recipes that carry a human edit — the
   `has_human_edit` bit described above. It composes with the search rather than
@@ -164,16 +231,22 @@
   ([ds scope {:keys [search-term human-only? lean?] :or {lean? true}}]
    ;; The search clause names `recipes.title` for the same reason the projection
    ;; is qualified: `recipe_history` has a `title` too, and an unqualified one
-   ;; would have SQLite refuse the query as ambiguous. The scope and `human-only?`
-   ;; clauses need no prefix — `user_id`, `published` and `has_human_edit` exist
-   ;; on `recipes` alone — and an ambiguity introduced later would be an error
-   ;; SQLite raises, not a filter that quietly reads the wrong column.
-   (let [search-clause (db/build-word-prefix-search-clause search-term :recipes.title)
+   ;; would have SQLite refuse the query as ambiguous. `recipes.tags` is
+   ;; unambiguous today and is qualified beside it anyway, so the pair cannot drift
+   ;; apart. The scope and `human-only?` clauses need no prefix — `user_id`,
+   ;; `published` and `has_human_edit` exist on `recipes` alone — and an ambiguity
+   ;; introduced later would be an error SQLite raises, not a filter that quietly
+   ;; reads the wrong column.
+   ;;
+   ;; The columns here are the same two for every scope, deliberately: see the
+   ;; docstring. What the scope decides is the projection, one line down.
+   (let [search-clause (db/build-word-prefix-search-clause search-term
+                                                           [:recipes.title :recipes.tags])
          where (cond-> [:and (scope-clause scope)]
                  search-clause (conj search-clause)
                  human-only? (conj [:= :has_human_edit 1]))]
      (jdbc/execute! (db/get-conn ds)
-       (sql/format {:select (into (qualify (select-columns lean?)) source-split-columns)
+       (sql/format {:select (into (qualify (select-columns lean? scope)) source-split-columns)
                     :from [:recipes]
                     :left-join [:recipe_history [:= :recipe_history.recipe_id :recipes.id]]
                     :where where
@@ -183,11 +256,13 @@
 
 (defn get-recipe
   "One recipe visible in `scope` — see `list-recipes` — or nil. Lean like the
-  listing unless asked otherwise."
+  listing unless asked otherwise, and tagless like the listing for a visitor
+  however it is asked: `lean?` widens the description and nothing widens the
+  tags."
   ([ds scope id] (get-recipe ds scope id {}))
   ([ds scope id {:keys [lean?] :or {lean? true}}]
    (jdbc/execute-one! (db/get-conn ds)
-     (sql/format {:select (select-columns lean?)
+     (sql/format {:select (select-columns lean? scope)
                   :from [:recipes]
                   :where [:and [:= :id id] (scope-clause scope)]})
      db/jdbc-opts)))
@@ -214,6 +289,11 @@
   "A new recipe: version 1, no history rows, and private — `published` is left
   at its column default, because publishing is its own deliberate act.
 
+  `tags` may be set here like any other field, and unlike the two provenance
+  facts it is the caller's to write — a machine's included, which is the point of
+  a curated retrieval index in an agentic memory store. It defaults to the empty
+  string, the column's own default: a Recipe nobody has tagged is untagged.
+
   `:human?` records that this came from a caller that is not a machine — see
   `update-recipe` for what that means and why it is the fact worth recording. It
   sets both halves of the record on the one insert: `has_human_edit` for the row,
@@ -223,18 +303,19 @@
   `has_human_edit` 0 and `source` NULL, the two ways this schema has of not
   asserting something."
   ([ds user-id fields] (create-recipe ds user-id fields {}))
-  ([ds user-id {:keys [title useful_when description]} opts]
+  ([ds user-id {:keys [title useful_when description tags]} opts]
    (let [human? (:human? opts)
          result (jdbc/execute-one! (db/get-conn ds)
                   (sql/format {:insert-into :recipes
                                :values [{:title (str/trim title)
                                          :useful_when (or useful_when "")
                                          :description (or description "")
+                                         :tags (or tags "")
                                          :version 1
                                          :has_human_edit (if human? 1 0)
                                          :source (source-of opts)
                                          :user_id user-id}]
-                               :returning (select-columns false)})
+                               :returning (select-columns false user-id)})
                   db/jdbc-opts)]
      (tel/log! {:level :info :data {:id (:id result) :user-id user-id :human? (boolean human?)
                                     :source (source-of opts)}}
@@ -251,6 +332,15 @@
   {:title (if (some? title) (str/trim title) (:title current))
    :useful_when (if (some? useful_when) useful_when (:useful_when current))
    :description (if (some? description) description (:description current))})
+
+(defn- merge-tags
+  "Same rule as `merge-content` — absent keeps, present replaces — kept apart
+  from it because the three content fields and this one are on different sides of
+  every question `update-recipe` asks: whether to archive, whether to bump the
+  version, whether to label it. Not trimmed, like `useful_when` and unlike the
+  title: the title is an identifier and this is a line the owner typed."
+  [current {:keys [tags]}]
+  (if (some? tags) tags (:tags current)))
 
 (defn- archive!
   "Push the outgoing state into history — with **its own** `source`, taken off the
@@ -284,6 +374,23 @@
   Callers must have established that the recipe exists; nil here means the
   version guard failed, not that the id was wrong.
 
+  **A save that changes only the tags is a third case, between those two.** Tags
+  are not versioned — see the namespace docstring — so this writes them and stops
+  there: no history row, no version bump, and `source` untouched, because there is
+  no new version for a label to be about. `has_human_edit` is untouched for the
+  same reason `publish-recipe` leaves it alone: the bit says a human wrote the
+  *text*, and filing a Recipe under a word is not writing it.
+
+  It does move `modified_at`, and that is the one thing here that had to be
+  decided rather than followed. Publishing is the precedent for leaving it alone,
+  but publishing changes nothing an editor edits, and tags are edited in the same
+  modal as the three content fields — so a tag write that left the stamp where it
+  was would leave a client that had read the row before it passing the
+  `expected-modified-at` guard, and its next save would carry the old tags back
+  over the new ones with no 409 to stop it. Moving the stamp is what keeps one
+  guard covering everything the modal can send. It also reads true: the shelf is
+  ordered by `modified_at`, and curating a tag is touching a Recipe.
+
   `:human?` — this save came from a caller carrying no *machine* token — sets
   `has_human_edit` on the row, on the same statement that bumps the version. Three
   things follow from where that assignment sits. The flag is only ever set and
@@ -308,13 +415,29 @@
   ([ds user-id id fields expected-modified-at {:keys [human?] :as opts}]
    (jdbc/with-transaction [tx (db/get-conn ds)]
      (let [current (get-recipe tx user-id id {:lean? false})
-           incoming (merge-content current fields)]
+           incoming (merge-content current fields)
+           incoming-tags (merge-tags current fields)
+           content-changed? (not= incoming (content-of current))
+           tags-changed? (not= incoming-tags (:tags current))]
        (cond
          (and expected-modified-at (not= expected-modified-at (:modified_at current)))
          nil
 
-         (= incoming (content-of current))
+         (not (or content-changed? tags-changed?))
          current
+
+         (not content-changed?)
+         (let [result (jdbc/execute-one! tx
+                        (sql/format {:update :recipes
+                                     :set {:tags incoming-tags
+                                           :modified_at [:raw "datetime('now')"]}
+                                     :where [:= :id id]
+                                     :returning (select-columns false user-id)})
+                        db/jdbc-opts)]
+           (tel/log! {:level :info :data {:id id :user-id user-id
+                                          :version (:version result)}}
+                     "Recipe tags saved")
+           result)
 
          :else
          (do
@@ -322,12 +445,13 @@
            (let [result (jdbc/execute-one! tx
                           (sql/format {:update :recipes
                                        :set (cond-> (assoc incoming
+                                                           :tags incoming-tags
                                                            :version (inc (:version current))
                                                            :source (source-of opts)
                                                            :modified_at [:raw "datetime('now')"])
                                               human? (assoc :has_human_edit 1))
                                        :where [:= :id id]
-                                       :returning (select-columns false)})
+                                       :returning (select-columns false user-id)})
                           db/jdbc-opts)]
              (tel/log! {:level :info :data {:id id :user-id user-id
                                             :version (:version result)
@@ -347,6 +471,11 @@
   leaves `modified_at` alone, so an edit the owner already has in flight is not
   turned into a 409 by it.
 
+  It does not touch the tags, and publishing does not make them public: the
+  latch decides who may *see the Recipe*, and the projection decides who may see
+  its tags. A published Recipe's tags stay the owner's — that is the one place in
+  this app where those two questions come apart.
+
   It does not set `has_human_edit` either, for the same reason it writes no
   version: that bit says a human wrote the text, and putting your name to text an
   agent wrote is not writing it. It leaves `source` alone for a stricter reason
@@ -365,7 +494,7 @@
                                     :set {:published 1
                                           :published_at [:raw "datetime('now')"]}
                                     :where [:= :id id]
-                                    :returning (select-columns false)})
+                                    :returning (select-columns false user-id)})
                        db/jdbc-opts)]
           (tel/log! {:level :info :data {:id id :user-id user-id}} "Recipe published")
           result)))))
@@ -392,6 +521,11 @@
   N and flagged `:current true`, so a reader can step from today's text back
   through the history in one uniform list. nil when the id matches nothing the
   user owns.
+
+  A version is the three content fields and nothing else: no `tags` key on any
+  entry, including the current one, because tags are not versioned and there is
+  therefore no answer to 'what were its tags at v2'. `content-of` is what makes
+  that true in one place for both ends of the list.
 
   Every entry carries `:source` — where that one version came from — and it comes
   from two places, mirroring rhizome's `get-description-history`: the current
