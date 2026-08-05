@@ -31,9 +31,36 @@
           jdbc-opts)
         (tel/log! :info "Seeded admin user")))))
 
+;; Numbers the in-memory databases apart — see `memory-db-name`. `defonce` and
+;; not `def`, so reloading this namespace in a running REPL cannot hand out a
+;; name that is already open.
+(defonce ^:private memory-db-counter (atom 0))
+
+(defn- memory-db-name
+  "A **private** in-memory database, one per call.
+
+  `file::memory:?cache=shared` — what this used to be — is not one database per
+  call, it is *the* one shared-cache in-memory database of the whole JVM. Every
+  test fixture opened that same database and only looked isolated because SQLite
+  destroys such a database when its last connection closes, which is what a
+  fixture's `(.close (:persistent-conn …))` happened to do. Leave one extra
+  connection open to it — the `persistent-conn` of a second datasource, an
+  `ensure-ds` nobody reset, an interrupted run whose `finally` did not fire, an
+  nREPL session in the same JVM — and the next fixture meets the previous one's
+  rows: `[SQLITE_CONSTRAINT_UNIQUE] users.username`, a JDBC error rather than a
+  failed assertion, blamed on whichever test happened to run there.
+
+  A **name** in front of `?mode=memory` gives a database of its own per name, so
+  two callers cannot share one however many connections are open. `cache=shared`
+  stays: it is what lets the *same* caller's per-op connections see each other's
+  writes, which is the whole reason this type exists."
+  []
+  (str "file:cookbook-mem-" (swap! memory-db-counter inc)
+       "?mode=memory&cache=shared&busy_timeout=5000&read_uncommitted=true"))
+
 (defn init-conn [{:keys [type path]}]
   (let [db-spec (case type
-                  :sqlite-memory {:dbtype "sqlite" :dbname "file::memory:?cache=shared&busy_timeout=5000&read_uncommitted=true"}
+                  :sqlite-memory {:dbtype "sqlite" :dbname (memory-db-name)}
                   ;; busy_timeout so a connection waits for a writer to finish
                   ;; instead of failing the request outright: the annotation
                   ;; writes are transactions, and concurrent PUTs would
