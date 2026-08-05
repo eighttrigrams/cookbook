@@ -41,15 +41,29 @@
 
 (defn list-recipes-handler
   "GET /api/recipes — the caller's recipes, most recently saved first, optionally
-  narrowed by ?search over the **title**.
+  narrowed by ?search over the **title and the tags**.
 
   **?search is a word-prefix match, AND across terms.** The search splits on
   whitespace, and a recipe matches when every term is the prefix of some word in
-  its title, case-insensitively: `?search=ab cd` finds `abc cde` but not
-  `ad cd`, and `?search=cd` does not find `abcd` — a prefix is not a substring.
-  A word is a run of letters and digits, so `heating` finds `Re-heating` and
-  `start` finds `make/start`. Nothing else is searched: not useful-when, not the
-  description. `%` and `_` are ordinary characters here, not wildcards.
+  its title *or its tags*, case-insensitively: `?search=ab cd` finds `abc cde` but
+  not `ad cd`, and `?search=cd` does not find `abcd` — a prefix is not a
+  substring. A word is a run of letters and digits, so `heating` finds
+  `Re-heating` and `start` finds `make/start`. The terms need not all land in the
+  same column: a recipe titled `Sourdough starter` tagged `bread baking` is found
+  by `sour bak`. Nothing else is searched: not useful-when, not the description.
+  `%` and `_` are ordinary characters here, not wildcards.
+
+  **Tags are searched for every caller and sent only to the owner.** An anonymous
+  visitor's rows carry no `tags` key at all — the column is not in their
+  projection — while their ?search still matches against it, so a term returns the
+  same recipes whoever asks. That is deliberate: one search behaves one way, and
+  columns that shifted with the caller would make the same query mean two things.
+  The consequence, stated rather than left to be discovered: a visitor can find out
+  that a published Recipe carries some word by probing search terms, though the
+  tags themselves are never readable. A machine token acts in the owner's scope,
+  so an agent both reads and writes tags — cookbook is an agentic memory store and
+  a curated retrieval index is most of what an agent gets out of one. The boundary
+  here is around anonymous readers, not machines.
 
   **?human=true narrows to the Recipes a human has edited**, and only the exact
   value `true` does: absent, `false` or anything else leaves the listing alone.
@@ -71,8 +85,9 @@
   nothing that could answer who wrote those versions was ever stored. Per-version
   labels are on GET /api/recipes/:id/versions.
 
-  **Lean by default**: the response carries no `description` key at all. Pass
-  ?detail=full to include it. The two short fields are meant as a retrieval
+  **Lean by default**: the response carries no `description` key at all — and,
+  for a visitor, no `tags` key either, at any ?detail. Pass ?detail=full to
+  include the description. The two short fields are meant as a retrieval
   index — scan them, decide which recipe you want, then fetch that one body. The
   counts are aggregated in the same query and cost the caller no extra round trip,
   and they do not widen the projection — a lean listing still has no body in it.
@@ -95,8 +110,16 @@
 
   For an anonymous visitor only a published recipe matches, and an unpublished
   one is the same 404 as an id that does not exist. `?detail=full` then shows a
-  visitor all three fields: the collapse is about verbosity, the privacy
-  boundary is the publish latch itself."
+  visitor every **content** field of it — title, useful-when and description —
+  because the collapse is about verbosity.
+
+  **Tags are the exception, and they are why that sentence now says 'content'.**
+  Until they existed the publish latch was the whole privacy boundary and
+  ?detail=full could be described as widening everything; a visitor's projection
+  never names `tags`, at any ?detail, so the key is absent rather than empty. The
+  owner and a machine token (which acts in his scope) get it. Note the asymmetry
+  that goes with it: ?search still matches tags for a visitor — see the listing —
+  so their presence is testable even though their contents are not readable."
   [req]
   (let [id (common/recipe-id req)
         recipe (when id (db.recipe/get-recipe (common/ensure-ds) (read-scope req) id
@@ -106,8 +129,15 @@
       {:status 404 :body {:error "Recipe not found"}})))
 
 (defn add-recipe-handler
-  "POST /api/recipes — create a recipe from {:title :useful_when :description}.
-  The title is required and must be non-blank; the other two default to empty.
+  "POST /api/recipes — create a recipe from {:title :useful_when :description
+  :tags}. The title is required and must be non-blank; the other three default to
+  empty.
+
+  `tags` is a plain string of extra words to find this Recipe by — whatever the
+  owner or an agent would search for that the title does not say. It is searched
+  for everybody and shown to nobody but the owner (see GET /api/recipes), and it
+  is not versioned: changing it later writes no history row. There is no syntax to
+  get right, no separator that means anything and no list to keep deduplicated.
 
   The new recipe is version 1 with no history, and it is **private**:
   `published` is not accepted here, because publishing is its own deliberate
@@ -125,18 +155,28 @@
       {:status 400 :body {:error "title is required"}}
       {:status 201
        :body (db.recipe/create-recipe (common/ensure-ds) user-id
-                                      (select-keys body [:title :useful_when :description])
+                                      (select-keys body [:title :useful_when :description :tags])
                                       {:human? (human-write? req)})})))
 
 (defn update-recipe-handler
-  "PUT /api/recipes/:id — save {:title :useful_when :description}. A field you
-  leave out keeps its current value, so an edit meant for one field cannot
-  silently clear the other two; a blank title is refused with 400.
+  "PUT /api/recipes/:id — save {:title :useful_when :description :tags}. A field
+  you leave out keeps its current value, so an edit meant for one field cannot
+  silently clear the others; a blank title is refused with 400.
 
-  Every save that changes something archives the outgoing state as a version and
-  moves the row to the next one. A save that changes nothing is a no-op — same
-  version, no history row. Pass `modified_at` from the last read to be told
-  (409) when someone else saved in between. `published` is not writable here —
+  Every save that changes **content** archives the outgoing state as a version
+  and moves the row to the next one. A save that changes nothing is a no-op —
+  same version, no history row. Pass `modified_at` from the last read to be told
+  (409) when someone else saved in between.
+
+  **A save that changes only `tags` is neither of those.** It is written, because
+  tags are a field like any other; it makes no version, because tags are not part
+  of the Recipe's content — no history row, no version bump, and `source` and
+  `has_human_edit` untouched, since there is no new version for a label to be
+  about and filing a Recipe under a word is not writing it. It does move
+  `modified_at`, so the `modified_at` guard still covers everything this route can
+  write: tags and the content fields are edited in the same form, and a tag write
+  that left the stamp alone would let a client holding a pre-tag read overwrite the
+  new tags with no 409. `published` is not writable here —
   POST /api/recipes/:id/publish is the only thing that sets it, and nothing
   clears it. 404 when the id matches nothing you own.
 
@@ -165,7 +205,8 @@
 
       :else
       (if-let [result (db.recipe/update-recipe ds user-id id
-                                               (select-keys body [:title :useful_when :description])
+                                               (select-keys body [:title :useful_when :description
+                                                                  :tags])
                                                modified_at
                                                {:human? (human-write? req)})]
         {:status 200 :body result}
@@ -206,7 +247,9 @@
   with its `version`, all three fields, `created_at` and `source`. The newest entry
   is the current row and carries `current: true`; the rest are the superseded
   states, which is what makes 'how did this read back then' answerable. Not
-  affected by ?detail — a history is the content or it is nothing.
+  affected by ?detail — a history is the content or it is nothing. No entry
+  carries `tags`, the current one included: tags are not versioned, so there is no
+  such thing as what a Recipe's tags were at v2.
 
   **`source` says where that one version came from**: `ui` for a save by the
   owner, `machine` for one by an agent token, and **null for a version written
