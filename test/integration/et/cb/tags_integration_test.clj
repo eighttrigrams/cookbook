@@ -11,7 +11,7 @@
   | machine | yes        | yes         | yes           |
   | anon    | **no key** | 401         | **yes**       |
 
-  A machine token acts in the owner's scope by design, so an agent is on the
+  A machine token reads in the owner's audience by design, so an agent is on the
   owner's side of this line — cookbook is an agentic memory store and a curated
   retrieval index is most of what an agent gets out of one. The boundary is around
   anonymous readers.
@@ -169,7 +169,7 @@
       (is (= [id] (map :id (:body (anon :get "/api/recipes?search=sign+sekrit"))))))
     (testing "and it never reaches past the latch: an unpublished recipe with the
               same tag stays the owner's, so the uniform search is a narrowing
-              inside the scope rather than a way around it"
+              inside the audience rather than a way around it"
       (let [{drafted :id} (create! "Draft" "sekrit filing")]
         (is (= [id] (map :id (:body (anon :get "/api/recipes?search=sekrit"))))
             "the draft is newer, so a leak would have put it first")

@@ -45,7 +45,7 @@
   "The owner's row, or nil. Excludes the machine user by the flag rather than by
   name: dev's skip-logins resolves the acting user by taking the first row in the
   table, and once a machine row exists it would otherwise be picked as the owner
-  — which would silently scope the owner's own UI to the machine's user-id and
+  — which would silently point the owner's own UI at the machine's user-id and
   empty his shelf."
   [ds]
   (jdbc/execute-one! (db/get-conn ds)
@@ -80,7 +80,7 @@
   the hash.
 
   `for-user-id` is the **owner's** id, and it is what lets the machine's token be
-  minted in the owner's scope (see `login-handler`). It is re-asserted on a reset,
+  minted in the owner's audience (see `login-handler`). It is re-asserted on a reset,
   so resetting the password repoints a row at whoever the owner is by then.
 
   In dev it is legitimately **nil**: the owner has no `users` row there, so there

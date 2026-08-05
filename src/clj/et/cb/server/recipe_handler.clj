@@ -29,7 +29,7 @@
   [req]
   (not (common/machine-caller? req)))
 
-(defn- read-scope
+(defn- read-audience
   "Owner or visitor, decided once per read. A visitor is deliberately *not*
   described by a user-id: `common/get-user-id` gives nil for one, and the db
   layer reads a nil user-id as `user_id IS NULL`, which is a real owner in this
@@ -37,7 +37,7 @@
   [req]
   (if (common/authenticated? req)
     (common/get-user-id req)
-    db.recipe/visitor-scope))
+    db.recipe/visitor-audience))
 
 (defn list-recipes-handler
   "GET /api/recipes — the caller's recipes, most recently saved first, optionally
@@ -60,7 +60,7 @@
   columns that shifted with the caller would make the same query mean two things.
   The consequence, stated rather than left to be discovered: a visitor can find out
   that a published Recipe carries some word by probing search terms, though the
-  tags themselves are never readable. A machine token acts in the owner's scope,
+  tags themselves are never readable. A machine token reads in the owner's audience,
   so an agent both reads and writes tags — cookbook is an agentic memory store and
   a curated retrieval index is most of what an agent gets out of one. The boundary
   here is around anonymous readers, not machines.
@@ -95,11 +95,11 @@
   An anonymous visitor is served the **published** recipes instead of anybody's
   private ones. An unpublished recipe is absent from that listing rather than
   redacted in it: no title, no id, and nothing that reveals it is there. Both
-  narrowings run inside that scope, so ?human=true can only take rows away from
+  narrowings run inside that audience, so ?human=true can only take rows away from
   what the caller could already see."
   [req]
   {:status 200
-   :body (db.recipe/list-recipes (common/ensure-ds) (read-scope req)
+   :body (db.recipe/list-recipes (common/ensure-ds) (read-audience req)
                                  {:search-term (common/query-param req "search")
                                   :human-only? (human-only? req)
                                   :lean? (lean? req)})})
@@ -117,12 +117,12 @@
   Until they existed the publish latch was the whole privacy boundary and
   ?detail=full could be described as widening everything; a visitor's projection
   never names `tags`, at any ?detail, so the key is absent rather than empty. The
-  owner and a machine token (which acts in his scope) get it. Note the asymmetry
+  owner and a machine token (which reads in his audience) get it. Note the asymmetry
   that goes with it: ?search still matches tags for a visitor — see the listing —
   so their presence is testable even though their contents are not readable."
   [req]
   (let [id (common/recipe-id req)
-        recipe (when id (db.recipe/get-recipe (common/ensure-ds) (read-scope req) id
+        recipe (when id (db.recipe/get-recipe (common/ensure-ds) (read-audience req) id
                                               {:lean? (lean? req)}))]
     (if recipe
       {:status 200 :body recipe}

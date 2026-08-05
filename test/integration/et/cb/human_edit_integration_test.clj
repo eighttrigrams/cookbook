@@ -146,8 +146,8 @@
       (is (empty? (ids "?search=agent&human=true")))
       (is (= #{agents} (ids "?search=agent"))))))
 
-(deftest the-filter-narrows-inside-the-visitor-scope
-  ;; The clause sits beside the scope clause in the query rather than filtering
+(deftest the-filter-narrows-inside-the-visitor-audience
+  ;; The clause sits beside the audience clause in the query rather than filtering
   ;; the rows it returned, and this is the case that tells the two apart: a
   ;; visitor's filtered shelf must be the human-edited ones *among the published*,
   ;; never a human-edited draft that the latch was keeping out.
@@ -163,7 +163,7 @@
     (testing "the visitor's filtered shelf is the published human-edited row alone"
       (is (= #{signed} (anon "?human=true"))))
     (testing "the human-edited draft is not in it — the filter takes rows away
-              from the visitor's scope and can never add one"
+              from the visitor's audience and can never add one"
       (is (false? (contains? (anon "?human=true") drafted)))
       (is (false? (contains? (anon "") drafted))))
     (testing "and the owner does see the draft under the same filter, so what the

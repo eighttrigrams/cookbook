@@ -135,20 +135,20 @@
         {signed :id} (create! "Signed")]
     (db.recipe/publish-recipe h/*ds* h/*user-id* signed)
     (testing "the draft is outside the visitor's listing, not redacted in it"
-      (let [ids (set (map :id (db.recipe/list-recipes h/*ds* db.recipe/visitor-scope)))]
+      (let [ids (set (map :id (db.recipe/list-recipes h/*ds* db.recipe/visitor-audience)))]
         (is (contains? ids signed))
         (is (false? (contains? ids drafted)))))
     (testing "and outside a get"
-      (is (nil? (db.recipe/get-recipe h/*ds* db.recipe/visitor-scope drafted)))
-      (is (nil? (db.recipe/get-recipe h/*ds* db.recipe/visitor-scope drafted {:lean? false})))
-      (is (some? (db.recipe/get-recipe h/*ds* db.recipe/visitor-scope signed))))
+      (is (nil? (db.recipe/get-recipe h/*ds* db.recipe/visitor-audience drafted)))
+      (is (nil? (db.recipe/get-recipe h/*ds* db.recipe/visitor-audience drafted {:lean? false})))
+      (is (some? (db.recipe/get-recipe h/*ds* db.recipe/visitor-audience signed))))
     (testing "a visitor is lean by default and gets the body on request"
-      (is (false? (contains? (db.recipe/get-recipe h/*ds* db.recipe/visitor-scope signed)
+      (is (false? (contains? (db.recipe/get-recipe h/*ds* db.recipe/visitor-audience signed)
                              :description)))
-      (is (= "body v1" (:description (db.recipe/get-recipe h/*ds* db.recipe/visitor-scope signed
+      (is (= "body v1" (:description (db.recipe/get-recipe h/*ds* db.recipe/visitor-audience signed
                                                            {:lean? false})))))
-    (testing "a search cannot widen the scope"
-      (is (empty? (db.recipe/list-recipes h/*ds* db.recipe/visitor-scope {:search-term "Draft"}))))))
+    (testing "a search cannot widen the audience"
+      (is (empty? (db.recipe/list-recipes h/*ds* db.recipe/visitor-audience {:search-term "Draft"}))))))
 
 (deftest a-visitor-is-not-the-nil-owner
   (let [drafted (db.recipe/create-recipe h/*ds* nil {:title "Nil-owner draft"})
@@ -158,13 +158,13 @@
               this is the trap a visitor must not fall into"
       (is (= #{(:id drafted) (:id signed)}
              (set (map :id (db.recipe/list-recipes h/*ds* nil))))))
-    (testing "the visitor scope is not that: it keeps the unpublished nil-owner
+    (testing "the visitor audience is not that: it keeps the unpublished nil-owner
               row out and lets the published one through"
-      (let [ids (set (map :id (db.recipe/list-recipes h/*ds* db.recipe/visitor-scope)))]
+      (let [ids (set (map :id (db.recipe/list-recipes h/*ds* db.recipe/visitor-audience)))]
         (is (false? (contains? ids (:id drafted))))
         (is (contains? ids (:id signed))))
-      (is (nil? (db.recipe/get-recipe h/*ds* db.recipe/visitor-scope (:id drafted))))
-      (is (some? (db.recipe/get-recipe h/*ds* db.recipe/visitor-scope (:id signed)))))))
+      (is (nil? (db.recipe/get-recipe h/*ds* db.recipe/visitor-audience (:id drafted))))
+      (is (some? (db.recipe/get-recipe h/*ds* db.recipe/visitor-audience (:id signed)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; the human-edit mark
@@ -259,8 +259,8 @@
       (is (empty? (db.recipe/list-recipes h/*ds* h/*user-id*
                                           {:human-only? true :search-term "agent"}))))))
 
-(deftest human-only-narrows-inside-the-visitor-scope
-  ;; The clause has to be a `:where` beside the scope, not a filter over rows the
+(deftest human-only-narrows-inside-the-visitor-audience
+  ;; The clause has to be a `:where` beside the audience, not a filter over rows the
   ;; query already returned: a visitor filtering must get the human-edited ones
   ;; *among the published*, never a peek at an unpublished one that happens to
   ;; carry the mark.
@@ -270,11 +270,11 @@
     (db.recipe/publish-recipe h/*ds* h/*user-id* signed)
     (db.recipe/publish-recipe h/*ds* h/*user-id* agents)
     (testing "the visitor's filtered shelf is the published human-edited row alone"
-      (is (= [signed] (map :id (db.recipe/list-recipes h/*ds* db.recipe/visitor-scope
+      (is (= [signed] (map :id (db.recipe/list-recipes h/*ds* db.recipe/visitor-audience
                                                        {:human-only? true})))))
     (testing "the human-edited draft stays outside it — the filter narrows the
-              scope and cannot widen it"
-      (let [ids (set (map :id (db.recipe/list-recipes h/*ds* db.recipe/visitor-scope
+              audience and cannot widen it"
+      (let [ids (set (map :id (db.recipe/list-recipes h/*ds* db.recipe/visitor-audience
                                                       {:human-only? true})))]
         (is (false? (contains? ids drafted)))
         (is (false? (contains? ids agents)))))
@@ -504,7 +504,7 @@
               the foreign key on this connection"
       (is (= 0 (h/history-row-count id))))))
 
-(deftest scoped-to-its-owner
+(deftest visible-only-in-its-owners-audience
   (let [{:keys [id]} (create! "Private")
         stranger (inc h/*user-id*)]
     (is (nil? (db.recipe/get-recipe h/*ds* stranger id)))

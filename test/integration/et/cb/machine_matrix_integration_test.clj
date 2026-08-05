@@ -33,7 +33,7 @@
 ;;
 ;; Not through the API: a case that refuses a machine has to be checked by
 ;; something the guard cannot answer for, and after a successful delete there is
-;; no scoped GET left to ask.
+;; no GET in the owner's audience left to ask.
 
 (defn- row [id]
   (jdbc/execute-one! (db/get-conn h/*ds*)

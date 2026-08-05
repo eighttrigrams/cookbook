@@ -151,15 +151,15 @@
   (let [{signed :id} (create! "Signed" "sekrit filing")
         {drafted :id} (create! "Draft" "sekrit filing")]
     (db.recipe/publish-recipe h/*ds* h/*user-id* signed)
-    (let [hits (db.recipe/list-recipes h/*ds* db.recipe/visitor-scope
+    (let [hits (db.recipe/list-recipes h/*ds* db.recipe/visitor-audience
                                        {:search-term "sekrit"})]
       (testing "the term is in neither title, and it finds the published one"
         (is (= [signed] (map :id hits))))
       (testing "and what comes back still carries no tags key"
         (is (false? (contains? (first hits) :tags)))))
-    (testing "the search cannot widen the scope either — the draft carries the
+    (testing "the search cannot widen the audience either — the draft carries the
               same tags and stays invisible, however the terms are put"
-      (is (= [signed] (map :id (db.recipe/list-recipes h/*ds* db.recipe/visitor-scope
+      (is (= [signed] (map :id (db.recipe/list-recipes h/*ds* db.recipe/visitor-audience
                                                        {:search-term "filing sekrit"}))))
       (is (= #{signed drafted}
              (set (map :id (db.recipe/list-recipes h/*ds* h/*user-id*
@@ -207,20 +207,20 @@
     (is (= #{"100 % hydration"} (titles-for "% hyd")))
     (is (empty? (titles-for "% zzz")))))
 
-(deftest search-cannot-widen-the-visitor-scope
+(deftest search-cannot-widen-the-visitor-audience
   (let [{drafted :id} (create! "Draft pizza")
         {signed :id} (create! "Signed pizza")]
     (db.recipe/publish-recipe h/*ds* h/*user-id* signed)
     (testing "a term that matches both only ever yields the published one"
       (is (= #{signed}
-             (set (map :id (db.recipe/list-recipes h/*ds* db.recipe/visitor-scope
+             (set (map :id (db.recipe/list-recipes h/*ds* db.recipe/visitor-audience
                                                    {:search-term "pizza"}))))))
     (testing "and a term aimed straight at the draft yields nothing"
-      (is (empty? (db.recipe/list-recipes h/*ds* db.recipe/visitor-scope
+      (is (empty? (db.recipe/list-recipes h/*ds* db.recipe/visitor-audience
                                           {:search-term "draft"})))
-      (is (empty? (db.recipe/list-recipes h/*ds* db.recipe/visitor-scope
+      (is (empty? (db.recipe/list-recipes h/*ds* db.recipe/visitor-audience
                                           {:search-term "draft pizza"}))))
-    (testing "the owner sees both, so the narrowing above is the scope and not
+    (testing "the owner sees both, so the narrowing above is the audience and not
               the search failing"
       (is (= #{drafted signed} (set (map :id (db.recipe/list-recipes h/*ds* h/*user-id*
                                                                      {:search-term "pizza"}))))))))

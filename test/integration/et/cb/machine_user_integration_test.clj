@@ -1,8 +1,8 @@
 (ns et.cb.machine-user-integration-test
   "The one machine user's credential, over HTTP: who may set it, what a login with
-  it mints, and the scope that login resolves to.
+  it mints, and the audience that login resolves to.
 
-  The bug this file exists to prevent is quiet: cookbook scopes recipes by
+  The bug this file exists to prevent is quiet: cookbook keys recipes by
   `user_id` and the machine has a `users` row of its own, so a token carrying the
   machine's own id would authenticate perfectly and then show an **empty shelf**.
   Nothing raises. So the central test logs in over HTTP with the real password and
@@ -71,7 +71,7 @@
         (is (= 401 (:status (login "machine-user" "machine-secret"))))
         (is (= 200 (:status (login "machine-user" "a-new-secret"))))))))
 
-(deftest a-machine-login-is-scoped-to-the-owner-not-to-itself
+(deftest a-machine-login-reads-the-owners-audience-not-its-own
   (let [{owned :id} (:body (POST-json "/api/recipes" {:title "The owner's recipe"}))]
     (set-password! "machine-secret")
     (let [resp (login "machine-user" "machine-secret")
@@ -83,7 +83,7 @@
         (is (false? (:is-admin user))
             "a machine is not an admin — login used to hardcode this true"))
 
-      (testing "the token's scope is the owner's id, not the machine row's"
+      (testing "the token's audience is the owner's id, not the machine row's"
         (is (= h/*user-id* (:id user)))
         (is (not= (:id (machine-row)) (:id user))))
 
@@ -101,7 +101,7 @@
                              (sql/format {:select [:user_id] :from [:recipes]
                                           :where [:= :id created]})
                              db/jdbc-opts))))
-          (testing "which the owner can see too — the scopes did not diverge"
+          (testing "which the owner can see too — the audiences did not diverge"
             (is (contains? (set (map :id (:body (h/API :get "/api/recipes" {}))))
                            created)))))
 
@@ -163,7 +163,7 @@
     (let [human (:id (db.user/create-user h/*ds* "admin" "adminpass"))]
       (sql-exec! {:update :recipes :set {:user_id human} :where [:= :id owned]})
       (let [{:keys [token user]} (:body (login "machine-user" "machine-secret"))]
-        (testing "the token is minted in that owner's scope rather than nobody's"
+        (testing "the token is minted in that owner's audience rather than nobody's"
           (is (= human (:id user)))
           (is (true? (:is-machine user))))
 

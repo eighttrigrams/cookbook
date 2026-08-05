@@ -11,8 +11,8 @@
  ;; not a synonym for `'machine'`.** Every row and every history row that exists
  ;; when this runs comes out NULL, and nothing can recover what wrote them:
  ;; `recipe_history` never had an author column, and `recipes.user_id` cannot
- ;; answer it either, because a machine token deliberately acts in the *owner's*
- ;; scope, so its rows carry the owner's id (see `login-handler`). A `DEFAULT
+ ;; answer it either, because a machine token deliberately reads in the *owner's*
+ ;; audience, so its rows carry the owner's id (see `login-handler`). A `DEFAULT
  ;; 'machine'` would therefore be a silent claim about every version the owner
  ;; wrote by hand before anybody was counting, and the mirror-image claim is no
  ;; better. Unrecorded provenance is not machine provenance, the same way 004

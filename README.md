@@ -46,7 +46,7 @@ and one button. Neither route ever returns the password or its hash, and both
 refuse a machine token — an agent rotating its own credential is how it would
 lock the owner out of his own store.
 
-**Its scope is the owner's, resolved once at login.** Recipes are scoped by
+**Its audience is the owner's, resolved once at login.** Recipes are keyed by
 `user_id` and the machine user has a `users` row of its own, so a token carrying
 that row's id would authenticate perfectly and then show an *empty shelf*. So
 `login-handler` mints a machine token whose `:user-id` is the row's `for_user_id`

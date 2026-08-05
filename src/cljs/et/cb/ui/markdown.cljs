@@ -108,7 +108,7 @@
   the dangerous parts subtracted.
 
   The profile is much broader than markdown: it keeps `<style>`, which the
-  browser does not scope to the card, so one field of one published Recipe
+  browser does not confine to the card, so one field of one published Recipe
   restyles the whole page and can `@import` an arbitrary origin on render; it
   keeps `<form>`, `<input>` and `<button>`, which is a credential prompt on a
   page an anonymous visitor arrived at legitimately; and it keeps the `style`

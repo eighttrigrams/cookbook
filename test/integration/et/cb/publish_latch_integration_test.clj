@@ -244,7 +244,7 @@
 ;; nothing exercised the handlers' own answer to an unauthenticated caller.
 ;;
 ;; The two notions of identity have to agree: a read asks `authenticated?` and
-;; serves this caller the visitor scope, while a write asks `get-user-id` and
+;; serves this caller the visitor audience, while a write asks `get-user-id` and
 ;; gets nil, which the db layer reads as `user_id IS NULL`. That is a real owner
 ;; in this schema — and in a dev database it is every row, since dev's admin has
 ;; no user row. Hence the nulled `user_id` below: it is the shape a dev row has.
@@ -273,7 +273,7 @@
                                    {:anonymous? true :body {:title "By nobody"}}))))))
 
     ;; read straight from the table: the row is nil-owned, so no HTTP caller owns
-    ;; it and no scoped GET can be used to check on it.
+    ;; it and no caller's GET can be used to check on it.
     (testing "and the row is exactly as it was"
       (let [row (recipe-row drafted)]
         (is (= 0 (:published row)))

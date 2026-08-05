@@ -6,8 +6,8 @@
   reason: everything that exists when this runs comes out NULL, and NULL is a
   *third* category rather than a synonym for `'machine'`. Nothing ever recorded who
   wrote those versions — `recipe_history` had no author column, and
-  `recipes.user_id` cannot answer it, because a machine token acts in the owner's
-  scope — so either default would be a silent claim about work the owner may well
+  `recipes.user_id` cannot answer it, because a machine token reads in the owner's
+  audience — so either default would be a silent claim about work the owner may well
   have done by hand. Left to the column default this would read as a detail; pinned
   here it reads as the decision."
   (:require [clojure.test :refer [deftest testing is]]

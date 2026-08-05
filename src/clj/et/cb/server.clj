@@ -142,7 +142,7 @@
   (= [:post publish-route] (:compojure/route req)))
 
 (defn- published-target?
-  "Whether the named recipe is published, asked in the caller's own scope. A
+  "Whether the named recipe is published, asked in the caller's own audience. A
   recipe the caller cannot see answers nil here, so what comes back is the
   handler's 404 rather than a 403 that would confirm the row exists."
   [req id]
@@ -154,7 +154,7 @@
 
   The read handlers and the write handlers ask two different questions about who
   is calling: a read asks `common/authenticated?` and falls back to
-  `db.recipe/visitor-scope`, while a write asks `common/get-user-id`, which
+  `db.recipe/visitor-audience`, while a write asks `common/get-user-id`, which
   answers **nil** for an anonymous caller. The db layer reads a nil user-id as
   `user_id IS NULL` — a real owner in this schema, and in a dev database it is
   *every* row, because dev's admin has no user row. So without this, a caller the

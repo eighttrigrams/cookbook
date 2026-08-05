@@ -154,17 +154,17 @@
     (testing "a visitor gets no key — absent, not empty: an empty string would
               tell them this Recipe is untagged, which is itself the owner's
               business"
-      (doseq [recipe [(db.recipe/get-recipe h/*ds* db.recipe/visitor-scope id)
-                      (db.recipe/get-recipe h/*ds* db.recipe/visitor-scope id {:lean? false})
-                      (first (db.recipe/list-recipes h/*ds* db.recipe/visitor-scope))
-                      (first (db.recipe/list-recipes h/*ds* db.recipe/visitor-scope
+      (doseq [recipe [(db.recipe/get-recipe h/*ds* db.recipe/visitor-audience id)
+                      (db.recipe/get-recipe h/*ds* db.recipe/visitor-audience id {:lean? false})
+                      (first (db.recipe/list-recipes h/*ds* db.recipe/visitor-audience))
+                      (first (db.recipe/list-recipes h/*ds* db.recipe/visitor-audience
                                                      {:lean? false}))]]
         (is (some? recipe) "the published recipe is visible to a visitor")
         (is (false? (contains? recipe :tags)))
         (is (some? (:title recipe)) "and the rest of it is served as before")))
     (testing "?detail=full is about verbosity and not about the boundary: it
               gives a visitor the description and still no tags"
-      (let [full (db.recipe/get-recipe h/*ds* db.recipe/visitor-scope id {:lean? false})]
+      (let [full (db.recipe/get-recipe h/*ds* db.recipe/visitor-audience id {:lean? false})]
         (is (= "body v1" (:description full)))
         (is (false? (contains? full :tags)))))
     (testing "and the nil owner is an owner, not a visitor — the marker is what

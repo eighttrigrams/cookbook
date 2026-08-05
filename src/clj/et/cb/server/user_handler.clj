@@ -14,8 +14,8 @@
   "POST /api/auth/login — exchange {:username :password} for a JWT.
   200 {:token :user} on success, 401 otherwise.
 
-  **The machine user's scope is resolved here, once, at mint time.** Its recipes
-  are the owner's: cookbook scopes rows by `user_id`, and the machine has a
+  **The machine user's audience is resolved here, once, at mint time.** Its recipes
+  are the owner's: cookbook keys rows by `user_id`, and the machine has a
   `users` row of its own, so a token carrying the machine's own id would show it
   an empty shelf — a bug that reads as 'the API is broken'. A machine row is
   therefore minted a *machine* token whose `:user-id` is its `for_user_id`, i.e.
@@ -35,15 +35,15 @@
 
   It also reads `is-admin` off the row instead of assuming it: the machine is not
   an admin, and saying otherwise would hand an unsupervised writer the owner's
-  authority as well as his scope."
+  authority as well as his audience."
   [req]
   (let [ds (common/ensure-ds)
         {:keys [username password]} (:body req)
         user (db.user/verify-user ds username password)]
     (if user
       (let [machine? (= 1 (:is_machine_user user))
-            ;; the scope the token acts in — the owner's rows, never the machine's
-            ;; own, and never nobody's
+            ;; the audience the token reads in — the owner's rows, never the
+            ;; machine's own, and never nobody's
             acting-id (if machine?
                         (or (:for_user_id user) (:id (db.user/first-human-user ds)))
                         (:id user))]
@@ -62,7 +62,7 @@
   :is-machine}. 401 when no valid token is presented.
 
   For a machine caller `:username` is the machine's own name while `:id` is the
-  **owner's** id, because that is the scope its token acts in — see
+  **owner's** id, because that is the audience its token reads in — see
   `login-handler`. `:is-machine` is what makes that pair readable rather than
   confusing."
   [req]

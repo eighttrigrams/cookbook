@@ -54,7 +54,7 @@
   Human, not merely first: the machine user is a row in this table too, and in dev
   it is usually the only one — the owner has no row at all. Taking the first row
   of any kind would hand the dev owner the machine's user-id and empty his shelf,
-  which is the same class of bug as minting a machine token scoped to the
+  which is the same class of bug as minting a machine token bound to the
   machine's own id."
   [req]
   (or (some-> (auth/extract-token req) auth/verify-token)

@@ -2,7 +2,7 @@
  ;; **Every existing row comes out at 0, and that is the decision, not the
  ;; default falling where it fell.** Nothing in this schema ever recorded who
  ;; wrote a Recipe — `recipe_history` has no author column, and `recipes.user_id`
- ;; deliberately cannot answer it, since a machine token acts in the owner's scope
+ ;; deliberately cannot answer it, since a machine token reads in the owner's audience
  ;; and its rows carry the owner's id. So the provenance of what already exists is
  ;; genuinely unknown, and unknown provenance is not human provenance: marking
  ;; these rows 1 would assert something nobody recorded. Leaving them 0 is

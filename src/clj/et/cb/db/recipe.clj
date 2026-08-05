@@ -40,13 +40,13 @@
   archives nothing and leaves the version where it is.
 
   And they are **searched for everybody but sent only to the owner**. The search
-  covers `[:title :tags]` whatever the scope — one search behaves one way, so a
+  covers `[:title :tags]` whatever the audience — one search behaves one way, so a
   term returns the same recipes no matter who is asking — while a visitor's
   projection simply does not name the column, the way a lean read does not name
   `description`. So an anonymous caller can *test* whether a published Recipe
   carries a word without ever *reading* its tags, and that is the owner's own
   decision rather than an oversight: the hiding is about display. A machine token
-  is on the owner's side of that line by design (it acts in the owner's scope),
+  is on the owner's side of that line by design (it reads in the owner's audience),
   which is right for an agentic memory store — a curated retrieval index is most
   of what an agent gets out of one.
 
@@ -87,7 +87,7 @@
             [taoensso.telemere :as tel]
             [et.cb.db :as db]))
 
-(def visitor-scope
+(def visitor-audience
   "What an anonymous caller may read: the published recipes, whoever owns them.
 
   A visitor has no user-id, and `db/user-id-where-clause` reads a missing one as
@@ -103,13 +103,21 @@
   nil owner included, and a nil owner is an owner."
   ::visitor)
 
-(defn- visitor? [scope]
-  (= scope visitor-scope))
+(defn- visitor? [audience]
+  (= audience visitor-audience))
 
-(defn- scope-clause [scope]
-  (if (visitor? scope)
+(defn- audience-clause
+  "Whose rows this caller may see, as a `:where` clause.
+
+  **`audience` is this app's word for that question, and only for that question.**
+  It used to be called `scope`, which is now reserved for the Scope entity — a
+  title and a description a Recipe can be filed under. An audience is not a
+  category: it is either a user-id or `visitor-audience`, and it decides which
+  rows exist for the caller at all."
+  [audience]
+  (if (visitor? audience)
     [:= :published 1]
-    (db/user-id-where-clause scope)))
+    (db/user-id-where-clause audience)))
 
 (def lean-select-columns
   "Everything but the body and the tags. This *is* the default API shape for a
@@ -124,7 +132,7 @@
 
   `lean?` is the description: the retrieval index does not load a body.
 
-  `scope` is the tags: **a visitor's projection does not name the column**, so
+  `audience` is the tags: **a visitor's projection does not name the column**, so
   the response carries no `tags` key at all rather than an empty one. Absent and
   empty are different answers — an empty string would say 'this Recipe is
   untagged', which is a claim about the owner's filing that a visitor is not being
@@ -134,19 +142,19 @@
   for anybody, visitor included, and it never widens the tags. Verbosity and
   privacy are different axes, which is the change tags made to this app — until
   now the publish latch was the whole privacy boundary."
-  [lean? scope]
+  [lean? audience]
   (cond-> lean-select-columns
     (not lean?) (conj :description)
-    (not (visitor? scope)) (conj :tags)))
+    (not (visitor? audience)) (conj :tags)))
 
 (defn- qualify
   "The same columns, `recipes.`-prefixed. Only the listing needs this, and only
-  because the provenance join below puts a second table in scope that has a column
-  of the same name for most of them — `title`, `useful_when`, `description`,
-  `version`, `created_at` and `source` are all on `recipe_history` too. `tags` is
-  not, since tags are not versioned, and it is prefixed anyway: the rule is 'the
-  listing qualifies what it selects', which cannot rot the way a list of the
-  columns that currently happen to be ambiguous would. Read back through
+  because the provenance join below brings a second table into the query, and it
+  has a column of the same name for most of them — `title`, `useful_when`,
+  `description`, `version`, `created_at` and `source` are all on `recipe_history`
+  too. `tags` is not, since tags are not versioned, and it is prefixed anyway: the
+  rule is 'the listing qualifies what it selects', which cannot rot the way a list
+  of the columns that currently happen to be ambiguous would. Read back through
   `db/jdbc-opts`, which builds unqualified maps, so the shape a caller sees is
   exactly what it was."
   [columns]
@@ -186,7 +194,7 @@
   (= 1 (:published recipe)))
 
 (defn list-recipes
-  "The recipes visible in `scope` — a user-id for their owner, `visitor-scope`
+  "The recipes visible in `audience` — a user-id for their owner, `visitor-audience`
   for an anonymous caller — most recently touched first, optionally narrowed by
   a **word-prefix search over the title and the tags**. `lean?` (the default)
   leaves the description out of the projection entirely, and a visitor's
@@ -201,7 +209,7 @@
   while a match in a line of prose was never what made a recipe the one you meant.
   A tag does not weaken that argument — it is curated where prose is not.
 
-  **The searched columns do not depend on the scope, and that is the owner's own
+  **The searched columns do not depend on the audience, and that is the owner's own
   decision.** An anonymous caller's search covers tags too, so one search behaves
   one way and a term returns the same recipes whoever asks; columns that shifted
   with the caller would make the same query mean two things and nobody reading the
@@ -223,30 +231,30 @@
   row's either.
 
   Both narrowings are `:where` clauses and not filters over the rows, so they
-  narrow *inside* the scope they are given. A visitor's search runs against the
+  narrow *inside* the audience they are given. A visitor's search runs against the
   published recipes rather than against everything followed by a hiding step, and
   so does a visitor's human filter — it can only ever take rows away from what
   that caller could already see."
-  ([ds scope] (list-recipes ds scope {}))
-  ([ds scope {:keys [search-term human-only? lean?] :or {lean? true}}]
+  ([ds audience] (list-recipes ds audience {}))
+  ([ds audience {:keys [search-term human-only? lean?] :or {lean? true}}]
    ;; The search clause names `recipes.title` for the same reason the projection
    ;; is qualified: `recipe_history` has a `title` too, and an unqualified one
    ;; would have SQLite refuse the query as ambiguous. `recipes.tags` is
    ;; unambiguous today and is qualified beside it anyway, so the pair cannot drift
-   ;; apart. The scope and `human-only?` clauses need no prefix — `user_id`,
+   ;; apart. The audience and `human-only?` clauses need no prefix — `user_id`,
    ;; `published` and `has_human_edit` exist on `recipes` alone — and an ambiguity
    ;; introduced later would be an error SQLite raises, not a filter that quietly
    ;; reads the wrong column.
    ;;
-   ;; The columns here are the same two for every scope, deliberately: see the
-   ;; docstring. What the scope decides is the projection, one line down.
+   ;; The columns here are the same two for every audience, deliberately: see the
+   ;; docstring. What the audience decides is the projection, one line down.
    (let [search-clause (db/build-word-prefix-search-clause search-term
                                                            [:recipes.title :recipes.tags])
-         where (cond-> [:and (scope-clause scope)]
+         where (cond-> [:and (audience-clause audience)]
                  search-clause (conj search-clause)
                  human-only? (conj [:= :has_human_edit 1]))]
      (jdbc/execute! (db/get-conn ds)
-       (sql/format {:select (into (qualify (select-columns lean? scope)) source-split-columns)
+       (sql/format {:select (into (qualify (select-columns lean? audience)) source-split-columns)
                     :from [:recipes]
                     :left-join [:recipe_history [:= :recipe_history.recipe_id :recipes.id]]
                     :where where
@@ -255,16 +263,16 @@
        db/jdbc-opts))))
 
 (defn get-recipe
-  "One recipe visible in `scope` — see `list-recipes` — or nil. Lean like the
+  "One recipe visible in `audience` — see `list-recipes` — or nil. Lean like the
   listing unless asked otherwise, and tagless like the listing for a visitor
   however it is asked: `lean?` widens the description and nothing widens the
   tags."
-  ([ds scope id] (get-recipe ds scope id {}))
-  ([ds scope id {:keys [lean?] :or {lean? true}}]
+  ([ds audience id] (get-recipe ds audience id {}))
+  ([ds audience id {:keys [lean?] :or {lean? true}}]
    (jdbc/execute-one! (db/get-conn ds)
-     (sql/format {:select (select-columns lean? scope)
+     (sql/format {:select (select-columns lean? audience)
                   :from [:recipes]
-                  :where [:and [:= :id id] (scope-clause scope)]})
+                  :where [:and [:= :id id] (audience-clause audience)]})
      db/jdbc-opts)))
 
 (defn- source-of
