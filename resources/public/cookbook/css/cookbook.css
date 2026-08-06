@@ -119,6 +119,81 @@ textarea:focus {
 }
 .human-filter input { accent-color: var(--accent); cursor: pointer; }
 
+/* The Scopes the shelf is currently hiding — the third narrowing, and the only
+   one that has no control of its own to sit on that line: it is set from a badge
+   on a card and it is a list that grows, where the two above are one widget each.
+   So it goes under them rather than beside them, and it is in the document only
+   while something is being hidden, so the shelf carries no empty row around. The
+   negative margin closes the gap `.shelf-controls` left below itself, which is
+   there to separate it from the cards and not from this. */
+.excluded-scopes {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: -6px 0 16px;
+}
+.excluded-scopes-label {
+  color: var(--muted-text);
+  font-size: 0.8em;
+  cursor: help;
+}
+/* The card's `.scope-badge` in the negative: the same pill, in the muted colour
+   the badge wears the accent in, because this is the same Scope said the other way
+   round. Wrapping rather than ellipsised, unlike the badge and like `.scope-chip`,
+   for the same reason the picker's chips do: the title here has no tooltip
+   carrying it, so it is the only place the word can be read in full. */
+.excluded-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px 2px 10px;
+  border-radius: 999px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--glass-border);
+  color: var(--muted-text);
+  font-size: 0.72em;
+  overflow-wrap: anywhere;
+  max-width: 320px;
+}
+/* The one clickable thing in the chip, so the chip itself takes no pointer: an ×
+   that undoes one exclusion. Bare, like `.error-dismiss`, since the app's default
+   button is a filled accent block. */
+.excluded-chip-clear {
+  padding: 0 4px;
+  background: none;
+  border: none;
+  border-radius: 0;
+  color: var(--muted-text);
+  font-size: 1.15em;
+  line-height: 1;
+  cursor: pointer;
+}
+.excluded-chip-clear:hover {
+  background: none;
+  transform: none;
+  color: var(--accent);
+}
+/* Only rendered past the second exclusion, when clearing them one at a time
+   starts to be work. A text button rather than a third pill, so it does not read
+   as one more Scope in the list. */
+.clear-exclusions {
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 0;
+  color: var(--text-secondary);
+  font-size: 0.78em;
+  font-weight: 400;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.clear-exclusions:hover {
+  background: none;
+  transform: none;
+  color: var(--accent);
+}
+
 /* --------------------------------------------------------------------------
    the shelf of recipes */
 

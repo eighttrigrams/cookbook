@@ -27,10 +27,14 @@
   fetched and it goes up on the next listing rather than under your cursor. The
   same number ranks the shelf, together with the version count.
 
-  The shelf can be narrowed two ways at once — by a search over titles and tags,
-  and to the Recipes a human has edited here rather than an agent. Both are the
-  listing endpoint's own `:where` clauses; nothing on this side filters rows it
-  was given.
+  The shelf can be narrowed three ways at once — by a search over titles and tags,
+  to the Recipes a human has edited here rather than an agent, and away from the
+  Recipes filed under given Scopes. All three are the listing endpoint's own
+  `:where` clauses, carried as query params on the request; **nothing on this side
+  filters rows it was given**, and that sentence is why the Scope exclusion is a
+  parameter rather than a `remove` over `:recipes`. It could not be one: the shelf
+  is ranked and sliced by the server, so rows dropped here would leave a short page
+  this client has no way to top up.
 
   **Tags** are the owner's extra search words. They are searched for everybody,
   including a signed-out visitor, and displayed to nobody but the owner — and the
@@ -44,8 +48,18 @@
   again. Same arrangement as the tags: the server sends a visitor no `scopes` key
   at all and the `logged-in?` gate here is cosmetic. Picking them happens in the
   compose form and the Edit modal, from the owner's own list; making them happens
-  on the Scopes page (`et.cb.ui.views.scopes`), not here. There is deliberately
-  **no filter by Scope** on the shelf — the owner asked for the badges.
+  on the Scopes page (`et.cb.ui.views.scopes`), not here.
+
+  **Shift+click a Scope badge and the Recipes filed under it leave the shelf.**
+  Tracker's gesture, and being the same finger in both apps is the reason for it
+  rather than a preference — `filters.cljc/badge-gesture` reads `shift? →
+  :exclude` over there, and option only appears in its `shift+option → :bypass`
+  pair. The filter is **negative-only**: a plain click still falls through to the
+  header and expands the card, because he asked to hide and not to select, and
+  tracker's plain click *is* a positive filter — so inventing one here would be
+  the wrong half of the parallel. `excluded-scopes-strip` is where an active
+  exclusion is seen and undone, and it is not decoration; the reason is written
+  down there.
 
   Publishing happens from the card, behind a confirmation, and only the owner
   sees the affordance. It is one way — the API has no unpublish — so a published
@@ -341,6 +355,43 @@
   [:div.card-tags {:title "Extra words this Recipe can be found by — yours alone"}
    tags])
 
+(def ^:private scope-badge-hint
+  "The gesture, spelled out on every badge, because a modifier key is the one
+  affordance a reader cannot see. Tracker gets away without saying it — its badges
+  do something on a plain click, so a user has already learned they are controls —
+  while here a plain click expands the card like the rest of the header, so
+  nothing but this sentence suggests there is anything to hold shift for."
+  "shift+click to hide the Recipes filed under it")
+
+(defn- exclude-on-shift
+  "Cookbook's `badge-consumes-click?`: **consume the click when the modifier is
+  held, let a plain one through.**
+
+  The badges sit inside the card header, which is the expand/collapse target, so
+  a handled click has to stop propagating or shift+clicking a badge would hide
+  rows and expand the card in the same gesture. Tracker has the same collision and
+  the same answer, in a function whose complexity is all about states cookbook
+  cannot be in: its three-way matrix and its gate exist because it has positive
+  filters, six category types and a bypass gesture keeping out of each other's
+  way. Here every branch but `:exclude` is unreachable and the gate is always
+  open, so one predicate on `shiftKey` is the honest translation — a copied matrix
+  with two dead branches would read as a promise of gestures that do not exist.
+
+  It also drops the text selection the browser makes on the way in, and that is
+  not tidiness. Shift+click is *also* the gesture for extending a selection, and
+  the browser runs that on mousedown, long before this handler sees a click — so
+  without this every exclusion left a swathe of the card highlighted blue behind
+  the rows that had just gone. `stopPropagation` cannot help with it and neither
+  can `preventDefault` on a click that has already happened; the selection has to
+  be collapsed once it exists. Only the handled gesture does it, so selecting text
+  anywhere else is untouched."
+  [id e]
+  (when (.-shiftKey e)
+    (.stopPropagation e)
+    (when-let [selection (js/window.getSelection)]
+      (.removeAllRanges selection))
+    (state/toggle-excluded-scope id)))
+
 (defn- card-scopes
   "The Scopes this Recipe is filed under, as badges in the collapsed card's header.
 
@@ -367,9 +418,11 @@
   [:span.card-scopes
    (for [{:keys [id title description]} scopes]
      ^{:key id}
-     [:span.scope-badge {:title (if (str/blank? description)
-                                  "A Scope this Recipe is filed under"
-                                  description)}
+     [:span.scope-badge {:title (str (if (str/blank? description)
+                                       "A Scope this Recipe is filed under"
+                                       description)
+                                     " — " scope-badge-hint)
+                         :on-click #(exclude-on-shift id %)}
       title])])
 
 (defn- card [{:keys [id title useful_when tags scopes version published published_at modified_at
@@ -421,6 +474,63 @@
           "Versions"]
          [:button.secondary.danger {:on-click #(state/start-deleting id)} "Delete"]]])]))
 
+(defn- excluded-scopes-strip
+  "The Scopes the shelf is currently hiding: one chip each with an × that clears
+  it, and a Clear all once there is more than one.
+
+  **This is not decoration and it is not optional.** An excluded Scope's badges
+  leave the shelf along with the Recipes carrying them, so there is no badge left
+  to shift+click a second time — without somewhere else to see and undo it, the
+  first exclusion is a trap: rows vanish and nothing on screen says why or offers a
+  way back. Tracker answers the same problem by swapping its sidebar over to the
+  negative filters while any is set; cookbook has no sidebar, so this is that.
+
+  It sits with the search box and the human-edited checkbox because it is the third
+  narrowing and those are the other two, and this is then the one line that says
+  everything currently taking rows away.
+
+  The titles come off the owner's own Scope list rather than off the cards, which
+  is the only place left that has them — the cards carrying an excluded Scope are
+  exactly the ones that are gone. An id the list does not know renders as `Scope 7`
+  rather than being skipped: `state/delete-scope` drops a deleted id from the set,
+  so it should not arise, but a chip that declined to draw itself would leave rows
+  hidden with no way to bring them back, and that is the one outcome worth
+  defending against twice.
+
+  Nothing here is gated on `logged-in?` and nothing needs to be: the set can only
+  be filled by clicking a badge, a visitor is sent none, and `logout` empties it —
+  so signed out there is nothing to draw.
+
+  Both derefs happen before the `for`, for the reason `scope-picker` gives: a deref
+  inside the body of a lazy seq is evaluated after reagent has stopped watching."
+  []
+  (let [{:keys [excluded-scopes scopes]} @state/*app-state
+        title-of (into {} (map (juxt :id :title)) scopes)]
+    (when (seq excluded-scopes)
+      [:div.excluded-scopes
+       [:span.excluded-scopes-label
+        {:title "These Scopes' Recipes are hidden — the server leaves them out of
+                 the listing, so the shelf below is short by however many carry one"}
+        "Hiding"]
+       ;; By title, like every other list of Scopes in this app — the badges on a
+       ;; card and the Scopes page both read that way. The id breaks a tie between
+       ;; two Scopes named the same, which only the fallback label can produce.
+       (for [id (sort-by (fn [id] [(or (title-of id) "") id]) excluded-scopes)]
+         ^{:key id}
+         [:span.excluded-chip
+          (or (title-of id) (str "Scope " id))
+          [:button.excluded-chip-clear
+           {:type "button"
+            :title "Show the Recipes filed under this Scope again"
+            :on-click #(state/clear-excluded-scope id)}
+           "×"]])
+       (when (> (count excluded-scopes) 1)
+         [:button.clear-exclusions
+          {:type "button"
+           :title "Stop hiding all of them"
+           :on-click state/clear-excluded-scopes}
+          "Clear all"])])))
+
 (defn- empty-message
   "Why the shelf is empty, and never a lie about it. 'No recipes yet.' is a claim
   about the shelf, so it may only be said when nothing is narrowing the view —
@@ -430,16 +540,25 @@
   matches.', because its empty case is the expected one at first: the provenance
   bit is only recorded going forward, so every Recipe reads as not-human-edited
   until it is next saved from here. A reader who is told that will not read it as
-  a broken filter."
-  [search human-only?]
+  a broken filter.
+
+  **The Scope exclusion sits below the search and above the human filter, and that
+  order is what keeps the other two sentences true.** 'Nothing here has been edited
+  in this UI yet' is a claim about the shelf, and with Recipes hidden it can be
+  false — something may well have been edited here and be filed under a hidden
+  Scope. The exclusion's own sentence is deliberately about the *result* and not
+  about what is inside those Scopes, so the search still outranking it says nothing
+  untrue either."
+  [search human-only? excluded-scopes]
   (cond
-    (seq search) "Nothing matches."
-    human-only?  "Nothing here has been edited in this UI yet."
-    :else        "No recipes yet."))
+    (seq search)          "Nothing matches."
+    (seq excluded-scopes) "Nothing left once those Scopes are hidden."
+    human-only?           "Nothing here has been edited in this UI yet."
+    :else                 "No recipes yet."))
 
 (defn recipes-tab []
-  (let [{:keys [recipes search human-only? logged-in? open details editing publishing deleting
-                diffing]}
+  (let [{:keys [recipes search human-only? excluded-scopes logged-in? open details editing
+                publishing deleting diffing]}
         @state/*app-state]
     [:div.shelf
      (when logged-in? [compose-form])
@@ -463,8 +582,12 @@
                 :checked (boolean human-only?)
                 :on-change #(state/set-human-only (-> % .-target .-checked))}]
        "Human-edited only"]]
+     ;; Under the other two narrowings rather than beside them: it is a list that
+     ;; grows with each exclusion, where those are one control each, and it is only
+     ;; there at all while something is being hidden.
+     [excluded-scopes-strip]
      (if (empty? recipes)
-       [:div.empty (empty-message search human-only?)]
+       [:div.empty (empty-message search human-only? excluded-scopes)]
        (for [recipe recipes]
          ^{:key (:id recipe)}
          [card recipe {:logged-in? logged-in? :open open :details details}]))

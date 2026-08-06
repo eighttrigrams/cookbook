@@ -36,6 +36,13 @@
            :diff-unified? false  ;; the merge view's mode — split unless asked otherwise
            :search ""
            :human-only? false    ;; show only what a human has edited here
+           ;; Scope ids whose Recipes are hidden from the shelf — a set, because
+           ;; several can be on at once and each one takes more away. **Not
+           ;; persisted**, deliberately: tracker keeps its `:shared/exclude-*` maps
+           ;; in the client atom and writes them nowhere, so a reload starts
+           ;; unfiltered, and a narrowing that outlived the session would be a
+           ;; shelf silently missing rows for a reason nobody remembers setting.
+           :excluded-scopes #{}
            :recipes-request 0    ;; only the newest listing request may land
            :page :shelf          ;; which page is on: :shelf, :settings, :scopes or :inbox
            :inbox []             ;; the owner's unseen changes his agents made, oldest first
@@ -204,7 +211,13 @@
          ;; and the Scopes more so: the server sends a signed-out client no
          ;; `scopes` key at all, so keeping the fetched list here would be the one
          ;; copy of the owner's filing left on a signed-out page
-         :scopes [] :editing-scope nil :deleting-scope nil)
+         :scopes [] :editing-scope nil :deleting-scope nil
+         ;; and the exclusions with them, for the same reason one step on: an
+         ;; exclusion is a statement about the owner's filing, and the endpoint
+         ;; ignores it for a signed-out caller anyway — so a set left here would
+         ;; put ids on a URL that does nothing, under a strip naming Scopes this
+         ;; client can no longer read the titles of
+         :excluded-scopes #{})
   (fetch-recipes))
 
 ;; ---------------------------------------------------------------------------
@@ -335,6 +348,12 @@
   each keeps all of its text and loses a badge — but the filing itself does not
   come back, which is why a confirmation stands in front of this call.
 
+  **A Scope being hidden by is dropped from `:excluded-scopes` here**, and it has
+  to happen before the refetch below rather than after it: the set is what builds
+  the listing URL, so a deleted id left in it would narrow the very request meant
+  to catch up, by a Scope that no longer exists — and the chips strip would be
+  holding an id it has no title left to render.
+
   `on-done` runs on failure too, for the reason it does in `publish-recipe`: it is
   what closes the confirmation, and the error banner renders under the modal's
   fixed overlay."
@@ -342,6 +361,7 @@
   (let [done #(when on-done (on-done))]
     (api/delete-simple (str "/api/scopes/" id) (auth-headers)
       (fn [_]
+        (swap! *app-state update :excluded-scopes disj id)
         (fetch-scopes)
         ;; every card filed under it is now showing a badge for a Scope that is
         ;; gone; the server has already unfiled them, so this is what catches up
@@ -374,17 +394,24 @@
 
 (defn- recipes-url
   "The listing URL carrying whichever narrowings are on. Assembled from a list
-  rather than branched on, so search and the human filter compose — the endpoint
-  applies both as `:where` clauses, and either of them winning here would have
-  been this client's invention."
+  rather than branched on, so the search, the human filter and the Scope exclusion
+  compose — the endpoint applies all three as `:where` clauses, and any of them
+  winning here would have been this client's invention."
   []
-  (let [{:keys [search human-only?]} @*app-state
+  (let [{:keys [search human-only? excluded-scopes]} @*app-state
         params (cond-> []
                  (not (str/blank? search))
                  (conj (str "search=" (js/encodeURIComponent search)))
 
                  human-only?
-                 (conj "human=true"))]
+                 (conj "human=true")
+
+                 ;; Sorted, so the same set of exclusions always spells the same
+                 ;; URL: a cljs set has no order of its own, and two requests that
+                 ;; mean the same thing reading differently is a nuisance in the
+                 ;; network tab and in anything that caches by URL.
+                 (seq excluded-scopes)
+                 (conj (str "exclude-scopes=" (str/join "," (sort excluded-scopes)))))]
     (if (empty? params)
       "/api/recipes"
       (str "/api/recipes?" (str/join "&" params)))))
@@ -540,6 +567,48 @@
   toggling while a search response is in flight cannot land the older listing."
   [on?]
   (swap! *app-state assoc :human-only? on?)
+  (fetch-recipes))
+
+;; The Scope exclusion — the shelf's third narrowing, and the only negative one.
+;; Every function here ends in a refetch for the reason `set-search` and
+;; `set-human-only` do: the narrowing is the endpoint's `:where` clause, so the
+;; only way to apply one is to ask again. The request numbering in `fetch-recipes`
+;; already covers the race that creates.
+;;
+;; Nothing here checks that an id is one of the owner's. It cannot come from
+;; anywhere else — the only way to add one is to shift+click a badge the server
+;; put on a card — and an id the server does not recognise excludes nothing
+;; anyway, so a check here would be a second opinion about a question the endpoint
+;; already answers.
+
+(defn toggle-excluded-scope
+  "Hide the Recipes filed under this Scope, or stop hiding them.
+
+  A toggle rather than an add, even though the badge that calls it disappears
+  along with the Recipes carrying it — the chips strip is where the second click
+  lives, and it calls `clear-excluded-scope`. This stays a toggle because a Recipe
+  filed under *two* Scopes keeps its other badges when one of them is excluded, so
+  the same badge can genuinely be shift+clicked twice."
+  [id]
+  (swap! *app-state update :excluded-scopes
+         (fn [s] (if (contains? s id) (disj s id) (conj s id))))
+  (fetch-recipes))
+
+(defn clear-excluded-scope
+  "Stop hiding one Scope's Recipes — the × on its chip.
+
+  This is the affordance that makes the gesture safe rather than a nicety on top
+  of it: an excluded Scope's badges leave the shelf with the Recipes carrying
+  them, so without the chip there is nothing left to shift+click a second time."
+  [id]
+  (swap! *app-state update :excluded-scopes disj id)
+  (fetch-recipes))
+
+(defn clear-excluded-scopes
+  "Stop hiding all of them at once. Only offered when more than one is on, which
+  is when clearing them one at a time starts to be work."
+  []
+  (swap! *app-state assoc :excluded-scopes #{})
   (fetch-recipes))
 
 (defn add-recipe [{:keys [title useful_when description tags scope_ids]} on-success]
