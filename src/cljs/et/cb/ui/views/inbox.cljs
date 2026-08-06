@@ -253,13 +253,28 @@
   (let [{:keys [inbox]} @state/*app-state]
     [:div.inbox
      [:h2 "Inbox"]
+     ;; **Two kinds of row, so two sentences.** This paragraph told him to mark every
+     ;; entry seen and to click every title, which was true of the queue before
+     ;; proposals were in it and is true of neither on a `proposed` row: it has no Seen
+     ;; button, because the API refuses to acknowledge a question, and its title is not
+     ;; a link, because the version it proposes does not exist yet.
      [:p.settings-note
-      "Every change your agents made to a Recipe, oldest first. Work down from the
-       top and mark each one seen; the entry disappears and the rest keep their
-       order. "
+      "Everything your agents did to a Recipe, oldest first. "
       [:strong "Your own edits are not in here"]
-      " — this is the record of what the agents did, not a change log. Click a
-       Recipe's title to see what that save changed."]
+      " — this is the record of what the agents did, not a change log."]
+     [:p.settings-note
+      "Most entries are something that already happened: mark it "
+      [:em "Seen"]
+      " and it leaves the queue, and click the Recipe's title to see what that save
+       changed. A "
+      [:strong "proposed"]
+      " entry is a question instead — an agent wants to rewrite the Recipe and is
+       waiting for you — so it shows you the change beside the current text and asks
+       you to "
+      [:em "Approve"]
+      " or "
+      [:em "Dismiss"]
+      " it. Either way the entry disappears and the rest keep their order."]
      (if (empty? inbox)
        [:div.inbox-empty "Nothing your agents did is waiting."]
        [:div.inbox-list

@@ -183,7 +183,8 @@ was looked for.
 ### The inbox
 
 **Every change an agent makes to a Recipe appears in a queue, oldest first, and he
-marks each one seen.** That is the page the ✉ button in the top bar opens, and the
+answers each one — marking it seen if it already happened, approving or dismissing it
+if the agent is asking.** That is the page the ✉ button in the top bar opens, and the
 count on it is how many are waiting.
 
 His words: *every recipe change appears there, in order of a queue, that is, newer
