@@ -11,28 +11,39 @@ schema does, and it inverts the house default, so it goes first:
 > Every other plurama sibling treats an agent's write as something to be gated —
 > there, a machine token is read-only until the owner switches recording mode on.
 > **Cookbook deliberately does not.** A caller holding cookbook credentials
-> writes freely, with no supervision and no toggle. The one boundary is the
-> publish latch, below — not a mode, and not something the owner can turn off.
+> writes freely, with no supervision and no toggle. What bounds it is a pair of
+> rules about *his own writing*, below — neither of them a mode, and neither
+> something anyone can turn off.
 
 There is no `recording_mode` namespace here, no `/api/recording-mode` route, and
 no machine-write guard in the middleware chain. Their absence is the feature. If
 you are a future agent about to add one back "to be safe": don't — you would be
 removing the reason this project exists.
 
-What replaces the gate is the **publish latch**, and nothing else:
+What replaces the gate is two boundaries, and **both are about text the owner
+wrote** rather than about agents being untrusted:
 
 | | who may write |
 |---|---|
-| unpublished Recipe | the owner **and** any credentialled agent — the shared scratch space |
-| published Recipe | **the owner only** — he has put his name to it |
+| a Recipe with only agent-written versions | the owner **and** any credentialled agent — the shared scratch space |
+| a Recipe he has written part of | the owner writes; an agent **proposes** and he approves |
+| a published Recipe | **the owner only** — he has put his name to it |
 
-Publishing is therefore not primarily a visibility act but an act of taking
-ownership: it makes a Recipe public *and* freezes it against machine mutation,
-in one irreversible step. There is no unpublish, because un-latching would hand
-a machine back the right to rewrite something the owner had signed.
+The first is the **publish latch**: publishing is not primarily a visibility act
+but an act of taking ownership. It makes a Recipe public *and* freezes it against
+machine mutation, in one irreversible step, and there is no unpublish, because
+un-latching would hand a machine back the right to rewrite something the owner
+had signed.
 
-Both halves are built: `POST /api/recipes/:id/publish` with anonymous visitors
-who see published Recipes only, and the machine half below.
+The second is the **approval rule**, and it is deliberately softer: an agent's
+edit of his text is neither applied nor refused, it is *filed* — a 202 and a
+proposal in his inbox. Nothing is silently dropped, which is what keeps it from
+being the gate this app refuses to have; the agent is told exactly what happened
+and the decision is made in the open.
+
+All of it is built: `POST /api/recipes/:id/publish` with anonymous visitors who
+see published Recipes only, the machine table below, the approval rule and the
+inbox it is reviewed in.
 
 ### The one machine user
 
@@ -54,25 +65,125 @@ that row's id would authenticate perfectly and then show an *empty shelf*. So
 up on his shelf, and every handler is already right without having to remember a
 resolution step.
 
-What the machine may do:
+What the machine may do — and there are two questions now, not one: whether the
+Recipe is published, and **whose writing it holds**.
 
-| | unpublished Recipe | published Recipe |
-|---|---|---|
-| read | yes | yes |
-| create | yes | – |
-| edit | yes, unsupervised | **403** |
-| delete | yes, unsupervised | **403** |
-| publish | **403** | **403** |
+| | unpublished, all the agents' | unpublished, he wrote part of it | published |
+|---|---|---|---|
+| read | yes | yes | yes |
+| create | yes | – | – |
+| edit | yes, unsupervised | **202, filed as a proposal** | **403** |
+| delete | yes, unsupervised | **403** | **403** |
+| publish | **403** | **403** | **403** |
 
 Delete is refused on a published Recipe for the same reason edit is: removing one
 takes it out of the public listing, history and all, which is un-latching by
 demolition. And a machine may not publish at all, published or not, because the
 latch is irreversible — a machine that could set it could make private content
-permanently public *and* freeze the Recipe out of its own reach. Both rules live
+permanently public *and* freeze the Recipe out of its own reach. Those rules live
 in one place, `wrap-machine-recipe-rules`, which every mutating recipe route
 passes through — installed with compojure's `wrap-routes` so that it runs *after*
 the route has matched, and therefore reads the same recipe id the handler does
-rather than parsing one off the raw path. There is no switch that lifts either.
+rather than parsing one off the raw path. There is no switch that lifts any of them.
+
+The middle column is the approval rule, below. Note that an edit there is **not**
+refused: it is accepted and not applied. The delete is refused outright, because
+there is no such thing as proposing a deletion — and that rule is `DELETE`-only
+in the guard, deliberately, since a `PUT` has to reach the handler to become a
+proposal.
+
+### Edits that need approving
+
+**A Recipe is the agents' to write freely only while every one of its versions was
+written by an agent.** One save of the owner's anywhere in its history and the next
+machine edit to its *content* is not applied: it is filed as a **proposal**, and the
+Recipe goes on reading exactly as it did until he approves it.
+
+His words: *an agent can modify any recipe which has been generated by an agent and
+has only agent-stamped versions. but when there is a human modification inbetween,
+it needs approval.*
+
+The rule is `machine_versions = version` — two numbers every listing row already
+carries. There is deliberately **no `approval_required` flag**: a flag could drift
+from the counts the card shows, and an agent can check the rule before it writes.
+Note what the rule is *not*: not `has_human_edit`, which read 0 for every Recipe he
+typed by hand before migration 004; and not the row's own `source`, because his
+version may be two saves back in the history, which is exactly the case approval is
+wanted for.
+
+| | |
+|---|---|
+| a machine `PUT` that would change content | **202** `{pending, recipe}` — accepted, not applied |
+| a second proposal on the same Recipe | **409** `reason: proposal-pending`, carrying the pending text |
+| the same with `?overwrite=true` | 202, replacing it in place, keeping its place in the queue |
+| a machine `PUT` whose `modified_at` is stale | **409** `reason: modified-elsewhere`, checked first |
+| `tags` or `scope_ids` in the same request | applied immediately — filing is not the text he wrote |
+| a machine `PUT` that changes nothing | 200, still a no-op; it proposes nothing |
+
+202 rather than 200 because the honest thing to say is *accepted, not applied* —
+an agent that read 200 as "my text is live" would be wrong in a way nothing else in
+this API is. And a proposal is emphatically **not** the machine-write gate this app
+refuses to have: nothing is silently dropped, the response carries both texts, and
+what happens next is a decision the owner makes in the open.
+
+At most **one unresolved proposal per Recipe**, said by a partial unique index
+rather than by a handler — which is what makes *there are no merge conflicts* a
+property of the database. A proposal is the three content fields and nothing else,
+because that is what a version is here.
+
+Only the owner resolves one, from the inbox: `POST /api/inbox/:id/approve` writes the
+agent's three fields as the next version, stamped `machine`, archiving the outgoing
+one with *its own* label. It does **not** set `has_human_edit` — putting your name to
+text an agent wrote is not writing it — so the Recipe still needs approval next time.
+`POST /api/inbox/:id/dismiss` closes it and touches nothing. Both are 403 for a
+machine token: an agent approving its own proposal would be the whole mechanism
+undone.
+
+`base_version` says what the proposal was written against and is deliberately not a
+guard. If he saved in between, approving replaces his newer text with the agent's —
+so the inbox says that in words, on the item, before the click.
+
+### The inbox
+
+**Every change an agent makes to a Recipe appears in a queue, oldest first, and he
+marks each one seen.** That is the page the ✉ button in the top bar opens, and the
+count on it is how many are waiting.
+
+His words: *every recipe change appears there, in order of a queue, that is, newer
+appended items go bottomwards … so i can go through the things topmost first (oldest
+unseen change first).* And, asked whether his own edits belonged in it: *no my own ui
+edits should not land in the inbox.*
+
+So this is **not a change log** — it is the record of what the agents did while he
+was not looking, which is also what makes working through it oldest-first worth
+doing. An entry exists exactly when the write was stamped `source = machine`, off the
+same fact the label itself comes from.
+
+| kind | what it means | `version` |
+|---|---|---|
+| `created` | an agent wrote a Recipe | 1 |
+| `modified` | an agent's save changed its content | the **new** version |
+| `deleted` | an agent deleted it | the version it died on |
+| `proposed` | an agent is waiting for approval | the version proposed against |
+
+Nothing else makes an entry: a save that changes nothing makes none because it makes
+no version, a tags- or Scope-only save makes none because filing is not content, and
+publishing makes none. `deleted` is the one kind he did not ask for by name — without
+it an agent could create a Recipe and delete it again and the inbox would record the
+create and then erase it.
+
+`GET /api/inbox` is the whole read surface; there is no listing of *seen* entries,
+because the queue is what has not been looked at, and no unseen-count endpoint,
+because the count is the length of that list. `POST /api/inbox/:id/seen`
+acknowledges one — and **refuses a `proposed` entry**, which is answered rather than
+acknowledged. All of it is the owner's alone: a machine token is refused, and so is a
+caller with no credentials.
+
+Two things the queue is careful about. It is ordered by the event `id` and never by
+`created_at`, which is second-resolution — two entries in one second is the normal
+case. And **events outlive their Recipe**: deleting one takes its history and its
+Scope associations, and leaves its entries, each of which keeps a snapshot of the
+title so it still reads as something.
 
 ### What a visitor sees
 
@@ -158,11 +269,15 @@ are the interface, not decoration.
 
 ### Recipes
 
-- `GET /api/recipes` — the listing, most recently saved first. `?search=` narrows
-  over the **title** by **word-prefix**, AND across whitespace-separated terms:
-  `ab cd` finds `abc cde` but not `ad cd`, and `cd` does not find `abcd`. A word
-  is a run of letters and digits, so `heating` finds `Re-heating`. `%` and `_`
-  are ordinary characters. **Lean**: no `description` key at all.
+- `GET /api/recipes` — the listing, **ranked by use**: `0.7 × view_count +
+  0.3 × version` descending, then most recently modified, then highest id.
+  `?search=` narrows over the **title and the tags** by **word-prefix**, AND
+  across whitespace-separated terms: `ab cd` finds `abc cde` but not `ad cd`, and
+  `cd` does not find `abcd`. A word is a run of letters and digits, so `heating`
+  finds `Re-heating`. `%` and `_` are ordinary characters. `?human=true` narrows to
+  the Recipes a human has edited. **Lean**: no `description` key at all. Each row
+  carries `machine_versions` / `ui_versions`, `view_count`, and `pending` — whether
+  a proposal is waiting on it.
 - `GET /api/recipes/:id` — one recipe, lean the same way.
 - **`?detail=full`** on either of those adds the description. That is the only
   way to get a body, and it is meant to be asked for one recipe at a time.
@@ -171,15 +286,35 @@ are the interface, not decoration.
 - `PUT /api/recipes/:id` — the same three fields; anything you leave out keeps
   its current value. Pass `modified_at` from your last read to be told (409)
   when someone else saved in between. A save that changes nothing is a no-op.
-- `DELETE /api/recipes/:id` — the recipe and its whole history.
+  **From a machine token, on a Recipe the owner has written part of, this answers
+  202 and files a proposal** — see *Edits that need approving*, and note the two
+  different 409s that route can give, told apart by `reason`. `?overwrite=true`
+  replaces a proposal already pending.
+- `DELETE /api/recipes/:id` — the recipe and its whole history. Its inbox entries
+  survive it; a pending proposal on it is closed.
 - `GET /api/recipes/:id/versions` — every version, newest first, each with all
-  three fields and its `created_at`. The newest carries `current: true`.
-  Owner-only.
+  three fields, its `created_at` and its `source`. The newest carries
+  `current: true`. Owner-only.
 - `POST /api/recipes/:id/publish` — set the latch. **Idempotent**: publishing
   something already published is a 200 no-op and does not move `published_at`,
   because the first publish is the fact being recorded. Not a content change —
   no version bump, no history row, and `modified_at` stays where it was. There
   is no unpublish route, deliberately.
+
+### The inbox
+
+Owner-only, all four: a machine token is refused, and so is a caller with no
+credentials.
+
+- `GET /api/inbox` — the unseen entries, **oldest first**. Each carries its own
+  `id` (which the other three take), `recipe_id`, `recipe_title` as it read then,
+  `kind`, `version`, `created_at` and `recipe_exists`. A `proposed` entry also
+  carries `proposal`, with the three proposed fields *and* the three the Recipe
+  says now, so it can be reviewed as a diff against current.
+- `POST /api/inbox/:id/seen` — acknowledge one. Idempotent. **400 for a
+  `proposed` entry**, which is answered rather than acknowledged.
+- `POST /api/inbox/:id/approve` — apply an agent's proposal as the next version.
+- `POST /api/inbox/:id/dismiss` — decline it; the Recipe is untouched.
 
 ### Versioning
 
