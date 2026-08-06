@@ -5,6 +5,7 @@
             [et.cb.server.user-handler :as user-handler]
             [et.cb.server.recipe-handler :as recipe-handler]
             [et.cb.server.scope-handler :as scope-handler]
+            [et.cb.server.inbox-handler :as inbox-handler]
             [et.cb.db.recipe :as db.recipe]
             [et.cb.db.scope :as db.scope]
             [et.cb.auth :as auth]
@@ -27,18 +28,25 @@
     default))
 
 (defn reset-test-db-handler
-  "POST /api/test/reset — drop every Recipe and its whole version history, **and
-  every Scope with it**: `recipes`, `recipe_history`, `scopes` and the
-  `recipe_scopes` filing between them, all of it, for every user. Nothing is kept
-  and there is no undo. Dev only: 403 in production. The owner's alone, like the
-  machine-user routes — a machine token is refused and so is a caller with no
-  credentials.
+  "POST /api/test/reset — drop every Recipe and its whole version history, **every
+  Scope with it, and the owner's whole inbox**: `recipes`, `recipe_history`,
+  `scopes`, the `recipe_scopes` filing between them and `recipe_events`, all of it,
+  for every user. Nothing is kept and there is no undo. Dev only: 403 in production.
+  The owner's alone, like the machine-user routes — a machine token is refused and
+  so is a caller with no credentials.
 
   The Scopes are named here because this catalogue is what an agent reads before
   calling a route, and 'drop every Recipe' would have it believe the owner's
   filing survived. A reset that spared the Scopes would be worse than one that
   takes them: `recipe_scopes` rows pointing at deleted Recipes are ghosts waiting
   for AUTOINCREMENT to reuse an id.
+
+  The inbox is named for the same reason, and it is the one item here that a reader
+  might expect to be spared: `db.recipe/delete-recipe` leaves a Recipe's events
+  alone on purpose, because an event records something that happened. That argument
+  is about one Recipe going away, not about the store being emptied — a queue of
+  entries naming Recipes that no longer exist at all is a record of nothing, and it
+  would greet the next caller as unread work.
 
   It is a sibling of `/api/recipes` and so outside both recipe guards, which is
   how it came to be the one destructive route in this app with no caller check at
@@ -104,7 +112,8 @@
   '[et.cb.server
     et.cb.server.user-handler
     et.cb.server.recipe-handler
-    et.cb.server.scope-handler])
+    et.cb.server.scope-handler
+    et.cb.server.inbox-handler])
 
 (def ^:private route-doc-re
   "Route handlers document themselves as `METHOD /path — explanation`. Matching
@@ -330,6 +339,17 @@
       (POST   "/"    [] scope-handler/add-scope-handler)
       (PUT    "/:id" [] scope-handler/update-scope-handler)
       (DELETE "/:id" [] scope-handler/delete-scope-handler))
+
+    ;; The inbox, and **outside both recipe guards for the same reason the Scopes
+    ;; are**: the `:id` in these paths is an *event* id, so `common/recipe-id`
+    ;; would resolve it against the wrong table and `published-target?` would ask
+    ;; whether a Recipe that has nothing to do with this request is published. The
+    ;; guards have no answer here. Each handler asks `common/owner-caller?` for
+    ;; itself instead, which is stricter than what the recipe context provides
+    ;; rather than weaker: a machine token is refused outright.
+    (context "/inbox" []
+      (GET  "/"          [] inbox-handler/list-inbox-handler)
+      (POST "/:id/seen"  [] inbox-handler/mark-seen-handler))
 
     (context "/test" []
       (POST "/reset" [] reset-test-db-handler))))

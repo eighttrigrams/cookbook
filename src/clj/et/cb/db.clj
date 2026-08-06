@@ -158,8 +158,16 @@
   `recipe_scopes` and `scopes` are in it because a Scope is user data too. Leaving
   the join rows would strand them against deleted Recipes, and leaving the Scopes
   would make 'reset' mean 'reset except the filing' — a fixture that half-resets
-  is one a test can pass because of the half that stayed."
+  is one a test can pass because of the half that stayed.
+
+  **`recipe_events` is in it although `db.recipe/delete-recipe` deliberately leaves
+  a Recipe's events behind**, and the two are not in tension: there, an event is the
+  record that something happened to a Recipe that really did happen, so it outlives
+  the Recipe; here, the whole store is being wiped and an inbox full of entries
+  pointing at Recipes that never existed is not a record of anything. A reset that
+  spared them would also be exactly the half-reset this docstring warns about — the
+  next test's queue would open on the last test's events."
   [ds]
   (let [conn (get-conn ds)]
-    (doseq [table [:recipe_history :recipe_scopes :recipes :scopes]]
+    (doseq [table [:recipe_history :recipe_scopes :recipe_events :recipes :scopes]]
       (jdbc/execute-one! conn (sql/format {:delete-from table})))))

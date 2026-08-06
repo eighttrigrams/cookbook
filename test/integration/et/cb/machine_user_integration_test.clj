@@ -283,6 +283,7 @@
                ["POST" "/api/recipes/:id/publish"] ["GET" "/api/recipes/:id/versions"]
                ["GET" "/api/scopes"] ["POST" "/api/scopes"]
                ["PUT" "/api/scopes/:id"] ["DELETE" "/api/scopes/:id"]
+               ["GET" "/api/inbox"] ["POST" "/api/inbox/:id/seen"]
                ["POST" "/api/test/reset"]}
              paths)))
     (testing "and the destructive one says so, and says who may call it"

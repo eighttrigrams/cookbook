@@ -54,6 +54,7 @@
   second-resolution and the append order is the thing being served."
   (:require [next.jdbc :as jdbc]
             [honey.sql :as sql]
+            [taoensso.telemere :as tel]
             [et.cb.db :as db]))
 
 (def kinds
@@ -62,6 +63,101 @@
   finding out from a constraint violation, and so `inbox-handler` can tell the one
   kind that is not an acknowledgement — `proposed` — from the three that are."
   #{"created" "modified" "deleted" "proposed"})
+
+(def ^:private queue-columns
+  "What an event is, read back for the queue. `proposal_id` is in here from the
+  start although nothing writes it until 011 — the column exists from 009 (see the
+  migration for why), and the page it feeds has to be able to tell a proposal from
+  an acknowledgement.
+
+  There is no `source`: the table has no such column, because every event here is a
+  machine's.
+
+  `seen` is deliberately not selected either. Every row of this list is unseen, so
+  the column would only restate the query's own `:where`, and a caller that read a
+  0 there would be reading a constant."
+  [:id :recipe_id :recipe_title :kind :version :proposal_id :created_at])
+
+(defn list-unseen
+  "The owner's unseen events, **oldest first** — the queue as he asked for it: he
+  works down from the top and the newest arrivals are at the bottom.
+
+  Ordered by `id` and never by `created_at`. The stamp is second-resolution, so two
+  events written in one second — a create and the proposal an agent files a moment
+  later — would be a tie the database could break either way, and the append order
+  is the one fact being served. Migration 009 makes the argument in full.
+
+  Narrowed through `db/user-id-where-clause`, like every other read in this app:
+  dev's owner has no `users` row, and a `= user-id` would answer nothing for him."
+  [ds user-id]
+  (jdbc/execute! (db/get-conn ds)
+    (sql/format {:select queue-columns
+                 :from [:recipe_events]
+                 :where [:and [:= :seen [:inline 0]] (db/user-id-where-clause user-id)]
+                 :order-by [[:id :asc]]})
+    db/jdbc-opts))
+
+(defn get-event
+  "One event of this owner's, or nil. Both halves in one clause, so no caller can
+  fetch a row by id and check the owner afterwards."
+  [ds user-id id]
+  (jdbc/execute-one! (db/get-conn ds)
+    (sql/format {:select (conj queue-columns :seen)
+                 :from [:recipe_events]
+                 :where [:and [:= :id id] (db/user-id-where-clause user-id)]})
+    db/jdbc-opts))
+
+(defn seen!
+  "Mark one event seen, unguarded — the bare write, in the caller's transaction.
+
+  Two callers: `mark-seen!` below, which decides whether this event is one that may
+  be acknowledged at all, and every path that resolves a proposal, which marks that
+  proposal's own event seen in the same transaction as the resolution. That second
+  one is what holds the invariant a `proposed` event lives by: **it is unseen
+  exactly while its proposal is unresolved.** Hence a primitive rather than only the
+  guarded version — a resolution must not have to pass a guard written for a
+  request."
+  [tx user-id id]
+  (jdbc/execute-one! tx
+    (sql/format {:update :recipe_events
+                 :set {:seen [:inline 1]}
+                 :where [:and [:= :id id] (db/user-id-where-clause user-id)]})))
+
+(def no-such-event
+  "`mark-seen!`'s answer for 'there is no such event of yours'. A named value at
+  both ends, the shape `db.scope/no-such-scope` already uses: the caller compares
+  against this var, so the two namespaces cannot come to spell the same refusal
+  differently."
+  ::no-such-event)
+
+(def proposal-needs-resolving
+  "`mark-seen!`'s answer for 'this event is a proposal'. See `no-such-event`.
+
+  A proposal is not something to acknowledge — it is something to approve or
+  dismiss — and letting one be marked seen would strand it: the proposal would go
+  on blocking the agent that filed it with nothing left in the inbox to resolve it
+  through. So the refusal is a category error being named, not a permission being
+  withheld."
+  ::proposal-needs-resolving)
+
+(defn mark-seen!
+  "Acknowledge one event: the event as it now reads, `no-such-event`, or
+  `proposal-needs-resolving`.
+
+  **Both refusals are decided inside one transaction off one read**, the shape
+  `db.scope/update-scope` argues for: two reads mean two moments, and between them
+  the row can change — a caller that established the kind and then wrote would be
+  able to acknowledge a `proposed` event that arrived in between."
+  [ds user-id id]
+  (jdbc/with-transaction [tx (db/get-conn ds)]
+    (if-let [event (get-event tx user-id id)]
+      (if (= "proposed" (:kind event))
+        proposal-needs-resolving
+        (do (seen! tx user-id id)
+            (tel/log! {:level :info :data {:id id :user-id user-id :kind (:kind event)}}
+                      "Inbox event marked seen")
+            (assoc event :seen 1)))
+      no-such-event)))
 
 (defn record!
   "Append one event, **in the caller's transaction** — the argument is a `tx` and
