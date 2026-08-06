@@ -1,5 +1,11 @@
 (ns et.cb.ui.views.recipes
-  "The shelf: one Recipe per card, most recently saved first.
+  "The shelf: one Recipe per card, the most used first.
+
+  **The order is the server's and nothing here re-sorts it.** `list-recipes`
+  ranks by `0.7 × view_count + 0.3 × version` and falls back to most-recently-
+  modified for ties; `state/fetch-recipes` stores the rows as they arrived and
+  this file renders them in that order. A sort added here would be this client's
+  private opinion about a shelf an agent sees ranked differently.
 
   A collapsed card shows the **title and the useful-when line and nothing
   else** — that pair is a retrieval index, both for a reader and for the agents

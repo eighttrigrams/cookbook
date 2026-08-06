@@ -64,8 +64,20 @@
     db.recipe/visitor-audience))
 
 (defn list-recipes-handler
-  "GET /api/recipes — the caller's recipes, most recently saved first, optionally
-  narrowed by ?search over the **title and the tags**.
+  "GET /api/recipes — the caller's recipes, **ranked by how much they are used**,
+  optionally narrowed by ?search over the **title and the tags**.
+
+  **The order is a weighted sum: `0.7 × view_count + 0.3 × version`, highest
+  first**, then most recently modified, then highest id. `view_count` is how often
+  the Recipe's description was actually fetched (see GET /api/recipes/:id) and
+  `version` is how many times it has been edited, so the shelf leads with what has
+  proved useful rather than with whatever was touched last. The same order is
+  served to every caller — this UI, an agent, an anonymous visitor — so a listing
+  is a recommendation and not just an inventory: the first entries are the ones
+  somebody has kept coming back to. The weights are on the raw counts, so once a
+  Recipe has been read a few dozen times the version term stops being able to move
+  it. There is no ?sort parameter; if you want a different order, sort the rows
+  you were given.
 
   **?search is a word-prefix match, AND across terms.** The search splits on
   whitespace, and a recipe matches when every term is the prefix of some word in

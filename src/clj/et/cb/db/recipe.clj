@@ -216,6 +216,44 @@
    [(versions-with-source "ui") :ui_versions]
    [(versions-with-source nil) :unrecorded_versions]])
 
+(def ^:private ranking-score
+  "How the shelf is ranked: **0.7 × `view_count` + 0.3 × `version`**, the owner's
+  own weights for 'how often it was consumed' and 'how often it was edited'.
+
+  Both terms are plain columns on `recipes` — `version` *is* the total number of
+  versions, which `source-split-columns` states as an invariant — so this needs
+  no aggregate and no second join, and it costs the listing nothing.
+
+  **The weighted sum is of the raw counts and not of normalised ones**, which is
+  what he asked for, and the consequence is worth writing down rather than
+  rediscovering: the two terms only share a scale while the counts are of similar
+  size. `0.3 × version` can move a Recipe past another by at most a fraction of a
+  read, so once anything is read fifty times the version term is a rounding term
+  and this is a consumption ranking with a tiebreaker on top. That is a coherent
+  thing to want — a Cookbook is ranked by use — but if it should become 'reads
+  and edits weigh comparably' the fix is to normalise each term against the
+  shelf's maximum before weighting, not to nudge the constants.
+
+  Kept as one named value rather than spelled out in the `:order-by`, so the
+  weights are in one place, and so a test can put different ones in and watch the
+  order change (`the-weights-are-the-owners-and-not-just-any-weights`)."
+  [:+ [:* [:inline 0.7] :recipes.view_count]
+      [:* [:inline 0.3] :recipes.version]])
+
+(def ^:private ranking-order-by
+  "The score, then the two tiebreakers that make the order **total**.
+
+  Without them SQLite may return equal-scoring rows in any order it likes, and
+  ties are the normal case here rather than a corner: every Recipe starts at
+  `0.3 × 1`, so a fresh shelf is entirely ties. The shelf would then shuffle
+  between two reloads for no reason a reader could see — and `modified_at` desc
+  is what it used to be ordered by outright, so a tie falls back to the old
+  behaviour rather than to nothing.
+
+  `id` desc under that, because `modified_at` is second-resolution: two Recipes
+  saved in the same second are still a tie one level down."
+  [[ranking-score :desc] [:recipes.modified_at :desc] [:recipes.id :desc]])
+
 (defn- published? [recipe]
   (= 1 (:published recipe)))
 
@@ -239,10 +277,17 @@
 
 (defn list-recipes
   "The recipes visible in `audience` — a user-id for their owner, `visitor-audience`
-  for an anonymous caller — most recently touched first, optionally narrowed by
+  for an anonymous caller — **ranked by use**, optionally narrowed by
   a **word-prefix search over the title and the tags**. `lean?` (the default)
   leaves the description out of the projection entirely, and a visitor's
   projection leaves out the tags — see `select-columns`.
+
+  **The order is `0.7 × view_count + 0.3 × version` descending**, then
+  `modified_at` descending, then `id` descending — one order for everybody, the
+  UI and the machine listing alike, because both come through here. It used to be
+  most-recently-touched-first outright, which is now the first tiebreaker.
+  `ranking-score` says what the weights mean and what follows from summing raw
+  counts; `ranking-order-by` says why the tiebreakers are not optional.
 
   Every whitespace-separated term of the search has to be the prefix of some
   word in *one of the two searched columns*, case-insensitively, and different
@@ -311,7 +356,7 @@
                          :left-join [:recipe_history [:= :recipe_history.recipe_id :recipes.id]]
                          :where where
                          :group-by [:recipes.id]
-                         :order-by [[:recipes.modified_at :desc] [:recipes.id :desc]]})
+                         :order-by ranking-order-by})
             db/jdbc-opts)
           (with-scopes ds audience)))))
 
