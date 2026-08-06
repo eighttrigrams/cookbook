@@ -282,14 +282,39 @@
   ;; shelf, so an inbox that counted reads would quietly reorder his Cookbook every
   ;; time he went through the queue; and `modified_at` is the optimistic-concurrency
   ;; guard, so moving it would 409 a save he had in flight.
-  (let [{:keys [id]} (machine-create! "Sourdough")
-        before (first (filter #(= id (:id %)) (:body (GET-json "/api/recipes"))))]
-    (dotimes [_ 3] (GET-json "/api/inbox"))
-    (h/API :post (str "/api/inbox/" (:id (first (inbox))) "/seen") {})
-    (let [after (first (filter #(= id (:id %)) (:body (GET-json "/api/recipes"))))]
-      (is (= 0 (:view_count after)) "no read was counted")
-      (is (= (:modified_at before) (:modified_at after)) "and the stamp did not move")
-      (is (= before after) "nothing about the row moved at all"))))
+  ;;
+  ;; **The queue has to hold a `proposed` entry for this to be capable of failing**,
+  ;; and the first version of this test did not put one there. A `proposed` entry is
+  ;; the only kind whose rendering needs the Recipe's *text*, so
+  ;; `db.proposal/attach-to-events` is the only thing here that reads a Recipe at all —
+  ;; and it returns before reading anything when no entry is a proposal. With a queue
+  ;; of notifications only, an implementation that fetched each proposal through
+  ;; `GET /api/recipes/:id?detail=full` — the one the order forbids, because that
+  ;; endpoint counts a consumption — passed this test untouched.
+  ;;
+  ;; The count starts at 1 rather than 0 for the same reason: `(= 0 …)` cannot tell
+  ;; "nothing was counted" from "the column does not exist yet", while a real read
+  ;; already recorded is a number an accidental increment moves.
+  (let [{:keys [id]} (:body (POST-json "/api/recipes" {:title "Sourdough"
+                                                       :description "his body"}))]
+    (GET-json (str "/api/recipes/" id "?detail=full"))
+    (machine-create! "Written by an agent")
+    (machine :put (str "/api/recipes/" id) {:description "the agent's body"})
+    (let [entries (inbox)
+          before (first (filter #(= id (:id %)) (:body (GET-json "/api/recipes"))))]
+      (is (= #{"created" "proposed"} (set (map :kind entries)))
+          "a notification and a question, so both paths through the listing are read")
+      (is (some? (:proposal (first (filter #(= "proposed" (:kind %)) entries))))
+          "and the proposal really did come back with its text, which is the read
+           that could have gone through the counting endpoint")
+      (dotimes [_ 3] (inbox))
+      (h/API :post (str "/api/inbox/" (:id (first (filter #(= "created" (:kind %)) entries)))
+                        "/seen")
+             {})
+      (let [after (first (filter #(= id (:id %)) (:body (GET-json "/api/recipes"))))]
+        (is (= 1 (:view_count after)) "no read was counted")
+        (is (= (:modified_at before) (:modified_at after)) "and the stamp did not move")
+        (is (= before after) "nothing about the row moved at all")))))
 
 ;; ---------------------------------------------------------------------------
 ;; the catalogue and the reset
