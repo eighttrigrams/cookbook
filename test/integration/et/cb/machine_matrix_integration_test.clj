@@ -143,10 +143,20 @@
    {:caller :machine :text :his :state :unpublished :op :delete  :expect 403 :lands? false}
    {:caller :machine :text :his :state :unpublished :op :publish :expect 403 :lands? false}
    {:caller :machine :text :his :state :unpublished :op :read    :expect 200 :visible? true}
-   {:caller :machine :state :published   :op :edit    :expect 403 :lands? false}
-   {:caller :machine :state :published   :op :delete  :expect 403 :lands? false}
-   {:caller :machine :state :published   :op :publish :expect 403 :lands? false}
-   {:caller :machine :state :published   :op :read    :expect 200 :visible? true}
+   {:caller :machine :text :his :state :published :op :edit    :expect 403 :lands? false}
+   {:caller :machine :text :his :state :published :op :delete  :expect 403 :lands? false}
+   {:caller :machine :text :his :state :published :op :publish :expect 403 :lands? false}
+   {:caller :machine :text :his :state :published :op :read    :expect 200 :visible? true}
+
+   ;; --- and published text the agents wrote every word of, which is the cell where
+   ;; the latch has to *beat* a permission rather than reinforce a refusal. Everywhere
+   ;; else on the machine's rows, whose text it is decides the answer; here it must not.
+   ;; The table's own header says `published | either`, and until these four rows it
+   ;; said so on the strength of the `:his` half alone.
+   {:caller :machine :text :agents :state :published :op :edit    :expect 403 :lands? false}
+   {:caller :machine :text :agents :state :published :op :delete  :expect 403 :lands? false}
+   {:caller :machine :text :agents :state :published :op :publish :expect 403 :lands? false}
+   {:caller :machine :text :agents :state :published :op :read    :expect 200 :visible? true}
 
    ;; --- anonymous: refused every write, and shown only what is published --
    {:caller :anon    :state :unpublished :op :create  :expect 401 :lands? false}
