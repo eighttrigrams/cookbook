@@ -117,6 +117,35 @@
              (:description (:body (GET-json (str "/api/recipes/" id "?detail=full"))))))
       (is (= 1 (:version (listed id)))))))
 
+(deftest a-proposal-entry-is-titled-with-the-recipes-title-and-not-the-proposed-one
+  ;; `recipe_title` is a snapshot of the **Recipe's** title — 009 says so, and the queue
+  ;; heads each row with it. It used to be written from the proposal, so an agent
+  ;; proposing a rename made the row name the Recipe something it had never been
+  ;; called, which is precisely the case where the reader must not be guessing.
+  (let [{:keys [id]} (his-recipe! "Sourdough starter")]
+    (machine :put (str "/api/recipes/" id) {:title "How to keep a levain alive"})
+    (let [entry (latest-proposal-entry)]
+      (testing "the entry says what the Recipe is called"
+        (is (= "Sourdough starter" (:recipe_title entry))))
+      (testing "while the proposal beside it carries both names, which is what the
+                comparison is drawn from"
+        (is (= "Sourdough starter" (:current_title (:proposal entry))))
+        (is (= "How to keep a levain alive" (:title (:proposal entry))))))
+    (testing "an overwrite does not leave the first proposal's title behind"
+      (machine :put (str "/api/recipes/" id "?overwrite=true") {:title "Feeding a levain"})
+      (let [entry (latest-proposal-entry)]
+        (is (= "Sourdough starter" (:recipe_title entry)))
+        (is (= "Feeding a levain" (:title (:proposal entry))))))
+    (testing "and when he renames the Recipe himself, the next revision's entry follows
+              the Recipe rather than staying on the name it had when it was filed"
+      (is (= 200 (:status (PUT-json (str "/api/recipes/" id) {:title "Levain, kept alive"}))))
+      (machine :put (str "/api/recipes/" id "?overwrite=true") {:title "Feeding a levain"})
+      (let [entry (latest-proposal-entry)]
+        (is (= "Levain, kept alive" (:recipe_title entry)))
+        (is (= 2 (:base_version (:proposal entry))) "rebased, and the title moved with it")))
+    (testing "one entry throughout — the title is the only thing that moved"
+      (is (= 1 (count (filter #(= "proposed" (:kind %)) (inbox))))))))
+
 ;; ---------------------------------------------------------------------------
 ;; the two 409s
 

@@ -56,6 +56,30 @@
   []
   [:is :resolved_at nil])
 
+(defn- recipe-title
+  "The Recipe's own title, read inside the caller's transaction.
+
+  **Read here rather than accepted from the caller**, and that is what makes one bug
+  unrepeatable rather than merely fixed. A `proposed` event's `recipe_title` is a
+  snapshot of the *Recipe's* title (migration 009); what used to be handed to
+  `db.event/record!` was the **proposal's**, so an agent proposing a rename put its own
+  wording into the field the queue heads the row with, and an entry that outlived its
+  Recipe named it something it had never been called. No call site is now in a position
+  to pass the wrong string.
+
+  It is deliberately the one fact here that is *not* passed in the way `base_version`
+  is, and the difference is real rather than stylistic. `base_version` has to be the
+  version the agent's edit was computed against, so it can only come from the caller's
+  own read; the title is a display snapshot, so it should be as fresh as the row it is
+  a snapshot of."
+  [tx user-id recipe-id]
+  (:title (jdbc/execute-one! tx
+            (sql/format {:select [:title]
+                         :from [:recipes]
+                         :where [:and [:= :id recipe-id]
+                                 (db/user-id-where-clause user-id)]})
+            db/jdbc-opts)))
+
 (defn pending-for
   "The unresolved proposal for one Recipe, or nil. At most one can exist — the
   index, not a `LIMIT`."
@@ -112,14 +136,19 @@
     the entry keeps its position in a queue he works through oldest-first, and the
     event keeps its id, so three revisions are one thing to answer rather than
     three. `modified_at` moves, and so does `base_version` — with the event's
-    `version` alongside it — because the text being proposed now answers the Recipe
-    as it reads now, and telling him it was proposed against an older version would
+    `version` **and its `recipe_title`** alongside it — because the text being proposed
+    now answers the Recipe as it reads now, and telling him it was proposed against an
+    older version, or naming the Recipe as it read two of his saves ago, would both
     overstate how stale it is.
+
+  Either way the entry is titled with the **Recipe's** title and never with the
+  proposal's — see `recipe-title`.
 
   Returns the proposal as it now reads."
   [ds user-id recipe-id current-version {:keys [title useful_when description]}]
   (jdbc/with-transaction [tx (db/get-conn ds)]
     (let [existing (pending-for tx user-id recipe-id)
+          title-now (recipe-title tx user-id recipe-id)
           values {:base_version current-version
                   :title title
                   :useful_when (or useful_when "")
@@ -131,7 +160,7 @@
                                     :where [:= :id (:id existing)]
                                     :returning proposal-columns})
                        db/jdbc-opts)]
-          (db.event/rebase-proposal! tx user-id (:id existing) current-version)
+          (db.event/rebase-proposal! tx user-id (:id existing) current-version title-now)
           (tel/log! {:level :info :data {:id (:id existing) :recipe-id recipe-id
                                          :user-id user-id :base-version current-version}}
                     "Recipe proposal replaced")
@@ -142,7 +171,7 @@
                                                     :user_id user-id)]
                                     :returning proposal-columns})
                        db/jdbc-opts)]
-          (db.event/record! tx user-id "proposed" {:id recipe-id :title title
+          (db.event/record! tx user-id "proposed" {:id recipe-id :title title-now
                                                    :version current-version}
                             {:proposal_id (:id result)})
           (tel/log! {:level :info :data {:id (:id result) :recipe-id recipe-id

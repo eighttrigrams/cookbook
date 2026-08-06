@@ -164,22 +164,29 @@
                  :where [:and [:= :id id] (db/user-id-where-clause user-id)]})))
 
 (defn rebase-proposal!
-  "Move a `proposed` entry's `version` to the base its proposal now answers, leaving
-  everything else about the entry alone — **including its id and its `created_at`,
-  which is its place in the queue**.
+  "Move a `proposed` entry onto the base its proposal now answers — its `version`, and
+  the `recipe_title` snapshot with it — leaving everything else about the entry alone,
+  **including its id and its `created_at`, which is its place in the queue**.
 
   An agent that revises its proposal three times must be one thing for the owner to
   answer, not three, and it must not push itself to the bottom of a queue he is
-  working through oldest-first. So an overwrite updates in place; what moves is the
-  version, because the text now being proposed was written against the Recipe as it
-  reads now, and an entry claiming an older base would overstate how stale it is.
+  working through oldest-first. So an overwrite updates in place; what moves is what
+  the entry says about *now*, because the text being proposed was written against the
+  Recipe as it reads now, and an entry claiming an older base would overstate how stale
+  it is.
+
+  **The title moves for that same reason and not as a courtesy.** It is a snapshot of
+  the Recipe's title (009), the Recipe may have been renamed since this entry was
+  written, and an entry rebased onto the Recipe as it reads now must not go on naming
+  it as it read then. What it must never become is the *proposal's* title —
+  `db.proposal/recipe-title` is where that is made impossible.
 
   Keyed by the proposal rather than by the event id, because that is what the caller
   in `db.proposal/propose!` holds: it found a pending proposal, not an entry."
-  [tx user-id proposal-id version]
+  [tx user-id proposal-id version recipe-title]
   (jdbc/execute-one! tx
     (sql/format {:update :recipe_events
-                 :set {:version version}
+                 :set {:version version :recipe_title recipe-title}
                  :where [:and [:= :proposal_id proposal-id]
                          [:= :kind [:inline "proposed"]]
                          (db/user-id-where-clause user-id)]})))
