@@ -127,6 +127,13 @@
   caller has it in hand and passing it in is what keeps this namespace from needing
   `db.recipe` (which needs *this* one).
 
+  **The three fields are expected complete**, already merged through
+  `db.recipe/merge-content` — a proposal is a proposed *version*, and a version in this
+  app is all three or it is not one. So this does not implement absent-keeps and must
+  not start to: the caller merges, because the caller is the one holding the Recipe.
+  The `(or … \"\")` below is the column's own default for a caller that genuinely
+  proposes an empty field, not a place for a missing key to be quietly filled in.
+
   Two paths, and the difference between them is the queue:
 
   - **Nothing pending** — insert, then append one `proposed` event carrying the new

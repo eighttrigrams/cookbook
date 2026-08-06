@@ -214,14 +214,28 @@
                    (= h/*user-id* (:user_id (row created))))
      :unchanged? (= before (row-count))}))
 
-(defn- run-edit [caller id]
+(defn- run-edit
+  "A content PUT, and a **partial** one: it names the title and leaves the other two
+  fields out, which is what an editor sends when somebody renames something.
+
+  That makes the 202 cells a different assertion from the refusals, and the one this
+  file was missing. `:unchanged?` is right for them — a proposal must not touch the row
+  — but it is not *enough*, because what the proposal itself says is not on the row at
+  all. A proposal that had quietly blanked the two fields this PUT did not send passed
+  every cell here: the row was untouched, the status was 202, and approving it later
+  would have deleted the body. So `:kept-the-rest?` reads the pending version out of the
+  202 and asserts absent-keeps held there too."
+  [caller id]
   (let [before (row id)
         resp (request caller :put (str "/api/recipes/" id) {:title "Renamed by the caller"})
         after (row id)]
     {:resp resp
      :landed? (and (= "Renamed by the caller" (:title after))
                    (= (inc (:version before)) (:version after)))
-     :unchanged? (= before after)}))
+     :unchanged? (= before after)
+     :kept-the-rest? (= {:useful_when "when testing" :description "the body"}
+                        (select-keys (:pending (:body resp))
+                                     [:useful_when :description]))}))
 
 (defn- run-file
   "A PUT that carries **filing** and no content — the other half of what this route
@@ -268,7 +282,7 @@
                               (str (name caller) "-" (name state) "-" (name text)
                                    "-" (name op))
                               text)
-            {:keys [resp landed? unchanged? visible? invisible?]}
+            {:keys [resp landed? unchanged? visible? invisible? kept-the-rest?]}
             (case op
               :create  (run-create caller)
               :edit    (run-edit caller id)
@@ -282,9 +296,15 @@
           (if (:visible? spec)
             (is (true? visible?) "the recipe must be readable and listed")
             (is (true? invisible?) "the recipe must be a 404 and absent from the listing"))
-          (if (true? lands?)
-            (is (true? landed?) "the write had to land in the row, not merely answer 200")
-            (is (true? unchanged?) "nothing may have changed in the table")))))))
+          (do
+            (if (true? lands?)
+              (is (true? landed?) "the write had to land in the row, not merely answer 200")
+              (is (true? unchanged?) "nothing may have changed in the table"))
+            ;; The half of a 202 cell that is not on the row. See `run-edit`.
+            (when (= 202 (:status resp))
+              (is (true? kept-the-rest?)
+                  "a partial PUT has to propose the fields it did not send, not blank
+                   them — the row being untouched says nothing about that"))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; how the id is spelt

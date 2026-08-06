@@ -63,12 +63,6 @@
   [req]
   (= "true" (common/query-param req "overwrite")))
 
-(def ^:private proposal-fields
-  "The three fields a proposal is made of. A proposal is a proposed *version*, and a
-  version in this app is exactly these — so a request's `tags` and `scope_ids` are not
-  in here, and are applied to the Recipe directly instead."
-  [:title :useful_when :description])
-
 (defn- pending-body
   "How a pending proposal is described to an agent, in the 409 and in the 202 alike —
   one shape, so a caller that learns to read it from one learns to read the other.
@@ -394,6 +388,14 @@
   reads. Treating a 202 as 'my text is live' would be the one way to be wrong here,
   which is why it is not a 200.
 
+  **A proposal is a whole version, and the absent-keeps rule above applies to it
+  unchanged.** Send one field and you propose that field plus the Recipe's own other
+  two — the same three you would have written had the save landed directly, so the same
+  request means the same thing either way. Nothing is cleared by not being mentioned:
+  to propose an empty body, send `\"description\": \"\"`, which is a value, where
+  omitting the key and sending `null` both mean 'keep'. `:pending` in the 202 is the
+  whole version that is waiting, so it is also the receipt for this.
+
   Three things about that path:
 
   - **`tags` and `scope_ids` in the same request are applied immediately.** Filing
@@ -422,7 +424,13 @@
         user-id (common/get-user-id req)
         id (common/recipe-id req)
         {:keys [title modified_at] :as body} (:body req)
-        current (when id (db.recipe/get-recipe ds user-id id))]
+        ;; **`{:lean? false}`, and that is load-bearing rather than tidy.** This row is
+        ;; what the proposal payload is merged into, and a lean row is exactly the one
+        ;; that carries no `description` — so a read left lean here meant a machine
+        ;; renaming a Recipe proposed deleting its body, and approving that wrote the
+        ;; deletion. One read, in the caller's audience, handed to everything below
+        ;; that asks a question about this Recipe's text.
+        current (when id (db.recipe/get-recipe ds user-id id {:lean? false}))]
     (cond
       (nil? current)
       {:status 404 :body {:error "Recipe not found"}}
@@ -448,7 +456,7 @@
       (and (common/machine-caller? req)
            (or (published? current)
                (not (db.recipe/machine-only? ds user-id id)))
-           (db.recipe/content-would-change? ds user-id id (select-keys body writable-fields)))
+           (db.recipe/content-would-change? current (select-keys body writable-fields)))
       (cond
         ;; The `modified_at` guard first: an agent proposing against text that has
         ;; already moved is told so before anything is written, which is the same
@@ -475,9 +483,16 @@
               _ (when (seq filing)
                   (db.recipe/update-recipe ds user-id id filing nil
                                            {:human? (human-write? req)}))
+              ;; **The proposal is a whole version, merged by the one function that
+              ;; owns the absent-keeps rule** — not by a `merge` written here over
+              ;; whichever keys this handler's read happened to select. A proposal is a
+              ;; proposed *version*, so all three fields have to be in it, and the ones
+              ;; a partial PUT did not send come off `current` by exactly the rule
+              ;; `update-recipe` would have applied had this been a direct write. That
+              ;; is the point: the same PUT means the same thing whether it lands or
+              ;; waits. `merge-content` also trims the title, like every other write.
               proposal (db.proposal/propose! ds user-id id (:version current)
-                                             (merge (select-keys current proposal-fields)
-                                                    (select-keys body proposal-fields)))]
+                                             (db.recipe/merge-content current body))]
           {:status 202
            :body {:pending (pending-body proposal)
                   :recipe (db.recipe/get-recipe ds user-id id {:lean? false :scopes? true})}}))

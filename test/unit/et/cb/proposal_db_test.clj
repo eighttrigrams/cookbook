@@ -143,8 +143,13 @@
 ;; content-would-change?
 
 (deftest content-would-change-reads-the-one-merge-rule
+  ;; The row is read **once**, with `{:lean? false}`, and handed to this — which is what
+  ;; the write path does now. It used to take an id and run its own lean-free `SELECT`
+  ;; while the handler held a lean copy of the same row, and the two disagreed about
+  ;; what the Recipe's body was.
   (let [{:keys [id]} (create! "Sourdough" false)
-        would? (fn [fields] (db.recipe/content-would-change? h/*ds* h/*user-id* id fields))]
+        current (db.recipe/get-recipe h/*ds* h/*user-id* id {:lean? false})
+        would? (fn [fields] (db.recipe/content-would-change? current fields))]
     (is (false? (would? {})) "an empty save changes nothing")
     (is (false? (would? {:title "Sourdough"})) "the same title back is a no-op")
     (is (false? (would? {:description "body v1"})))
@@ -158,9 +163,38 @@
       (is (false? (would? {:title "  Sourdough  "}))))
     (testing "filing is not content, so it does not count as a change here"
       (is (false? (would? {:tags "bread"})))
-      (is (false? (would? {:scope_ids []}))))
-    (testing "and an id nobody can see answers nil rather than true"
-      (is (nil? (db.recipe/content-would-change? h/*ds* h/*user-id* 999999 {:title "x"}))))))
+      (is (false? (would? {:scope_ids []}))))))
+
+(deftest the-merge-rule-is-one-function-and-the-proposal-payload-reads-it
+  ;; `merge-content` is public for one reason: the proposal payload is built from it
+  ;; rather than from a `merge` in the handler. Asserted here as well as over HTTP
+  ;; (`a-partial-proposal-keeps-the-fields-it-did-not-send`) because this is the level
+  ;; the mistake was made at — a row read the wrong way, merged by a second rule.
+  (let [{:keys [id]} (create! "Sourdough" false)
+        current (db.recipe/get-recipe h/*ds* h/*user-id* id {:lean? false})
+        whole {:title "Sourdough" :useful_when "when testing" :description "body v1"}]
+    (is (= whole (db.recipe/merge-content current {}))
+        "nothing sent is the version the Recipe already is")
+    (testing "one field at a time replaces that field and keeps the other two"
+      (is (= (assoc whole :title "Levain") (db.recipe/merge-content current {:title "Levain"})))
+      (is (= (assoc whole :useful_when "later")
+             (db.recipe/merge-content current {:useful_when "later"})))
+      (is (= (assoc whole :description "body v2")
+             (db.recipe/merge-content current {:description "body v2"}))))
+    (testing "a present empty string is a choice and is kept — absent and empty are
+              different, which is why absent must not become empty"
+      (is (= (assoc whole :description "") (db.recipe/merge-content current {:description ""}))))
+    (testing "and a JSON null is absent, because that is what `some?` reads it as"
+      (is (= whole (db.recipe/merge-content current {:title nil :useful_when nil
+                                                     :description nil}))))
+    (testing "**a lean row is not something this can be merged into**, and that is the
+              bug in one assertion: the projection with no `description` in it cannot
+              keep one"
+      (let [lean (db.recipe/get-recipe h/*ds* h/*user-id* id)]
+        (is (false? (contains? lean :description))
+            "the lean read really is the one without a body")
+        (is (nil? (:description (db.recipe/merge-content lean {:title "Levain"})))
+            "so merging into it loses the body — which is why the write path reads full")))))
 
 ;; ---------------------------------------------------------------------------
 ;; the store, and the inbox entry that goes with it

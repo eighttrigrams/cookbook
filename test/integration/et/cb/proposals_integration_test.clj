@@ -60,6 +60,62 @@
       (is (= 1 (:version (listed id))))
       (is (= 1 (:total (:body (GET-json (str "/api/recipes/" id "/versions")))))))))
 
+(deftest a-partial-proposal-keeps-the-fields-it-did-not-send
+  ;; **A proposal is a proposed version, so it is always all three fields**, and which
+  ;; three is decided by this route's first sentence: a field you leave out keeps its
+  ;; current value. A PUT that renames a Recipe proposes the new name and *the Recipe's
+  ;; own* useful-when and body, not two empty strings.
+  ;;
+  ;; Asserted over every partial shape and not just the one that broke, because the way
+  ;; it broke was not about a field: the write path read the row with the **lean**
+  ;; projection — the one that deliberately carries no `description` — and then merged
+  ;; the payload by hand, so `description` was the field the merge could not see.
+  ;; `db.recipe/merge-content` owns the absent-keeps rule and is what the handler asks
+  ;; now; this is the test that says so from the outside.
+  ;;
+  ;; Both reasons a machine PUT becomes a proposal are covered, because they reach the
+  ;; same code by different conditions: his writing in the history, and the latch.
+  (doseq [state [:unpublished :published]
+          [field value] [[:title "The agent's title"]
+                         [:useful_when "when the agent says so"]
+                         [:description "the agent's body"]]]
+    (testing (str "a machine PUT carrying only " (name field) ", on " (name state)
+                  " writing of his")
+      (let [title (str "Partial " (name field) " " (name state))
+            {:keys [id]} (his-recipe! title)
+            _ (when (= :published state)
+                (is (= 200 (:status (POST-json (str "/api/recipes/" id "/publish") {})))))
+            expected (assoc {:title title :useful_when "when testing"
+                             :description "his body"}
+                            field value)
+            resp (machine :put (str "/api/recipes/" id) {field value})]
+        (is (= 202 (:status resp)))
+        (testing "the 202 hands back a whole version, not one field and two holes"
+          (is (= expected (select-keys (:pending (:body resp))
+                                       [:title :useful_when :description]))))
+        (testing "and so does the entry he will answer — read the proposal, not the row:
+                  the row is untouched either way, which is what let this through"
+          (let [p (:proposal (latest-proposal-entry))]
+            (is (= expected (select-keys p [:title :useful_when :description])))
+            (testing "with the Recipe's current text beside it for the diff"
+              (is (= title (:current_title p)))
+              (is (= "when testing" (:current_useful_when p)))
+              (is (= "his body" (:current_description p))))))
+        (testing "and approving it changes the one field and leaves the other two"
+          (is (= 200 (:status (h/API :post (str "/api/inbox/"
+                                                (:id (latest-proposal-entry)) "/approve")
+                                     {}))))
+          (is (= expected
+                 (select-keys (:body (GET-json (str "/api/recipes/" id "?detail=full")))
+                              [:title :useful_when :description])))))))
+  (testing "and the title is trimmed on the way in, because the *merge rule* trims —
+            which is the assertion that says the payload really goes through it and is
+            not merged again next to it"
+    (let [{:keys [id]} (his-recipe! "Trimmed")
+          resp (machine :put (str "/api/recipes/" id) {:title "  The agent's title  "})]
+      (is (= 202 (:status resp)))
+      (is (= "The agent's title" (:title (:pending (:body resp))))))))
+
 (deftest a-machine-edit-of-its-own-text-still-writes-straight-through
   ;; The property this app exists for, and the one the approval rule must not have
   ;; quietly turned into a workflow for everything.
@@ -115,7 +171,13 @@
       (is (= "the agent's body" (:description (:pending (:body resp)))))
       (is (= "his body"
              (:description (:body (GET-json (str "/api/recipes/" id "?detail=full"))))))
-      (is (= 1 (:version (listed id)))))))
+      (is (= 1 (:version (listed id)))))
+    (testing "and the half that was proposed is a whole version: this PUT named the
+              description only, so the title and useful-when come off the Recipe"
+      (is (= {:title "His own" :useful_when "when testing"
+              :description "the agent's body"}
+             (select-keys (:pending (:body resp))
+                          [:title :useful_when :description]))))))
 
 (deftest a-proposal-entry-is-titled-with-the-recipes-title-and-not-the-proposed-one
   ;; `recipe_title` is a snapshot of the **Recipe's** title — 009 says so, and the queue
@@ -127,6 +189,10 @@
     (let [entry (latest-proposal-entry)]
       (testing "the entry says what the Recipe is called"
         (is (= "Sourdough starter" (:recipe_title entry))))
+      (testing "and the proposal beside it is a whole version, although the PUT named
+                one field — see a-partial-proposal-keeps-the-fields-it-did-not-send"
+        (is (= "his body" (:description (:proposal entry))))
+        (is (= "when testing" (:useful_when (:proposal entry)))))
       (testing "while the proposal beside it carries both names, which is what the
                 comparison is drawn from"
         (is (= "Sourdough starter" (:current_title (:proposal entry))))

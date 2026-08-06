@@ -634,9 +634,28 @@
 (defn- content-of [recipe]
   (select-keys recipe [:title :useful_when :description]))
 
-(defn- merge-content
+(defn merge-content
   "A field the caller left out keeps its current value, so an edit meant for one
-  field cannot silently clear the other two."
+  field cannot silently clear the other two. **The one implementation of that rule**,
+  and the reason this is public rather than private to the save path.
+
+  Two callers outside `update-recipe` now, and both had to be given this rather than
+  their own version of it. `content-would-change?` asks whether the merge would differ
+  from the row, which is what makes a no-op a no-op. And
+  `recipe-handler/update-recipe-handler` builds the **proposal payload** from it: a
+  proposal is a proposed *version*, so it is all three fields, and the two a partial
+  `PUT` did not send come off the Recipe by this rule and not by another one.
+
+  That second caller used to merge by hand, over a row it had read with the **lean**
+  projection — and a lean read is defined by not carrying a `description`. So absent
+  meant 'keep' for the title and the useful-when, which are on a lean row, and 'clear'
+  for the body, which is not: a machine renaming a Recipe proposed deleting its text,
+  and approving that wrote the deletion. `current` must therefore be a row read with
+  `{:lean? false}`, which is the whole of what this function needs said about it — a
+  merge is only as complete as the row it merges into.
+
+  `content-of` is the other half: this builds the incoming version, that reads the
+  outgoing one, and every question about whether a save is a change compares the two."
   [current {:keys [title useful_when description]}]
   {:title (if (some? title) (str/trim title) (:title current))
    :useful_when (if (some? useful_when) useful_when (:useful_when current))
@@ -652,7 +671,7 @@
   (if (some? tags) tags (:tags current)))
 
 (defn content-would-change?
-  "Whether saving `fields` would actually write a new version of this Recipe.
+  "Whether saving `fields` over `current` would actually write a new version.
 
   **It reuses `merge-content` and `content-of`**, which is the whole reason it lives
   here rather than in the handler that needs it: absent-keeps and present-replaces is
@@ -661,14 +680,20 @@
   this before proposing, so that a machine `PUT` sending the same title back stays
   the no-op it has always been instead of becoming a pending proposal of nothing.
 
+  **It takes the row and not an id, so that the answer and the payload are about the
+  same read.** It used to run its own `SELECT`, which meant the handler held one copy
+  of the Recipe and this held another — two answers to 'what does this row say' inside
+  one request, and the two were not even read the same way: the handler's was lean.
+  The caller reads once, with `{:lean? false}`, and passes that row here and to
+  `merge-content`. `current` must be a full row for the reason `merge-content` gives.
+
   It is placed here, immediately under the two functions it is made of, rather than
   beside the other predicate the gate uses: the point is that there is one merge rule
   and this reads it.
 
-  nil for an id the caller cannot see."
-  [ds audience id fields]
-  (when-let [current (get-recipe ds audience id {:lean? false})]
-    (not= (merge-content current fields) (content-of current))))
+  Callers must have established that the row exists — the write path 404s first."
+  [current fields]
+  (not= (merge-content current fields) (content-of current)))
 
 (defn- archive!
   "Push the outgoing state into history — with **its own** `source`, taken off the
