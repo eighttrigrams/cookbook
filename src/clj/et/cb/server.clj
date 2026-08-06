@@ -234,16 +234,40 @@
       {:status 401 :body {:error "Authentication required"}}
       (handler req))))
 
+(defn- approval-required-target?
+  "Whether the named recipe is one a machine may not write directly — some version of
+  it is the owner's. Asked in the caller's own audience, like `published-target?`, so
+  a recipe the caller cannot see answers nil here and gets the handler's 404 rather
+  than a 403 that would confirm the row exists.
+
+  `db.recipe/machine-only?` is the one place that question is answered, and it is the
+  same expression the card's provenance badge is drawn from."
+  [req id]
+  (false? (db.recipe/machine-only? (common/ensure-ds) (common/get-user-id req) id)))
+
 (defn- wrap-machine-recipe-rules
   "A published Recipe is the owner's: a machine caller may not change one, and may
-  not publish at all. So, for a machine token only:
+  not publish at all. And a Recipe he has *written* part of may not be deleted by a
+  machine, though it may be proposed against. So, for a machine token only:
 
   - any mutation naming a **published** recipe → 403, which covers delete as well
     as edit, because deleting a published recipe is un-latching by demolition and
     leaving it open would be a hole in the same wall;
   - any **publish** → 403, published or not, because the latch is irreversible and
     a machine that could set it could make private content permanently public and
-    freeze the recipe out of its own reach.
+    freeze the recipe out of its own reach;
+  - a **`DELETE`** naming a recipe that is not machine-only → 403, by the same
+    argument as the published rule: an agent that cannot rewrite his text must not be
+    able to remove it instead, which is un-latching by demolition again and a hole in
+    the same wall.
+
+  **The delete rule is `DELETE`-only, and that is the trap in this middleware.** It
+  runs for every mutating method, so writing the new rule on `mutating-request?` — the
+  way the published rule is written — would refuse a machine `PUT` on exactly the
+  Recipes the proposal path exists for and kill the feature outright. A `PUT` has
+  somewhere to go: `recipe-handler/update-recipe-handler` turns it into a proposal for
+  the owner to approve. A `DELETE` has nowhere to go, because there is no such thing
+  as proposing a deletion, so the refusal is the whole answer.
 
   Both read the token's `:machine?` claim, so a dev owner with no token — whom
   `authenticated?` deliberately accepts — is never mistaken for a machine. There is
@@ -288,6 +312,12 @@
 
         (and machine? (when-let [id (common/recipe-id req)] (published-target? req id)))
         {:status 403 :body {:error "This Recipe is published, and a published Recipe is the owner's: a machine caller cannot change it"}}
+
+        ;; `= :delete` and not `mutating-request?`: see the docstring. A PUT here has
+        ;; to reach the handler and become a proposal.
+        (and machine? (= :delete (:request-method req))
+             (when-let [id (common/recipe-id req)] (approval-required-target? req id)))
+        {:status 403 :body {:error "The owner has written part of this Recipe: a machine caller cannot delete it. Propose a change to its text instead"}}
 
         :else
         (handler req)))))
@@ -348,8 +378,10 @@
     ;; itself instead, which is stricter than what the recipe context provides
     ;; rather than weaker: a machine token is refused outright.
     (context "/inbox" []
-      (GET  "/"          [] inbox-handler/list-inbox-handler)
-      (POST "/:id/seen"  [] inbox-handler/mark-seen-handler))
+      (GET  "/"             [] inbox-handler/list-inbox-handler)
+      (POST "/:id/seen"     [] inbox-handler/mark-seen-handler)
+      (POST "/:id/approve"  [] inbox-handler/approve-proposal-handler)
+      (POST "/:id/dismiss"  [] inbox-handler/dismiss-proposal-handler))
 
     (context "/test" []
       (POST "/reset" [] reset-test-db-handler))))

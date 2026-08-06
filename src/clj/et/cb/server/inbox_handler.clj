@@ -1,5 +1,13 @@
 (ns et.cb.server.inbox-handler
-  "The inbox API: the owner's queue of Recipe changes, and the two ways off it.
+  "The inbox API: the owner's queue of what his agents did, and the three ways off
+  it.
+
+  **Three, and which one applies is not a preference.** A `created`, `modified` or
+  `deleted` entry is a notification, so it is *acknowledged* — `POST /:id/seen`. A
+  `proposed` entry is a question, so it is *answered* — `POST /:id/approve` or
+  `POST /:id/dismiss` — and `seen` refuses it outright, because acknowledging a
+  question would strand the agent waiting on it. That is the whole shape of this
+  namespace.
 
   **Owner-only, asked for here rather than inherited.** These routes are siblings
   of `/api/recipes` and sit outside both recipe guards, exactly like `/api/scopes`
@@ -27,8 +35,12 @@
   `server/describe-namespaces`. A handler documented any other way, or a namespace
   missing from that list, is absent from `/api/describe` entirely — and an agent
   reading that catalogue is the primary caller of this API."
-  (:require [et.cb.server.common :as common]
-            [et.cb.db.event :as db.event]))
+  (:require [next.jdbc :as jdbc]
+            [et.cb.db :as db]
+            [et.cb.server.common :as common]
+            [et.cb.db.event :as db.event]
+            [et.cb.db.proposal :as db.proposal]
+            [et.cb.db.recipe :as db.recipe]))
 
 (def ^:private forbidden
   "One refusal, so the routes cannot come to word it differently — and it says
@@ -131,3 +143,97 @@
 
         {:status 200 :body result}))
     forbidden))
+
+(defn- resolving
+  "The three things the approve and dismiss handlers do identically: refuse anybody
+  but the owner, find the proposal an entry names, and refuse one that has already
+  been answered.
+
+  Written once because the two routes must not come to disagree about any of them —
+  in particular about the **409 for an already-resolved proposal**, which is the
+  answer that keeps a double click from looking like a second decision. `f` gets the
+  proposal and returns the response."
+  [req f]
+  (if-not (common/owner-caller? req)
+    forbidden
+    (let [id (common/path-id req)
+          proposal (when id (db.proposal/by-event (common/ensure-ds)
+                                                 (common/get-user-id req) id))]
+      (cond
+        (nil? proposal)
+        {:status 404 :body {:error "No proposal is waiting on that inbox entry"}}
+
+        (some? (:resolved_at proposal))
+        {:status 409 :body {:error "That proposal has already been resolved"
+                            :resolution (:resolution proposal)}}
+
+        :else
+        (f proposal)))))
+
+(defn approve-proposal-handler
+  "POST /api/inbox/:id/approve — accept an agent's proposed rewrite, by the **event**
+  id of the inbox entry showing it.
+
+  One transaction: the Recipe's current version is archived, the proposal's three
+  fields become the new version, the proposal is resolved `approved`, and the entry
+  leaves the queue. 200 with the Recipe as it now reads.
+
+  **The owner's alone**, like everything under /api/inbox — *only a human can approve
+  that then afterwards on that new page*. A machine approving its own proposal would
+  be the entire mechanism undone, so a machine token gets 403 here as it does on the
+  listing.
+
+  Three things worth knowing before calling it:
+
+  - **The new version is labelled `machine`.** The agent wrote the text; approving is
+    letting it in, not authoring it. `has_human_edit` is therefore untouched too, so
+    the Recipe still needs approval for the *next* agent edit — which is intended.
+  - **It does not check what the proposal was written against.** If you saved in
+    between, `base_version` is behind the Recipe's `version` and approving replaces
+    your newer text with the agent's. That is deliberate: the inbox shows the proposal
+    diffed against the Recipe as it reads *now* and says in words when the two have
+    diverged, so this is a decision you make with your eyes open rather than one the
+    API refuses on your behalf.
+  - **A proposal whose Recipe has been deleted answers 404 and is resolved anyway.**
+    The question can no longer be answered, and leaving it pending would block the
+    agent that filed it forever.
+
+  409 when the proposal has already been approved or dismissed, 404 when the entry
+  names no proposal of yours, 403 for a machine token or an anonymous caller."
+  [req]
+  (resolving req
+    (fn [proposal]
+      (let [ds (common/ensure-ds)
+            user-id (common/get-user-id req)]
+        (if-let [recipe (db.recipe/approve-proposal! ds user-id proposal)]
+          {:status 200 :body recipe}
+          ;; The Recipe is gone. Resolve the proposal anyway — in its own
+          ;; transaction, since there is no Recipe write to share one with — so the
+          ;; queue does not keep an unanswerable question and the agent is unblocked.
+          (do (jdbc/with-transaction [tx (db/get-conn ds)]
+                (db.proposal/resolve! tx user-id proposal nil))
+              {:status 404 :body {:error "That Recipe has been deleted, so there is nothing to approve. The proposal has been closed"}}))))))
+
+(defn dismiss-proposal-handler
+  "POST /api/inbox/:id/dismiss — decline an agent's proposed rewrite, by the **event**
+  id of the inbox entry showing it.
+
+  The proposal is resolved `dismissed` and the entry leaves the queue. **The Recipe is
+  not touched at all** — no version, no history row, nothing — which is the whole
+  difference from approving.
+
+  The agent's text is not kept anywhere a reader can get at it afterwards: the row
+  survives as the record that something was proposed and declined, and nothing serves
+  its content again. So this is the one route here worth a confirmation in a client,
+  and the UI has one.
+
+  The owner's alone, for the reason approving is. 409 when the proposal has already
+  been resolved, 404 when the entry names no proposal of yours, 403 for a machine
+  token or an anonymous caller."
+  [req]
+  (resolving req
+    (fn [proposal]
+      (let [ds (common/ensure-ds)]
+        (jdbc/with-transaction [tx (db/get-conn ds)]
+          (db.proposal/resolve! tx (common/get-user-id req) proposal "dismissed"))
+        {:status 200 :body {:success true}}))))

@@ -58,9 +58,17 @@
   ;; The bug the design invites, over HTTP: the version the agent displaced must
   ;; keep its own label. Backwards, an unsupervised writer would rewrite the record
   ;; of who wrote everything before it.
-  (let [{:keys [id]} (create-as-human! "The owner's")]
-    (is (= 200 (:status (machine :put (str "/api/recipes/" id) {:description "the agent's body"}))))
-    (is (= {1 "ui" 2 "machine"} (sources-by-version id)))
+  ;;
+  ;; The agent's edit gets *into* a Recipe he has written by being approved, which is
+  ;; the only way in since proposals — so this walks the same ladder the old test did
+  ;; and now goes through the inbox to build it.
+  (let [{:keys [id]} (create-as-human! "The owner's")
+        proposal (machine :put (str "/api/recipes/" id) {:description "the agent's body"})]
+    (is (= 202 (:status proposal)) "his text, so it is proposed rather than applied")
+    (let [entry (last (:body (GET-json "/api/inbox")))]
+      (is (= 200 (:status (h/API :post (str "/api/inbox/" (:id entry) "/approve") {})))))
+    (is (= {1 "ui" 2 "machine"} (sources-by-version id))
+        "v1 keeps his label and the approved version is the agent's")
     (testing "and the owner saving again leaves the agent's version labelled as the
               agent's"
       (PUT-json (str "/api/recipes/" id) {:description "the owner's body again"})
@@ -105,7 +113,12 @@
 (deftest every-version-entry-carries-a-source
   (let [{:keys [id]} (create-as-machine! "Much revised")]
     (PUT-json (str "/api/recipes/" id) {:description "the owner's body"})
-    (is (= 200 (:status (machine :put (str "/api/recipes/" id) {:description "and the agent's"}))))
+    ;; His save closed the gate, so the agent's next edit is a proposal he approves —
+    ;; which is what puts a `machine` version on top of a `ui` one from here on.
+    (is (= 202 (:status (machine :put (str "/api/recipes/" id)
+                                 {:description "and the agent's"}))))
+    (let [entry (last (:body (GET-json "/api/inbox")))]
+      (is (= 200 (:status (h/API :post (str "/api/inbox/" (:id entry) "/approve") {})))))
     (let [versions (versions-of id)]
       (testing "newest first, the current row flagged, one uniform list"
         (is (= [3 2 1] (map :version versions)))
@@ -141,10 +154,16 @@
 ;; ---------------------------------------------------------------------------
 ;; the split on the listing
 
+(defn- approve-latest! []
+  (let [entry (last (filter #(= "proposed" (:kind %)) (:body (GET-json "/api/inbox"))))]
+    (is (= 200 (:status (h/API :post (str "/api/inbox/" (:id entry) "/approve") {}))))))
+
 (deftest the-listing-carries-the-split-because-the-card-is-collapsed
   (let [{:keys [id]} (create-as-machine! "Much revised")]
     (PUT-json (str "/api/recipes/" id) {:description "v2 by the owner"})
+    ;; From here the agent has to ask, so v3 arrives by approval
     (machine :put (str "/api/recipes/" id) {:description "v3 by the agent"})
+    (approve-latest!)
     (PUT-json (str "/api/recipes/" id) {:description "v4 by the owner"})
     (testing "the badge's numbers are on the lean listing row itself"
       (is (= {:version 4 :machine_versions 2 :ui_versions 2}

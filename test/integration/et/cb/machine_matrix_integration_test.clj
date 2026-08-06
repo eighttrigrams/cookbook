@@ -5,20 +5,32 @@
 
   The two rows that *are* the feature:
 
-  | caller  | recipe      | create | edit | delete | publish | read   |
-  |---------|-------------|--------|------|--------|---------|--------|
-  | owner   | unpublished | 201    | 200  | 200    | 200     | 200    |
-  | owner   | published   | –      | 200  | 200    | 200 no-op | 200  |
-  | machine | unpublished | 201    | 200  | 200    | **403** | 200    |
-  | machine | published   | –      | **403** | **403** | **403** | 200 |
-  | anon    | unpublished | 401    | 401  | 401    | 401     | absent |
-  | anon    | published   | 401    | 401  | 401    | 401     | 200    |
+  | caller  | recipe      | text     | create | edit | delete | publish | read |
+  |---------|-------------|----------|--------|------|--------|---------|------|
+  | owner   | unpublished | either   | 201    | 200  | 200    | 200     | 200  |
+  | owner   | published   | either   | –      | 200  | 200    | 200 no-op | 200 |
+  | machine | unpublished | agents'  | 201    | 200  | 200    | **403** | 200  |
+  | machine | unpublished | **his**  | –      | **202** | **403** | **403** | 200 |
+  | machine | published   | either   | –      | **403** | **403** | **403** | 200 |
+  | anon    | unpublished | either   | 401    | 401  | 401    | 401     | absent |
+  | anon    | published   | either   | 401    | 401  | 401    | 401     | 200  |
 
-  A machine writes unsupervised — that is what cookbook is for — and the one wall
-  it meets is the publish latch. Every ✓ case therefore asserts the write actually
-  **landed in the row**, and every refusal asserts the row did **not** change: a
-  status code alone would pass against a gate that swallows writes and answers
-  200 anyway, which is exactly the regression this file has to catch."
+  A machine writes unsupervised — that is what cookbook is for — and it meets two
+  walls. The publish latch, which was the only one; and, since proposals, **whose
+  text it is**: a Recipe every version of which an agent wrote is still the agents'
+  to rewrite and delete at will, while one the owner has written any part of is
+  neither. An edit of his text is not refused but *deferred* — 202, filed as a
+  proposal, the row unchanged until he approves — and a delete of it is refused
+  outright, because there is no such thing as proposing a deletion.
+
+  So `text` is an axis of this table now, and it is the one a reader is most likely
+  to get wrong: the guard rule is `DELETE`-only, and writing it on every mutating
+  method would refuse the very PUTs the proposal path exists for.
+
+  Every ✓ case asserts the write actually **landed in the row**, and every refusal
+  *and every deferral* asserts the row did **not** change: a status code alone would
+  pass against a gate that swallows writes and answers 200 anyway, which is exactly
+  the regression this file has to catch."
   (:require [clojure.test :refer [deftest testing is use-fixtures]]
             [clojure.java.io :as io]
             [next.jdbc :as jdbc]
@@ -54,15 +66,23 @@
         (sql/format {:select [[[:count :*] :n]] :from [table]}) db/jdbc-opts)))
 
 (defn- owner-recipe!
-  "A recipe belonging to the owner, published or not. Created as the owner, since
-  a machine may not publish and an anonymous caller may not write at all."
-  [state title]
-  (let [{:keys [id]} (:body (POST-json "/api/recipes" {:title title
-                                                       :useful_when "when testing"
-                                                       :description "the body"}))]
-    (when (= state :published)
-      (is (= 200 (:status (h/API :post (str "/api/recipes/" id "/publish") {})))))
-    id))
+  "A recipe on the owner's shelf, published or not, and written either by him or by
+  an agent — `text` decides which, and it decides whether a machine may write to it
+  directly.
+
+  `:agents` text is created with a machine token, so every version of it is stamped
+  `machine` and the Recipe is machine-only. `:his` is created as the owner, so v1 is
+  `ui` and it needs approval from then on. Publishing is always done as the owner: a
+  machine may not publish at all."
+  ([state title] (owner-recipe! state title :his))
+  ([state title text]
+   (let [opts (cond-> {:body {:title title :useful_when "when testing"
+                              :description "the body"}}
+                (= text :agents) (assoc :token (h/machine-token-for h/*user-id*)))
+         {:keys [id]} (:body (h/API :post "/api/recipes" opts))]
+     (when (= state :published)
+       (is (= 200 (:status (h/API :post (str "/api/recipes/" id "/publish") {})))))
+     id)))
 
 ;; ---------------------------------------------------------------------------
 ;; the three callers
@@ -91,6 +111,11 @@
 ;;
 ;; :expect is the status. :lands? says whether the row must have changed
 ;; afterwards — the half of each case that a status assertion cannot cover.
+;;
+;; :text is whose writing the Recipe holds, and it defaults to :his. It only changes
+;; an answer for a machine caller, but it is spelled out on the machine rows rather
+;; than left implicit, because "which Recipe is this" is exactly what a reader has to
+;; know to read those rows at all.
 
 (def ^:private matrix
   [;; --- the owner: everything, on both states -----------------------------
@@ -104,12 +129,20 @@
    {:caller :owner   :state :published   :op :publish :expect 200 :lands? false} ;; idempotent no-op
    {:caller :owner   :state :published   :op :read    :expect 200 :visible? true}
 
-   ;; --- the machine: unsupervised, until it meets the latch ---------------
+   ;; --- the machine on its own text: unsupervised, until it meets the latch
    {:caller :machine :state :unpublished :op :create  :expect 201 :lands? true}
-   {:caller :machine :state :unpublished :op :edit    :expect 200 :lands? true}
-   {:caller :machine :state :unpublished :op :delete  :expect 200 :lands? true}
-   {:caller :machine :state :unpublished :op :publish :expect 403 :lands? false}
-   {:caller :machine :state :unpublished :op :read    :expect 200 :visible? true}
+   {:caller :machine :text :agents :state :unpublished :op :edit    :expect 200 :lands? true}
+   {:caller :machine :text :agents :state :unpublished :op :delete  :expect 200 :lands? true}
+   {:caller :machine :text :agents :state :unpublished :op :publish :expect 403 :lands? false}
+   {:caller :machine :text :agents :state :unpublished :op :read    :expect 200 :visible? true}
+
+   ;; --- the machine on *his* text: deferred, not refused, except the delete
+   ;; 202 is "accepted, not applied": the proposal is filed and the row is untouched,
+   ;; which is why this row asserts `:lands? false` rather than being a refusal.
+   {:caller :machine :text :his :state :unpublished :op :edit    :expect 202 :lands? false}
+   {:caller :machine :text :his :state :unpublished :op :delete  :expect 403 :lands? false}
+   {:caller :machine :text :his :state :unpublished :op :publish :expect 403 :lands? false}
+   {:caller :machine :text :his :state :unpublished :op :read    :expect 200 :visible? true}
    {:caller :machine :state :published   :op :edit    :expect 403 :lands? false}
    {:caller :machine :state :published   :op :delete  :expect 403 :lands? false}
    {:caller :machine :state :published   :op :publish :expect 403 :lands? false}
@@ -170,9 +203,12 @@
      :invisible? (and (= 404 (:status resp)) (not (contains? listed id)))}))
 
 (deftest the-machine-matrix
-  (doseq [{:keys [caller state op expect lands?] :as spec} matrix]
-    (testing (str (name caller) " / " (name state) " recipe / " (name op))
-      (let [id (owner-recipe! state (str (name caller) "-" (name state) "-" (name op)))
+  (doseq [{:keys [caller state op expect lands? text] :or {text :his} :as spec} matrix]
+    (testing (str (name caller) " / " (name state) " " (name text) " recipe / " (name op))
+      (let [id (owner-recipe! state
+                              (str (name caller) "-" (name state) "-" (name text)
+                                   "-" (name op))
+                              text)
             {:keys [resp landed? unchanged? visible? invisible?]}
             (case op
               :create  (run-create caller)
@@ -376,7 +412,11 @@
 ;; the gate that must not come back
 
 (deftest a-machine-write-lands-because-there-is-no-recording-gate
-  (let [id (owner-recipe! :unpublished "Written by an agent")
+  ;; Cookbook's defining property: a caller holding credentials writes unsupervised.
+  ;; Asserted on the Recipes that property is *unconditional* for — the ones every
+  ;; version of which an agent wrote, which is what an agentic memory store is mostly
+  ;; made of.
+  (let [id (owner-recipe! :unpublished "Written by an agent" :agents)
         before (row id)
         resp (request :machine :put (str "/api/recipes/" id)
                       {:title "The agent's title" :description "the agent's body"})
@@ -396,6 +436,43 @@
       (let [created (:body (request :machine :post "/api/recipes" {:title "Agent's own"}))]
         (is (= "Agent's own" (:title (row (:id created)))))
         (is (= h/*user-id* (:user_id (row (:id created)))))))))
+
+(deftest a-proposal-is-not-a-recording-gate-in-disguise
+  ;; **The distinction this whole feature rests on, and the one a future reader is
+  ;; most likely to blur.** A recording gate silently drops a credentialled agent's
+  ;; write and answers as though it had worked. A proposal drops nothing: it says
+  ;; `202 accepted, not applied`, hands back both texts, and leaves a visible artefact
+  ;; the owner has to answer. If this ever starts looking like the gate cookbook
+  ;; deliberately lacks, it is this test that should go red.
+  (let [id (owner-recipe! :unpublished "His own writing")
+        before (row id)
+        resp (request :machine :put (str "/api/recipes/" id)
+                      {:title "The agent's title" :description "the agent's body"})]
+    (testing "the status is not 200: an agent that treated it as one would be wrong,
+              and no other write in this API lies about that"
+      (is (= 202 (:status resp)))
+      (is (nil? (:dropped (:body resp)))))
+    (testing "the row is untouched — this is the deferral, not a swallowed write"
+      (is (= before (row id))))
+    (testing "and the response says both what was proposed and what the Recipe still
+              says, so the caller can tell exactly what happened"
+      (is (= "The agent's title" (:title (:pending (:body resp)))))
+      (is (= "the agent's body" (:description (:pending (:body resp)))))
+      (is (= 1 (:base_version (:pending (:body resp)))))
+      (is (= "His own writing" (:title (:recipe (:body resp)))))
+      (is (= 1 (:version (:recipe (:body resp))))))
+    (testing "the owner is told, in the one place that exists for it"
+      (let [entry (last (:body (h/API :get "/api/inbox" {})))]
+        (is (= "proposed" (:kind entry)))
+        (is (= id (:recipe_id entry)))
+        (is (some? (:proposal_id entry)))))
+    (testing "and it is not a refusal either: he can turn it into a version, which is
+              what makes 202 the honest answer rather than a polite 403"
+      (let [entry (last (:body (h/API :get "/api/inbox" {})))
+            approved (h/API :post (str "/api/inbox/" (:id entry) "/approve") {})]
+        (is (= 200 (:status approved)))
+        (is (= "The agent's title" (:title (row id))))
+        (is (= 2 (:version (row id))))))))
 
 (deftest there-is-no-recording-mode-anything
   (testing "no recording-mode routes, for the owner or for a machine"

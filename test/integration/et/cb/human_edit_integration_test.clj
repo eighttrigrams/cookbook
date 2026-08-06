@@ -62,18 +62,34 @@
       (is (contains? (listed-with-filter) id)))))
 
 (deftest a-human-create-then-a-machine-edit
+  ;; **This test's first claim changed with the approval rule**, and the reason is
+  ;; worth keeping in view: an agent's rewrite of a Recipe *he* has written is no
+  ;; longer applied on the spot. It is not refused either — it is proposed, and he
+  ;; approves it — so the mark's own property, that nothing ever clears it, is now
+  ;; asserted across an approval rather than across a direct write. That property is
+  ;; what this namespace is about and it is unchanged.
   (let [{:keys [id]} (create-as-human! "Written by hand")]
     (is (= 1 (mark-of id)))
 
-    (testing "an agent may rewrite the content — cookbook is for unsupervised
-              writes and this is not a gate"
+    (testing "an agent's rewrite of his text is filed rather than applied"
       (let [resp (machine :put (str "/api/recipes/" id) {:description "the agent's body"})]
-        (is (= 200 (:status resp)))
+        (is (= 202 (:status resp)))
+        (is (= "body of Written by hand"
+               (:description (:body (GET-json (str "/api/recipes/" id "?detail=full")))))
+            "the Recipe still reads as it did")
+        (is (= 1 (:version (:recipe (:body resp)))))))
+
+    (testing "and once he approves it, the agent's text is in and the mark is still on
+              — approving is not un-writing what he wrote"
+      (let [entry (last (:body (GET-json "/api/inbox")))]
+        (is (= "proposed" (:kind entry)))
+        (is (= 200 (:status (h/API :post (str "/api/inbox/" (:id entry) "/approve") {}))))
         (is (= "the agent's body"
                (:description (:body (GET-json (str "/api/recipes/" id "?detail=full"))))))
-        (is (= 2 (:version (:body resp))))))
+        (is (= 2 (:version (:body (GET-json (str "/api/recipes/" id))))))))
 
-    (testing "but it cannot take the mark back off — nothing clears it"
+    (testing "the mark cannot be taken back off — nothing clears it, and approving an
+              agent's text does not either"
       (is (= 1 (mark-of id)))
       (is (contains? (listed-with-filter) id)))))
 

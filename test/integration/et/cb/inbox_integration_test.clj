@@ -53,23 +53,32 @@
       (is (= 200 (:status (PUT-json (str "/api/recipes/" his) {:description "body v2"}))))
       (is (= ["created"] (kinds))))
 
-    (testing "his save on the agent's Recipe adds nothing either — the queue is
-              whose work it was, not which Recipe it was"
-      (is (= 200 (:status (PUT-json (str "/api/recipes/" agents) {:description "his body"}))))
-      (is (= ["created"] (kinds))))
-
-    (testing "the agent's save does, at the new version"
+    (testing "the agent's own save on its own Recipe does, at the new version"
       (is (= 200 (:status (machine :put (str "/api/recipes/" agents)
-                                   {:description "the agent's body"}))))
+                                   {:description "the agent's second body"}))))
       (is (= ["created" "modified"] (kinds)))
-      (is (= 3 (:version (last (inbox))))
-          "v3: the agent's own two writes are entries and his in between is not, so
-           the version numbers have gaps by design"))
+      (is (= 2 (:version (last (inbox))))))
+
+    (testing "his save on the agent's Recipe adds nothing — the queue is whose work
+              it was, not which Recipe it was"
+      (is (= 200 (:status (PUT-json (str "/api/recipes/" agents) {:description "his body"}))))
+      (is (= ["created" "modified"] (kinds))))
+
+    (testing "and the agent's *next* save is a proposal rather than a modification,
+              because his save closed the gate — so the queue gains a `proposed`
+              entry and not a `modified` one. The version numbers therefore have gaps
+              in them by design: v3 was his and is not here."
+      (is (= 202 (:status (machine :put (str "/api/recipes/" agents)
+                                   {:description "the agent's third body"}))))
+      (is (= ["created" "modified" "proposed"] (kinds)))
+      (is (= [1 2 3] (mapv :version (inbox)))
+          "the proposal is against v3 — the version it read, which is his"))
 
     (testing "his publish and his delete add nothing"
       (is (= 200 (:status (h/API :post (str "/api/recipes/" his "/publish") {}))))
       (is (= 200 (:status (h/API :delete (str "/api/recipes/" his) {}))))
-      (is (= ["created" "modified"] (kinds))))
+      (is (= ["created" "modified" "proposed"] (kinds))
+          "the queue is exactly what it was before those two requests"))
 
     (testing "and an entry carries no source: every one of them is an agent's"
       (is (every? #(false? (contains? % :source)) (inbox))))))

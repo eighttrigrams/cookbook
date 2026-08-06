@@ -1,6 +1,7 @@
 (ns et.cb.server.recipe-handler
   (:require [clojure.string :as str]
             [et.cb.server.common :as common]
+            [et.cb.db.proposal :as db.proposal]
             [et.cb.db.recipe :as db.recipe]))
 
 (defn- lean?
@@ -52,6 +53,47 @@
 
 (def ^:private bad-scope-ids-response
   {:status 400 :body {:error "scope_ids must be an array of Scope ids"}})
+
+(defn- overwrite?
+  "`?overwrite=true` is the only thing that lets a machine replace a proposal that is
+  already pending — read the way `?detail=full` and `?human=true` are read, so absent,
+  `false` and garbage all mean 'do not' rather than each meaning something. A
+  destructive parameter is exactly the one that must not be satisfied by `?overwrite=1`
+  or `?overwrite=maybe`."
+  [req]
+  (= "true" (common/query-param req "overwrite")))
+
+(def ^:private proposal-fields
+  "The three fields a proposal is made of. A proposal is a proposed *version*, and a
+  version in this app is exactly these — so a request's `tags` and `scope_ids` are not
+  in here, and are applied to the Recipe directly instead."
+  [:title :useful_when :description])
+
+(defn- pending-body
+  "How a pending proposal is described to an agent, in the 409 and in the 202 alike —
+  one shape, so a caller that learns to read it from one learns to read the other.
+  `base_version` is in it because that is what tells the agent what the proposal was
+  written against, and `modified_at` because that is what says whether it is the text
+  the agent itself last wrote or a revision it has since forgotten."
+  [proposal]
+  (select-keys proposal [:title :useful_when :description :base_version
+                         :created_at :modified_at]))
+
+(defn- stale-write-response
+  "The 409 for a save that raced somebody else, **named**. PUT /api/recipes/:id can
+  now answer 409 for two quite different reasons — this one, and a proposal already
+  waiting — and an agent that had to tell them apart by guessing at the body's shape
+  would be a trap. So each carries a `:reason`, and this one keeps the `:current` it
+  has always carried.
+
+  `:current` includes the filing because the client redraws its copy from it, and a
+  `:current` without `scopes` would blank the badges as a side effect of a refused
+  save."
+  [ds user-id id]
+  {:status 409 :body {:error "Recipe was modified elsewhere"
+                      :reason "modified-elsewhere"
+                      :current (db.recipe/get-recipe ds user-id id
+                                                     {:lean? false :scopes? true})}})
 
 (defn- read-audience
   "Owner or visitor, decided once per read. A visitor is deliberately *not*
@@ -124,6 +166,16 @@
   owner said those versions were his, so they read `ui` and the column now refuses
   anything but the two. Per-version labels are on GET /api/recipes/:id/versions.
 
+  **`pending` is 1 when a proposal is waiting** for the owner to approve or dismiss
+  on that Recipe, 0 otherwise (0/1 like `published`, because that is what this schema
+  serves). It saves an agent a doomed round trip: a PUT to a Recipe with something
+  already pending answers 409 unless it carries `?overwrite=true`. What it does *not*
+  tell you is whether you may write at all — that is `machine_versions = version`,
+  above. There is deliberately no `approval_required` flag beside it: the rule is a
+  comparison of two numbers you are already sent, and a flag could come to disagree
+  with them. A visitor's rows carry no `pending` key at all, like the tags: whether an
+  agent is waiting to rewrite something is the owner's business.
+
   **Lean by default**: the response carries no `description` key at all — and,
   for a visitor, no `tags` key either, at any ?detail. Pass ?detail=full to
   include the description. The two short fields are meant as a retrieval
@@ -165,6 +217,11 @@
   `scopes` key at any ?detail, and there is no query that would produce one for
   them — the join is not run rather than run and then hidden. Unlike the tags,
   their presence is not testable either: nothing searches them.
+
+  **`pending`** rides along here too, 1 when a proposal is waiting on this Recipe —
+  see GET /api/recipes for what it does and does not say. A visitor gets no such key.
+  Note what a pending proposal does *not* change: this response is the Recipe as it
+  reads now, at the last approved version, whatever an agent has queued against it.
 
   **A ?detail=full read of an existing Recipe counts as a consumption**: it bumps
   that Recipe's `view_count`, which is how the shelf is ranked (see GET
@@ -291,14 +348,57 @@
   /api/inbox) as a `modified` entry naming the new version. The three cases above
   are exactly the split: a no-op makes no entry because it makes no version, and a
   filing-only save makes none because filing is not content. His own saves make
-  none at all — the inbox is the record of what the agents did."
+  none at all — the inbox is the record of what the agents did.
+
+  ## When a machine's save becomes a proposal instead
+
+  **A Recipe is yours to write directly only while every one of its versions was
+  written by an agent.** In the numbers this endpoint already gives you (GET
+  /api/recipes): `machine_versions = version`. One save of the owner's anywhere in
+  its history — even a superseded one, so the row's own `source` does not answer
+  this — and your next edit to its **content** is not applied; it is filed as a
+  proposal for him to approve or dismiss, and the Recipe goes on reading exactly as
+  it did. There is no flag for this on the row, deliberately: the rule is a
+  comparison of two numbers you are already sent, so it is checkable before you
+  write rather than something to be told afterwards.
+
+  A proposal answers **202**, not 200 — 'accepted, not applied' — with
+  `{:pending {…} :recipe {…}}`: what you proposed, and the Recipe as it *still*
+  reads. Treating a 202 as 'my text is live' would be the one way to be wrong here,
+  which is why it is not a 200.
+
+  Three things about that path:
+
+  - **`tags` and `scope_ids` in the same request are applied immediately.** Filing
+    is not the text he wrote, so a machine retags and refiles an approval-required
+    Recipe freely. A mixed request therefore does both — files the content, applies
+    the filing — and the `:recipe` in the response shows the filing already changed
+    while the content has not. That is not a bug and it is why this paragraph exists.
+  - **One proposal at a time.** If one is already waiting you get **409** with
+    `:reason \"proposal-pending\"` and `:pending` carrying its text, so you can see
+    what you or another agent proposed. Add **`?overwrite=true`** to replace it; only
+    the exact string `true` counts. An overwrite keeps its place in his queue and
+    stays one item, so revising three times does not ask him three times. Nothing at
+    all is written by the 409 — not even the filing — so retrying with the parameter
+    lands both.
+  - **Two 409s, told apart by `:reason`.** `proposal-pending` is the one above;
+    `modified-elsewhere` is the `modified_at` guard, with `:current` as before. The
+    guard is checked first, so an agent proposing against text that has already
+    moved hears about that rather than about the proposal.
+
+  A machine's `DELETE` of such a Recipe is refused outright (403) rather than
+  proposed: there is no way to propose a deletion, and deleting a Recipe he has
+  written is not something an agent should be able to queue up. Publishing is
+  refused for a machine on any Recipe, as before, and **every** mutation of a
+  published one still is — a proposal is not a way around the latch."
   [req]
   (let [ds (common/ensure-ds)
         user-id (common/get-user-id req)
         id (common/recipe-id req)
-        {:keys [title modified_at] :as body} (:body req)]
+        {:keys [title modified_at] :as body} (:body req)
+        current (when id (db.recipe/get-recipe ds user-id id))]
     (cond
-      (nil? (when id (db.recipe/get-recipe ds user-id id)))
+      (nil? current)
       {:status 404 :body {:error "Recipe not found"}}
 
       (and (some? title) (str/blank? (str title)))
@@ -307,19 +407,54 @@
       (bad-scope-ids? body)
       bad-scope-ids-response
 
+      ;; **The three conditions that make this a proposal instead of a save**, in this
+      ;; order and all of them. A machine caller, a Recipe that is not the agents'
+      ;; alone, and content that would actually change — the last one is what keeps a
+      ;; machine PUT sending the same title back the no-op it has always been rather
+      ;; than a pending proposal of nothing.
+      (and (common/machine-caller? req)
+           (not (db.recipe/machine-only? ds user-id id))
+           (db.recipe/content-would-change? ds user-id id (select-keys body writable-fields)))
+      (cond
+        ;; The `modified_at` guard first: an agent proposing against text that has
+        ;; already moved is told so before anything is written, which is the same
+        ;; answer this route has always given, now with its reason named.
+        (and modified_at (not= modified_at (:modified_at current)))
+        (stale-write-response ds user-id id)
+
+        ;; Nothing is written when a proposal is already pending and the caller did
+        ;; not say to replace it — not even the filing fields, deliberately. A
+        ;; half-applied request answered with an error is worse than a refused one,
+        ;; and the agent's next call carries `?overwrite=true` and lands both.
+        (and (db.proposal/pending-for ds user-id id) (not (overwrite? req)))
+        {:status 409
+         :body {:error "A proposal for this Recipe is already waiting to be approved"
+                :reason "proposal-pending"
+                :pending (pending-body (db.proposal/pending-for ds user-id id))}}
+
+        :else
+        (let [;; The filing is applied straight away — tags and Scopes are not the
+              ;; text he wrote, so they are not what needs approving. This is a
+              ;; filing-only save as far as `update-recipe` is concerned, which is
+              ;; why it makes no version and no inbox entry.
+              filing (select-keys body [:tags :scope_ids])
+              _ (when (seq filing)
+                  (db.recipe/update-recipe ds user-id id filing nil
+                                           {:human? (human-write? req)}))
+              proposal (db.proposal/propose! ds user-id id (:version current)
+                                             (merge (select-keys current proposal-fields)
+                                                    (select-keys body proposal-fields)))]
+          {:status 202
+           :body {:pending (pending-body proposal)
+                  :recipe (db.recipe/get-recipe ds user-id id {:lean? false :scopes? true})}}))
+
       :else
       (if-let [result (db.recipe/update-recipe ds user-id id
                                                (select-keys body writable-fields)
                                                modified_at
                                                {:human? (human-write? req)})]
         {:status 200 :body result}
-        ;; The 409 carries the row as it now is, and it carries the filing with
-        ;; it: the client is about to redraw its copy from this, and a `:current`
-        ;; without `scopes` would blank the badges as a side effect of a refused
-        ;; save.
-        {:status 409 :body {:error "Recipe was modified elsewhere"
-                            :current (db.recipe/get-recipe ds user-id id
-                                                           {:lean? false :scopes? true})}}))))
+        (stale-write-response ds user-id id)))))
 
 (defn delete-recipe-handler
   "DELETE /api/recipes/:id — remove a recipe together with its whole version
