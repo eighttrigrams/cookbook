@@ -808,3 +808,52 @@ html.dark-mode .inbox-kind.kind-proposed { background: rgba(245, 158, 11, 0.18);
   line-height: 15px;
   text-align: center;
 }
+
+/* A `proposed` entry is a question rather than a notification, so it is a block
+   rather than a row: the row on top, the comparison under it. The comparison is the
+   version viewer's own pane, so it inherits `.diff-meta` and `.diff-editor` from
+   above — what is added here is the frame that groups the two, and a cap on the
+   editor's height, because a queue of proposals must stay scannable. */
+.inbox-item {
+  padding: 4px 0 12px;
+  border-bottom: 1px solid var(--glass-border);
+}
+.inbox-item:last-child { border-bottom: none; }
+.inbox-item .inbox-row { border-bottom: none; }
+.inbox-review {
+  padding: 4px 0 0;
+}
+/* Denser than the full-screen viewer's, which has a page to itself. */
+.inbox-review .diff-meta { margin-bottom: 8px; }
+.inbox-review .diff-editor .cm-editor { max-height: 320px; }
+.inbox-review .diff-note { margin-bottom: 8px; }
+
+/* The thing that must be read before Approve is clicked: the proposal was written
+   against an older version, so approving replaces his newer text. Coloured like the
+   destructive confirmations rather than like a hint. */
+.inbox-stale {
+  margin: 0 0 10px;
+  padding: 9px 12px;
+  max-width: 80ch;
+  border-radius: 10px;
+  background: var(--badge-excluded-bg);
+  color: var(--text-primary);
+  font-size: 0.88em;
+  line-height: 1.5;
+}
+
+/* Approve carries the accent, because it is the one button on this page that writes
+   a version. Dismiss borrows `.danger` from the delete buttons, for the same reason
+   they have it: what it removes does not come back. */
+.inbox-approve {
+  padding: 5px 11px;
+  font-size: 0.85em;
+  background: var(--accent);
+  color: var(--opaque-bg);
+  border: none;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.inbox-approve:hover:not(:disabled) { background: var(--accent-hover); transform: none; }
+.inbox-approve:disabled { opacity: 0.6; cursor: default; }

@@ -90,12 +90,35 @@
   second-resolution and two entries in one second is the normal case, so the
   append order is served from the column that *is* the append order.
 
+  **A `proposed` entry carries a `proposal`**, and it carries *both* texts: the three
+  fields the agent proposes, and the three the Recipe says now
+  (`current_title`, `current_useful_when`, `current_description`), plus
+  `base_version` and the Recipe's `recipe_version`. Reviewing a proposal means
+  reading a diff, and the diff that matters is against what the Recipe says *now* —
+  not against what it said when the proposal was filed, which may be two of his
+  saves ago. When `base_version` is behind `recipe_version`, approving replaces his
+  newer text with the agent's, and both numbers are here so a client can say so
+  before the click rather than leaving it to be discovered after.
+
+  A proposal whose Recipe has since been deleted still comes back, with
+  `recipe_version` and the three current fields null: the entry has to be able to
+  say why it cannot be approved rather than vanishing from the queue.
+
+  **Reading this list moves no `view_count`.** The current text is read straight from
+  the table, not through `GET /api/recipes/:id?detail=full` — that endpoint counts a
+  consumption, and consumption ranks the shelf, so working through a queue of
+  proposals would quietly reorder his Cookbook. Reviewing what an agent wrote is not
+  using a Recipe.
+
   The owner's alone: 403 for a machine token and 403 for a caller with no
   credentials. There is no listing of *seen* events — marking one seen is what
   takes it out of this list, and this list is the whole feature."
   [req]
   (if (common/owner-caller? req)
-    {:status 200 :body (db.event/list-unseen (common/ensure-ds) (common/get-user-id req))}
+    (let [ds (common/ensure-ds)
+          user-id (common/get-user-id req)]
+      {:status 200 :body (db.proposal/attach-to-events ds user-id
+                                                       (db.event/list-unseen ds user-id))})
     forbidden))
 
 (defn mark-seen-handler

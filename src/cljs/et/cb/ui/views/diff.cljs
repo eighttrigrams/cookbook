@@ -145,31 +145,68 @@
      ;; words.
      [:span.diff-meta-value (str value)])])
 
-(defn- version-side
-  "One column of the metadata strip. `other` is the version on the far side, so a
-  field that differs is marked on both — the reader is comparing, and a mark on
-  only the newer column would make them hunt for what it replaced."
-  [entry other]
+(defn- side
+  "One column of the metadata strip, from a heading, a subheading and the two short
+  fields. `other` is what is on the far side, so a field that differs is marked on
+  both — the reader is comparing, and a mark on only one column would make them hunt
+  for what it replaced.
+
+  It takes its two labels rather than deriving them, because there are two things
+  being compared in this app now: two versions of a Recipe, and a Recipe against a
+  proposal that is not a version at all. The layout is the same and the words are
+  not."
+  [{:keys [heading sub] :as entry} other]
   [:div.diff-meta-side
-   [:div.diff-meta-version (version-label entry)]
-   [:div.diff-meta-when (when-label entry)]
+   [:div.diff-meta-version heading]
+   [:div.diff-meta-when sub]
    [meta-row "Title" (:title entry) (not= (:title entry) (:title other))]
    [meta-row "Useful when" (:useful_when entry) (not= (:useful_when entry) (:useful_when other))]])
 
+(defn- as-side
+  "One entry of a version list, with the two labels this comparison wants on it. The
+  version viewer's headings; the Inbox supplies its own, because a proposal is not a
+  version and calling it one would be the wrong word in the one place a reader is
+  deciding whether to accept it."
+  [entry]
+  (assoc entry :heading (version-label entry) :sub (when-label entry)))
+
 (defn- body-unchanged-note
   "Said out loud, because the alternative is a merge view showing no changes,
-  which is indistinguishable from a broken diff. Only reachable because this
-  viewer walks every version instead of collapsing the runs rhizome collapses."
+  which is indistinguishable from a broken diff. Reachable two ways: this viewer
+  walks every version instead of collapsing the runs rhizome collapses, and a
+  proposal can propose a title without touching the body."
   [older newer]
   (when (= (:description older) (:description newer))
     [:p.diff-note
      (if (or (not= (:title older) (:title newer))
              (not= (:useful_when older) (:useful_when newer)))
-       "The body did not change in this step — what this save changed is above."
-       "These two versions are identical in all three fields, which no save
-        through the API produces: a save that changes nothing makes no version.")]))
+       "The body is not what changed here — what did is above."
+       "These two are identical in all three fields. No save through the API
+        produces that between versions, and a proposal that changed nothing would
+        have been refused as a no-op.")]))
 
 ;; ---------------------------------------------------------------------------
+
+(defn pane
+  "The comparison itself: the two metadata columns, the note about an unchanged body,
+  and the merge view under them. Everything the version viewer draws below its header.
+
+  **Exposed so the Inbox can show a proposal without a second diff being written.**
+  The two sides are maps of `{:heading :sub :title :useful_when :description}` —
+  `left` is the older or current text, `right` the newer or proposed one, which is the
+  order both readings of this component want.
+
+  `key?` is not a parameter: the caller keys this on everything it was built from, the
+  way `component` does, because nothing here reconfigures a live editor."
+  [left right unified? dark?]
+  [:<>
+   [:div.diff-meta
+    [side left right]
+    [side right left]]
+   [body-unchanged-note left right]
+   ^{:key (str (boolean unified?) "-" (boolean dark?) "-" (hash [(:description left)
+                                                                 (:description right)]))}
+   [diff-editor (:description left) (:description right) unified? dark?]])
 
 (defn component
   "Rendered only when `:diffing` names a recipe. `:diff-version-idx` steps the
@@ -224,10 +261,6 @@
         [:p.diff-note "No previous version to compare against."]
 
         :else
-        [:<>
-         [:div.diff-meta
-          [version-side older newer]
-          [version-side newer older]]
-         [body-unchanged-note older newer]
-         ^{:key (str diffing "-" idx "-" (boolean diff-unified?) "-" (boolean dark-mode))}
-         [diff-editor (:description older) (:description newer) diff-unified? dark-mode]])]]))
+        ;; The same pane the Inbox shows a proposal in — one layout, two readings.
+        ^{:key (str diffing "-" idx)}
+        [pane (as-side older) (as-side newer) diff-unified? dark-mode])]]))

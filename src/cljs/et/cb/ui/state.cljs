@@ -39,6 +39,7 @@
            :recipes-request 0    ;; only the newest listing request may land
            :page :shelf          ;; which page is on: :shelf, :settings, :scopes or :inbox
            :inbox []             ;; the owner's unseen changes his agents made, oldest first
+           :dismissing-proposal nil ;; event id of the proposal awaiting a dismiss confirmation
            :machine-user nil     ;; {:exists :username :password_set_at} — never a password
            :scopes []            ;; the owner's Scopes — [{:id :title :description :recipe_count}]
            :editing-scope nil    ;; id of the Scope being edited in place
@@ -194,8 +195,9 @@
          ;; and the inbox with them, for the strongest version of the same
          ;; reason: the server sends this queue to nobody but the owner — a
          ;; machine token is refused it — so a copy left here would be the one
-         ;; place a signed-out page still said what his agents had been writing
-         :inbox []
+         ;; place a signed-out page still said what his agents had been writing,
+         ;; and a `proposed` entry carries the proposed text along with it
+         :inbox [] :dismissing-proposal nil
          ;; the machine user's state is the owner's business too, and the panel
          ;; must not stay open over a signed-out shelf
          :machine-user nil
@@ -252,6 +254,48 @@
   (api/post-json (str "/api/inbox/" event-id "/seen") {} (auth-headers)
     (fn [_] (fetch-inbox))
     (err-handler "Could not mark that as seen")))
+
+(declare fetch-recipes)
+
+(defn- resolve-proposal
+  "Approve or dismiss, by the entry's **event** id, and then refetch both lists.
+
+  The Recipes come along because approving writes a version: the card's version
+  badge, its provenance split and its `pending` flag all move, and a queue that
+  emptied while the shelf behind it still said v1 would be the client contradicting
+  itself. A dismissal changes no Recipe, and refetching anyway costs one request and
+  keeps the two paths identical.
+
+  `on-done` runs on failure too, for the reason it does in `publish-recipe`: it is
+  what closes the confirmation, and the error banner renders under the modal's fixed
+  overlay — so leaving the dialog open would put the banner's dismiss button out of
+  reach."
+  [event-id action failure on-done]
+  (let [done #(when on-done (on-done))]
+    (api/post-json (str "/api/inbox/" event-id "/" action) {} (auth-headers)
+      (fn [_]
+        (fetch-inbox)
+        (fetch-recipes)
+        (done))
+      (fn [resp]
+        (done)
+        ((err-handler failure) resp)))))
+
+(defn approve-proposal [event-id on-done]
+  (resolve-proposal event-id "approve" "Could not approve that proposal" on-done))
+
+(defn dismiss-proposal
+  "The agent's text is not served anywhere after this, and nothing brings it back —
+  which is why the button that calls this has a confirmation in front of it, like
+  Delete and Publish."
+  [event-id on-done]
+  (resolve-proposal event-id "dismiss" "Could not dismiss that proposal" on-done))
+
+(defn start-dismissing-proposal [event-id]
+  (swap! *app-state assoc :dismissing-proposal event-id))
+
+(defn stop-dismissing-proposal []
+  (swap! *app-state assoc :dismissing-proposal nil))
 
 ;; ---------------------------------------------------------------------------
 ;; Scopes

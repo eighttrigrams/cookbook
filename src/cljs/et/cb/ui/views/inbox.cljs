@@ -25,6 +25,13 @@
   did that save change', and the viewer is the thing that answers it. A `deleted`
   entry's title is plain text, because there is nothing left to open.
 
+  **A `proposed` entry is a different kind of thing and looks like one.** It is a
+  question rather than a notification, so it has no Seen button — the API refuses to
+  acknowledge one — and instead of a link it carries the comparison itself: the
+  Recipe's current text on the left, the agent's proposal on the right, in the version
+  viewer's own pane. Its two buttons are the two answers, Approve and Dismiss, and
+  Dismiss asks first because the agent's text is gone afterwards.
+
   The title on a row is a snapshot taken when the change happened, not a lookup —
   so a row about a Recipe that has since been renamed still says what it said then,
   and a row about one that has been deleted still says what it was called. That is
@@ -106,6 +113,119 @@
           :on-click #(do (reset! sending? true) (state/mark-seen id))}
          (if @sending? "…" "Seen")]]])))
 
+(defn- staleness-note
+  "Said in words, before the click, when the proposal was written against an older
+  version than the Recipe now has.
+
+  **The one thing about approving that cannot be left to be discovered afterwards.**
+  The diff beside it is against the Recipe as it reads *now*, so approving really does
+  replace his newer text with the agent's — `base_version` is not a guard, and the
+  API will not refuse it. That is his call to make, which is exactly why it has to be
+  visible while he makes it."
+  [{:keys [base_version recipe_version]}]
+  (when (and base_version recipe_version (< base_version recipe_version))
+    [:p.inbox-stale
+     (str "Proposed against version " base_version ", and this Recipe is on version "
+          recipe_version " — you have saved it since. The comparison below is against "
+          "your current text, so approving replaces it with the agent's.")]))
+
+(defn- gone-note []
+  [:p.inbox-stale
+   "This Recipe has been deleted, so there is nothing left to approve this against.
+    Dismissing it is all that is left."])
+
+(defn- proposal-review
+  "A proposal, shown against the Recipe's **current** text: current on the left,
+  proposed on the right.
+
+  It reuses the version viewer's own pane (`diff/pane`) rather than growing a second
+  diff — the thing being read is the same thing, two texts and what differs between
+  them, and the words above each column are all that changes. The Split/Unified toggle
+  the viewer has is deliberately not repeated here; it reads `:diff-unified?` from the
+  same place, so whichever layout he prefers is the one he gets in both.
+
+  Both texts arrive on the entry itself. Nothing here fetches the Recipe, which is not
+  an optimisation: `?detail=full` counts a consumption and ranks the shelf, so a page
+  that fetched it would reorder his Cookbook every time he reviewed a queue."
+  [{:keys [proposal]}]
+  (let [{:keys [dark-mode diff-unified?]} @state/*app-state
+        current {:heading "This Recipe now"
+                 :sub (str "Version " (:recipe_version proposal))
+                 :title (:current_title proposal)
+                 :useful_when (:current_useful_when proposal)
+                 :description (:current_description proposal)}
+        proposed {:heading "Proposed by an agent"
+                  :sub (str "Against version " (:base_version proposal)
+                            (when (:modified_at proposal)
+                              (str " · last revised " (:modified_at proposal))))
+                  :title (:title proposal)
+                  :useful_when (:useful_when proposal)
+                  :description (:description proposal)}]
+    [:div.inbox-review
+     (if (nil? (:recipe_version proposal))
+       [gone-note]
+       [staleness-note proposal])
+     ;; Keyed on the texts and the theme, like the viewer's own call site: nothing
+     ;; mutates a live merge view, it is replaced.
+     ^{:key (str (:base_version proposal) "-" (boolean diff-unified?) "-"
+                 (boolean dark-mode))}
+     [diff/pane current proposed diff-unified? dark-mode]]))
+
+(defn- proposal-row
+  "One `proposed` entry: the badge, the title, what it is against, and the two
+  answers — Approve and Dismiss. **No Seen button**, deliberately: a proposal is not
+  something to acknowledge, and the API refuses to acknowledge one.
+
+  Approve fires on the first click and goes dead; Dismiss opens a confirmation, the
+  way Delete and Publish do, because the agent's text is not served anywhere
+  afterwards and nothing brings it back."
+  [_entry]
+  (let [sending? (r/atom false)]
+    (fn [{:keys [id kind recipe_title version created_at proposal] :as entry}]
+      [:div.inbox-item
+       [:div.inbox-row
+        [:span.inbox-kind {:class (str "kind-" kind) :title (get kind-titles kind)}
+         (get kind-labels kind kind)]
+        [:span.inbox-title recipe_title]
+        (when version
+          [:span.inbox-version {:title (get kind-titles kind)} (str "v" version)])
+        [:span.inbox-when created_at]
+        [:span.inbox-row-actions
+         [:button.inbox-approve
+          {:disabled @sending?
+           :on-click #(do (reset! sending? true) (state/approve-proposal id nil))}
+          (if @sending? "Approving…" "Approve")]
+         [:button.secondary.danger
+          {:on-click #(state/start-dismissing-proposal id)} "Dismiss"]]]
+       (when proposal
+         [proposal-review entry])])))
+
+(defn- dismiss-modal
+  "Asks before dismissing, and the question is what is lost. The Recipe is not
+  touched either way — what goes is the agent's text, which nothing serves again.
+
+  The confirm button goes dead on the first click, like every other confirmation
+  here: only the response closes the dialog, so two quick clicks would send two
+  POSTs and the second would 409 over a dismissal that in fact went through."
+  [_entry]
+  (let [sending? (r/atom false)]
+    (fn [{:keys [id recipe_title]}]
+      [:div.modal-backdrop {:on-click state/stop-dismissing-proposal}
+       [:div.modal {:on-click #(.stopPropagation %)}
+        [:h2 "Dismiss this proposal?"]
+        [:div.modal-subtitle recipe_title]
+        [:p.modal-note
+         "The Recipe is not touched — it keeps every word it has now. What goes is
+          the text the agent proposed, and there is no undo: nothing serves it again
+          after this. The agent is free to propose something else."]
+        [:div.modal-actions
+         [:button.danger
+          {:disabled @sending?
+           :on-click #(do (reset! sending? true)
+                          (state/dismiss-proposal id state/stop-dismissing-proposal))}
+          (if @sending? "Dismissing…" "Dismiss")]
+         [:button.secondary {:on-click state/stop-dismissing-proposal} "Cancel"]]]])))
+
 (defn- inbox-block []
   (let [{:keys [inbox]} @state/*app-state]
     [:div.inbox
@@ -120,8 +240,13 @@
      (if (empty? inbox)
        [:div.inbox-empty "Nothing your agents did is waiting."]
        [:div.inbox-list
+        ;; The key goes on each branch's vector rather than on the `if`: metadata on
+        ;; an `if` form is metadata on the form, which the reader drops before reagent
+        ;; sees it — the trap `views/scopes.cljs` documents.
         (for [entry inbox]
-          ^{:key (:id entry)} [row entry])])]))
+          (if (= "proposed" (:kind entry))
+            ^{:key (:id entry)} [proposal-row entry]
+            ^{:key (:id entry)} [row entry]))])]))
 
 (defn inbox-page
   "The panel and the version viewer, as **siblings**.
@@ -136,8 +261,10 @@
   make it the containing block for the viewer's fixed positioning and pin a
   full-screen overlay inside the panel."
   []
-  (let [{:keys [diffing]} @state/*app-state]
+  (let [{:keys [diffing inbox dismissing-proposal]} @state/*app-state]
     [:<>
      [inbox-block]
+     (when-let [entry (first (filter #(= dismissing-proposal (:id %)) inbox))]
+       [dismiss-modal entry])
      (when diffing
        [diff/component])]))
