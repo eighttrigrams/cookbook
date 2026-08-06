@@ -117,6 +117,24 @@
     (try (Integer/parseInt (str/trim (str s)))
          (catch NumberFormatException _ nil))))
 
+(defn parse-id-list
+  "A comma-separated list of ids out of one query param — `\"3,7\"` → `[3 7]`.
+  Empty for an absent param, a blank one, and one that names nothing numeric.
+
+  **Lenient, and that is a decision about reads rather than a shortcut.**
+  Non-numeric junk drops out instead of earning a 400, which is the opposite call
+  from `recipe-handler/bad-scope-ids?`, and the two are right for opposite reasons:
+  a write that means the wrong thing is a bug worth refusing, while a read that
+  narrows by nothing is a read. `?detail=full` and `?human=true` are parsed in the
+  same spirit — one place, no coercion surprises, and nothing that half-succeeds.
+
+  Whitespace around an id is fine (`parse-int-opt` trims), so `3, 7` is the same
+  list as `3,7`. Duplicates are left alone: they are a set once they reach an
+  `IN`, and dropping them here would be a claim this function is in no position to
+  make about what the caller meant."
+  [s]
+  (into [] (keep parse-int-opt) (str/split (str s) #",")))
+
 (defn path-id
   "The id a request's path names, or nil when it names none.
 

@@ -17,6 +17,23 @@
   [req]
   (= "true" (common/query-param req "human")))
 
+(defn- excluded-scope-ids
+  "`?exclude-scopes=3,7` — which Scopes' Recipes to hide from the listing.
+
+  **Ids and not tracker's names.** Tracker's `parse-excluded-categories` takes
+  names because that is the currency a caller names a category in over there;
+  cookbook's is the id everywhere a caller names a Scope — `scope_ids` on POST and
+  PUT, `GET /api/scopes` handing them back — and a second convention inside one app
+  is the one that rots.
+
+  Parsed leniently by `common/parse-id-list`, which argues why a read may drop
+  junk where a write may not. Nothing is checked here: an id the caller does not
+  own is well-formed and excludes nothing, which the db layer arranges by joining
+  through `scopes`, and answering 404 for it would tell a caller which ids exist —
+  the same call `bad-scope-ids?` makes for a write body."
+  [req]
+  (common/parse-id-list (common/query-param req "exclude-scopes")))
+
 (defn- human-write?
   "Whether this write is one to record as a human edit: the caller carries no
   *machine* token. `common/machine-caller?` reads the token's `:machine?` claim,
@@ -153,6 +170,31 @@
   and not saved since reads as not-human-edited even if the owner wrote every word
   of it: what was never recorded is not asserted. It composes with ?search.
 
+  **?exclude-scopes=3,7 hides the Recipes filed under those Scopes** — a
+  comma-separated list of **Scope ids**, from GET /api/scopes. It is a *negative*
+  filter and the only one here: there is no way to ask for the Recipes *of* a
+  Scope, because the owner asked to hide rather than to select. Several ids take
+  more away and never less — a Recipe survives only if it carries none of them, so
+  one carrying an excluded Scope alongside a kept one is still gone. **A Recipe
+  filed under no Scope at all is never hidden by this**, which is the case worth
+  saying rather than leaving to be discovered. It composes with ?search and
+  ?human=true, because all three are clauses on the one query.
+
+  Junk narrows by nothing rather than being refused: a non-numeric id, an empty
+  list, and an id you do not own all answer 200 with the listing unchanged. That
+  last one is deliberate and not an oversight — a 404 for it would say which ids
+  exist, which is the same call `scope_ids` already gets on a write.
+
+  **An anonymous visitor's ?exclude-scopes is ignored entirely**, and that is a
+  refusal rather than the filter applied to fewer rows. A visitor is sent no
+  `scopes` key on anything, and — unlike the tags, whose presence is testable
+  through ?search — the Scopes' presence is not testable either, because nothing
+  searches them. Honouring this for a visitor would hand that back: rows vanishing
+  on request is a way to ask which published Recipes carry Scope 4, one id at a
+  time. Scopes are a stronger boundary than the tags on purpose, and the owner said
+  so in as many words: *to logged in users only, no matter what*. A machine token
+  reads in the owner's audience and is honoured, like every other Scope read.
+
   **Every row carries the provenance split**: `machine_versions` and
   `ui_versions`, counting how many of that Recipe's versions an agent wrote and how
   many were saved by hand in the web UI. **The two always sum to `version`**, so
@@ -197,9 +239,15 @@
   approved state."
   [req]
   {:status 200
+   ;; The exclusion is passed for every caller and the db layer is what refuses a
+   ;; visitor it — `list-recipes` decides that off the audience, the way
+   ;; `with-scopes` decides whether the Scopes are attached at all. Asking the
+   ;; question here as well would be two places answering it, which is how they
+   ;; come to disagree; the flag is a request and the audience is the answer.
    :body (db.recipe/list-recipes (common/ensure-ds) (read-audience req)
                                  {:search-term (common/query-param req "search")
                                   :human-only? (human-only? req)
+                                  :excluded-scope-ids (excluded-scope-ids req)
                                   :lean? (lean? req)})})
 
 (defn get-recipe-handler
