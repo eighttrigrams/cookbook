@@ -149,13 +149,36 @@
   `[{id, title, description}]`, empty for an unfiled Recipe; a visitor gets no
   `scopes` key at any ?detail, and there is no query that would produce one for
   them — the join is not run rather than run and then hidden. Unlike the tags,
-  their presence is not testable either: nothing searches them."
+  their presence is not testable either: nothing searches them.
+
+  **A ?detail=full read of an existing Recipe counts as a consumption**: it bumps
+  that Recipe's `view_count`, which is how the shelf is ranked (see GET
+  /api/recipes). This request is the only one in the API that hands back the
+  description of one Recipe, so it is the only one that proves somebody used it —
+  a listing is a scan and counts for nothing at any ?detail. A **lean** read of
+  this same path does not count either: it returns the retrieval index, not the
+  Recipe. Nothing about the increment is in your hands — there is no header, no
+  parameter and no way to read without counting, and every caller counts, an
+  anonymous reader of a published Recipe included. A 404 does not count, so an id
+  that does not exist and an unpublished Recipe a visitor asked for both leave the
+  number alone."
   [req]
-  (let [id (common/recipe-id req)
-        recipe (when id (db.recipe/get-recipe (common/ensure-ds) (read-audience req) id
-                                              {:lean? (lean? req) :scopes? true}))]
+  (let [ds (common/ensure-ds)
+        id (common/recipe-id req)
+        full? (not (lean? req))
+        recipe (when id (db.recipe/get-recipe ds (read-audience req) id
+                                              {:lean? (not full?) :scopes? true}))]
     (if recipe
-      {:status 200 :body recipe}
+      (do
+        ;; After the read, and the response is **the row we read** rather than a
+        ;; re-read of it. A caller does not need its own view reflected in the
+        ;; number it is holding — that number is 'reads before mine', which is
+        ;; the honest thing to have fetched — and a second SELECT would double
+        ;; the work on the app's hottest read to say something nobody asked. The
+        ;; other reading is the one a reviewer will assume, hence this comment:
+        ;; the next listing shows the incremented value.
+        (when full? (db.recipe/record-view! ds id))
+        {:status 200 :body recipe})
       {:status 404 :body {:error "Recipe not found"}})))
 
 (defn add-recipe-handler

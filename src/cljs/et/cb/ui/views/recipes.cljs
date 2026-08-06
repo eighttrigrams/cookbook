@@ -15,6 +15,12 @@
   because a collapsed card is exactly the place that cannot go and fetch a version
   list.
 
+  And beside those, `12 reads`: how often the Recipe was actually consumed —
+  expanded here or fetched whole by an agent, never a listing. Expanding a card
+  is what makes one, so the number a card wears is the count as the listing was
+  fetched and it goes up on the next listing rather than under your cursor. The
+  same number ranks the shelf, together with the version count.
+
   The shelf can be narrowed two ways at once — by a search over titles and tags,
   and to the Recipes a human has edited here rather than an agent. Both are the
   listing endpoint's own `:where` clauses; nothing on this side filters rows it
@@ -273,6 +279,39 @@
     (when (seq buckets)
       [:span.source-badge {:title source-badge-title} (str/join "/" buckets)])))
 
+(def ^:private views-badge-title
+  "One sentence, and it has to carry three things a bare number does not: that a
+  *listing* is not a read, that everybody's reads are in there and not only the
+  owner's, and that the count starts where migration 008 does — a Recipe written
+  last year and read a hundred times says 0 until somebody opens it again.
+
+  Kept here rather than in `et.cb.ui.provenance`, and that is a judgement call
+  worth stating: that namespace exists because *two* surfaces named the same fact
+  and drifted. This fact has one surface. The API's own wording of it lives in
+  `recipe-handler/get-recipe-handler`'s docstring, which is not a second copy but
+  a different medium — an agent reads that one out of /api/describe. The day a
+  second view in here shows the count, this string moves next to the provenance
+  labels rather than being spelled out twice."
+  (str "How often this Recipe was actually read — its text fetched in full, here "
+       "or through the API, by anyone — never counting a listing, and only since "
+       "cookbook started counting"))
+
+(defn- views-badge
+  "`12 reads`, beside the version pair, because it is the same kind of fact: a
+  count the server keeps about this Recipe, on the one line that says what the
+  Recipe is.
+
+  **A `0` is shown**, unlike an empty bucket in `source-split`. There the zero is
+  a non-fact — nothing wrote a machine version, so saying `0(machine)` would only
+  add noise — while here it is the reading itself: nobody has opened this since
+  the count began, which is exactly what the ranking below acts on. What is *not*
+  shown is a missing key, which is what a listing row from an older server would
+  carry, and that renders as nothing rather than as `0 reads`."
+  [view-count]
+  (when (number? view-count)
+    [:span.views-badge {:title views-badge-title}
+     (str view-count (if (= 1 view-count) " read" " reads"))]))
+
 (defn- card-tags
   "The owner's extra search words, on his own card.
 
@@ -323,7 +362,8 @@
                                   description)}
       title])])
 
-(defn- card [{:keys [id title useful_when tags scopes version published published_at modified_at]
+(defn- card [{:keys [id title useful_when tags scopes version published published_at modified_at
+                     view_count]
               :as recipe}
              {:keys [logged-in? open details]}]
   (let [expanded? (contains? open id)
@@ -342,6 +382,11 @@
         [card-scopes scopes])
       [:span.version-badge {:title "Every edit makes a new version"} (str "v" version)]
       [source-split recipe]
+      ;; Not gated on `logged-in?`, for the same reason the version badge is not:
+      ;; it is a fact about the Recipe rather than about the owner's filing, and
+      ;; the server puts it in the visitor's projection deliberately. It also
+      ;; explains the order of the shelf a visitor is looking at.
+      [views-badge view_count]
       [:span.card-date (day modified_at)]]
      (when (seq useful_when)
        [:div.card-useful-when [markdown/render-inline useful_when]])

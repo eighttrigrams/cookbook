@@ -88,7 +88,17 @@
   join is not run at all rather than run and hidden. On a write, to replace them,
   which is a touch and not a version: `modified_at` moves, nothing is archived.
   Everything else about them, including why the boundary is the missing key rather
-  than a client that declines to draw it, is documented over there."
+  than a client that declines to draw it, is documented over there.
+
+  **Consumption** is `view_count`, and it is the one column here that a *read*
+  writes: how often somebody asked for this Recipe's description and got it. Not
+  a listing — the retrieval index carries no body at any `?detail`, so scanning
+  the shelf is not using anything. It is one column on the row like every other
+  denormalised count here, it is not versioned for the reason `published` is not,
+  and it is deliberately written from the handler rather than from `get-recipe` —
+  see `record-view!`, which argues both, and migration 008, which says what the
+  0 on an existing row means. Together with `version` it is what orders the
+  shelf: `list-recipes` ranks by a weighted sum of the two."
   (:require [clojure.string :as str]
             [next.jdbc :as jdbc]
             [honey.sql :as sql]
@@ -130,9 +140,16 @@
 
 (def lean-select-columns
   "Everything but the body and the tags. This *is* the default API shape for a
-  visitor, and the owner's default is this plus `tags`."
+  visitor, and the owner's default is this plus `tags`.
+
+  `view_count` is in here rather than behind `?detail=full`, and it is in the
+  visitor's projection as a consequence: the card that shows the number is a
+  collapsed card, which is to say a lean row, and the badge sits next to
+  `version` — which has the same audience rule for the same reason. Keeping the
+  first sentence true is the test to apply to anything added here: everything but
+  the body and the tags."
   [:id :title :useful_when :version :published :published_at :created_at :modified_at
-   :has_human_edit :source])
+   :has_human_edit :source :view_count])
 
 (defn- select-columns
   "Which columns a read selects, and it is a *select-column* choice for both of
@@ -328,6 +345,46 @@
      (if (and recipe scopes?)
        (first (with-scopes ds audience [recipe]))
        recipe))))
+
+(defn record-view!
+  "Count one **consumption** of a Recipe: somebody asked for this one's
+  description and got it.
+
+  **Called from `recipe-handler/get-recipe-handler` and deliberately not from
+  `get-recipe`.** Everything in this namespace calls `get-recipe` — the write
+  paths to find out whether a row exists and what its text is, `update-recipe`
+  for the state it is about to archive, `publish-recipe` for the latch — so a
+  counter in there would count the app's own bookkeeping as reading, invisibly,
+  and every save would inflate the number that decides the shelf's order. The
+  handler is the only place that knows a request asked for a body and was given
+  one, which is the fact being recorded.
+
+  **It must not move `modified_at`, and this is the whole statement**: one
+  column, `WHERE id`, nothing else. Two things break the moment a read touches
+  that stamp. `update-recipe` guards on the `modified_at` its caller last read,
+  so opening a card and then saving it would 409 against yourself. And
+  `modified_at` is the shelf's tiebreaker under the ranking, so every read would
+  reshuffle the shelf. `recipe-views-do-not-touch-modified-at` pins it.
+
+  No audience clause: the handler has already read the row *in* the caller's
+  audience, so an id that reaches here is one that caller may see — a 404 never
+  gets this far, whether it is a missing id or an unpublished Recipe a visitor
+  asked for.
+
+  **Every audience counts, the visitor's included.** The number answers 'was this
+  actually used', and a published Recipe read by a stranger was used. The
+  consequence, stated rather than discovered: a published Recipe's count is
+  inflatable by anyone who can reach the endpoint, and since the count ranks the
+  shelf, so is its position. Unpublished Recipes are unreachable to anybody but
+  the owner and his agents, so this is bounded by what he has published. It is
+  the one decision here he may want to revisit — the alternative is to count only
+  authenticated reads, which would stop counting exactly the audience publishing
+  exists for."
+  [ds id]
+  (jdbc/execute-one! (db/get-conn ds)
+    (sql/format {:update :recipes
+                 :set {:view_count [:+ :view_count [:inline 1]]}
+                 :where [:= :id id]})))
 
 (defn- source-of
   "Which source to attribute a write to: `'ui'` when the caller says it is not a

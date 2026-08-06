@@ -184,6 +184,23 @@ textarea:focus {
   cursor: help;
 }
 
+/* How often the Recipe was actually read — the third member of that same group,
+   so it takes the same shape and the same muted weight as the provenance badge
+   beside it. It is the one number on this header the *reader* moves rather than
+   the writer, and it is what ranks the shelf, so it stands with the counts and
+   not with the date. `nowrap` for the reason the others have it: `12 reads` is
+   two words and must not become two lines and steal the title's room. */
+.views-badge {
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: var(--surface-subtle);
+  color: var(--muted-text);
+  font-size: 0.72em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: help;
+}
+
 /* Which Scopes a Recipe is filed under. In the accent's own colour rather than
    the neutral of the version pair beside it, because this is the only badge on
    the header that is a *choice* the owner made about the Recipe — the others

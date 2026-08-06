@@ -1,0 +1,39 @@
+{:up ["ALTER TABLE recipes ADD COLUMN view_count INTEGER NOT NULL DEFAULT 0"]
+ ;; How often a Recipe was actually **consumed**: one increment per
+ ;; `GET /api/recipes/:id?detail=full`, which is the only request in this API
+ ;; that hands back the description of one Recipe. A listing carries no body at
+ ;; any `?detail`, so scanning the shelf counts for nothing — the number says
+ ;; somebody went and read *this* one. The UI's expand and an agent's fetch are
+ ;; the same request, so one counter covers both without either client telling
+ ;; the server what to count. See `recipe-handler/get-recipe-handler`, which is
+ ;; the one place that writes it.
+ ;;
+ ;; **`DEFAULT 0` here is an epoch and not a claim that a row was never read.**
+ ;; It is the third time this schema has had to say what a default means, and it
+ ;; lands differently from the two before it. Recipes 1, 2 and 3 have all been
+ ;; read, plenty of times, by the owner and by the agents that wrote them —
+ ;; nothing counted, so nothing can be recovered. What makes 0 honest anyway is
+ ;; that this column counts **reads recorded from this migration forward** and
+ ;; every existing row starts from that same point: the number is a count since
+ ;; the epoch, so no row is misattributed *relative to another* and the ranking
+ ;; built on it (see `db.recipe/list-recipes`) compares like with like from day
+ ;; one. That is exactly what 005 could not say — a `DEFAULT 'machine'` would
+ ;; have pinned one specific actor on one specific version, a claim about a
+ ;; particular past event rather than a shared starting line. 004's 0 was the
+ ;; same kind of claim held back. This one is a scale with an origin, so the
+ ;; mute default would be the misleading part: it counts from here, and the
+ ;; docstrings say so where a reader meets the number.
+ ;;
+ ;; **On `recipes` and not on `recipe_history`**, for the reason `published` and
+ ;; `tags` are not versioned either: a read is a fact about the Recipe and about
+ ;; today, not about the version that happened to be current when it happened.
+ ;; Nothing here can answer 'how often was v2 read' and nothing should pretend
+ ;; to — the count is not archived by `archive!` and a save carries it forward
+ ;; untouched, because the Recipe being read is the same Recipe afterwards.
+ ;;
+ ;; `NOT NULL DEFAULT 0` rather than nullable: unlike 005's third bucket there is
+ ;; no 'unrecorded' category to preserve here. Every row's count is known and it
+ ;; is a number, which also keeps the ranking arithmetic free of a null case —
+ ;; `0.7 * NULL` is NULL, and a row that sorted as unknown would be a hole in an
+ ;; ordering that has to be total.
+ :down ["ALTER TABLE recipes DROP COLUMN view_count"]}
