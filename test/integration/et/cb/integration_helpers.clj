@@ -73,13 +73,18 @@
   `(with-prod-app* (fn [] ~@body)))
 
 (defn clear-source!
-  "Put a Recipe's current version back into the state migration 005 found
-  everything in: `source` NULL, provenance never recorded.
+  "Try to put a Recipe's current version back into the state migration 005 found
+  everything in — `source` NULL, provenance never recorded — and **fail**, which is
+  now the only thing this function is for.
 
-  Reaches past the handlers because no request can produce it — every write labels
-  what it writes, which is the whole point — and yet it is the state every Recipe on
-  the owner's shelf is in until he next saves one. A test about the third bucket has
-  nothing to test without it."
+  It used to work, and every test about the third bucket needed it: no request could
+  produce that state, and yet it was the state every Recipe on the owner's shelf was
+  in until he next saved one. Migration 010 wrote his answer for those versions down
+  and made the column `NOT NULL CHECK (source IN ('ui','machine'))`, so this now
+  raises `SQLiteException` — and it is kept, unaltered in what it attempts, because
+  a test that asserts the category is gone should assert it against the statement
+  that used to create it. Deleting the helper would leave that claim resting on
+  nothing."
   [recipe-id]
   (jdbc/execute-one! (db/get-conn *ds*)
     (sql/format {:update :recipes :set {:source nil} :where [:= :id recipe-id]})))

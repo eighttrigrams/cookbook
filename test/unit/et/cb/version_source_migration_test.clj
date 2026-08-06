@@ -35,19 +35,28 @@
 
 (defn- insert-recipe!
   "Straight at the table, in whatever schema is current — so this still works with
-  005 rolled back, which is the point."
-  [ds title version]
-  (:id (jdbc/execute-one! (db/get-conn ds)
-         (sql/format {:insert-into :recipes
-                      :values [{:title title :useful_when "" :description "" :version version}]
-                      :returning [:id]})
-         db/jdbc-opts)))
+  005 rolled back, which is the point. `source` is optional for the same reason it
+  is in the 004 namespace: before 005 there is no such column, and from 010 it is
+  `NOT NULL`, so which of the two a caller means depends on the schema it is writing
+  into."
+  ([ds title version] (insert-recipe! ds title version nil))
+  ([ds title version source]
+   (:id (jdbc/execute-one! (db/get-conn ds)
+          (sql/format {:insert-into :recipes
+                       :values [(cond-> {:title title :useful_when "" :description ""
+                                         :version version}
+                                  source (assoc :source source))]
+                       :returning [:id]})
+          db/jdbc-opts))))
 
-(defn- insert-history! [ds recipe-id version]
-  (jdbc/execute-one! (db/get-conn ds)
-    (sql/format {:insert-into :recipe_history
-                 :values [{:recipe_id recipe-id :version version
-                           :title "older" :useful_when "" :description "older body"}]})))
+(defn- insert-history!
+  ([ds recipe-id version] (insert-history! ds recipe-id version nil))
+  ([ds recipe-id version source]
+   (jdbc/execute-one! (db/get-conn ds)
+     (sql/format {:insert-into :recipe_history
+                  :values [(cond-> {:recipe_id recipe-id :version version
+                                    :title "older" :useful_when "" :description "older body"}
+                             source (assoc :source source))]}))))
 
 (defn- source-of [ds id]
   (:source (jdbc/execute-one! (db/get-conn ds)
@@ -68,10 +77,17 @@
         (is (contains? (columns ds "recipes") "has_human_edit")))
       (finally (clean!)))))
 
-(deftest versions-that-predate-the-columns-are-unrecorded-and-not-machine-written
+(deftest versions-that-predate-the-columns-are-the-owners-once-010-has-run
   ;; The shape of the owner's dev database: rows and history rows written before
-  ;; anything recorded provenance. Made the way his database will actually run
-  ;; it — roll 005 back, write into the old schema, migrate forward.
+  ;; anything recorded provenance. Made the way his database actually ran it — roll
+  ;; 005 back, write into the old schema, migrate forward.
+  ;;
+  ;; **This test asserted the third bucket and now asserts its end**, which is the
+  ;; one thing 005 could not have said. 005 refused to guess and left NULL as a
+  ;; category, and that refusal is why the answer was still the owner's to give; when
+  ;; he was asked, he said those versions were his. 010 wrote that down. So a Recipe
+  ;; from before either column now reads `3(ui)` where it used to read `3(?)`, and
+  ;; the reason the two tests differ is not that one of them was wrong.
   (let [[ds clean!] (temp-file-db "cb-version-source-existing")]
     (try
       (migrations/rollback! (:conn ds) "004-human-edit-provenance")
@@ -87,32 +103,37 @@
           (is (contains? (columns ds "recipes") "source"))
           (is (contains? (columns ds "recipe_history") "source")))
 
-        (testing "and every version reads NULL — nothing is asserted about work
-                  nobody recorded, in either direction"
-          (is (nil? (source-of ds older)))
-          (is (every? nil? (map :source
-                                (jdbc/execute! (db/get-conn ds)
-                                  (sql/format {:select [:source] :from [:recipe_history]
-                                               :where [:= :recipe_id older]})
-                                  db/jdbc-opts)))))
+        (testing "and every version reads `ui` — nothing is left unrecorded, because
+                  the one person who could settle it did"
+          (is (= "ui" (source-of ds older)))
+          (is (every? #{"ui"} (map :source
+                                   (jdbc/execute! (db/get-conn ds)
+                                     (sql/format {:select [:source] :from [:recipe_history]
+                                                  :where [:= :recipe_id older]})
+                                     db/jdbc-opts)))))
 
-        (testing "so the listing puts all three of its versions in the unrecorded
-                  bucket, and none in the machine one: `3(?)` is what this Recipe
-                  shows, which is the third category doing its job"
+        (testing "so the listing puts all three of its versions in the ui bucket and
+                  none in the machine one: `3(ui)` is what this Recipe shows, and
+                  there is no third bucket left for it to fall into"
           (let [row (first (db.recipe/list-recipes ds nil))]
             (is (= 3 (:version row)))
-            (is (= 3 (:unrecorded_versions row)))
+            (is (= 3 (:ui_versions row)))
             (is (= 0 (:machine_versions row)))
-            (is (= 0 (:ui_versions row))))))
+            (is (false? (contains? row :unrecorded_versions))
+                "and the key is gone from the projection rather than sent as 0")))
+
+        (testing "and the bit came up with it, so ?human=true finds this Recipe —
+                  the half of 010 that keeps `db.recipe`'s stated invariant true"
+          (is (= 1 (count (db.recipe/list-recipes ds nil {:human-only? true}))))))
       (finally (clean!)))))
 
 (deftest migration-005-down-really-reverses
   (let [[ds clean!] (temp-file-db "cb-version-source-down")]
     (try
-      (let [id (insert-recipe! ds "Sourdough" 2)]
-        (insert-history! ds id 1)
-        (jdbc/execute-one! (db/get-conn ds)
-          (sql/format {:update :recipes :set {:source "ui"} :where [:= :id id]}))
+      ;; Written into the *current* schema, so both rows have to carry a label: 010
+      ;; made the column NOT NULL on `recipes` and on `recipe_history` alike.
+      (let [id (insert-recipe! ds "Sourdough" 2 "ui")]
+        (insert-history! ds id 1 "ui")
 
         (migrations/rollback! (:conn ds) "004-human-edit-provenance")
 
@@ -133,10 +154,13 @@
                                                     :where [:= :recipe_id id]})
                                        db/jdbc-opts))))))
 
-        (testing "and 005 re-applies with the label back at NULL: a rollback drops
-                  the record of who wrote this, so re-migrating cannot restore a
-                  claim about it"
+        (testing "and 005 re-applies. The label does **not** come back at NULL any
+                  more, and that is 010 rather than 005: the rollback drops the
+                  record of who wrote this, 005 re-adds the column empty, and the
+                  backfill then reads an unlabelled version as the owner's. Which is
+                  also the honest summary of what a rollback of 010 costs — it
+                  cannot restore which rows were NULL, and it does not pretend to."
           (migrations/migrate! (:conn ds))
           (is (contains? (columns ds "recipes") "source"))
-          (is (nil? (source-of ds id)))))
+          (is (= "ui" (source-of ds id)))))
       (finally (clean!)))))

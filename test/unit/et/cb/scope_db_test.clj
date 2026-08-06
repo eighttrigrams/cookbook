@@ -198,8 +198,10 @@
       (is (= 0 (h/history-row-count id)))
       (is (= (:total before) (:total (db.recipe/list-versions h/*ds* h/*user-id* id)))))
     (testing "and `source` is left alone, since there is no new version for a
-              label to be about"
-      (is (nil? (:source saved))))))
+              label to be about — this Recipe was created by a caller that said
+              nothing about itself, which is `machine` since migration 010, and a
+              refile must not turn that into `ui`"
+      (is (= "machine" (:source saved))))))
 
 (deftest a-scopes-only-save-moves-modified-at
   (let [{bread :id} (scope! "Bread")

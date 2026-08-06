@@ -63,20 +63,24 @@
   deliberately did not answer: who wrote v3. It follows rhizome, which keeps the
   same column on `items` and on `history`, so it sits where the version it
   describes sits — on the row for the current version, on each history row for the
-  superseded ones. Its values are `'ui'` and `'machine'`, plus NULL for a version
-  written before the column existed, which is a third category and a synonym for
-  neither (see migration 005).
+  superseded ones. **Its values are `'ui'` and `'machine'`, and nothing else**:
+  since migration 010 the column is `NOT NULL` with a `CHECK`, so every version of
+  every Recipe carries one of the two.
 
-  The bit stays, and going forward the two cannot disagree: `has_human_edit` is
-  true exactly when some version reads `'ui'`, and the same write sets both.
-  Keeping the bit is what keeps `?human=true` a plain `:where` on the row instead
-  of an aggregate over history on every listing read — the thing this namespace
-  avoided when it put the version number on the row. A row that straddles the two
-  migrations is the one place they read differently and neither is wrong: a UI save
-  made after 004 and before 005 set the bit at a time when no version could carry a
-  label, so the Recipe reads human-edited with nothing but unrecorded versions in
-  it. Deriving the bit instead of keeping it would not have helped — it would have
-  lost that Recipe from the filter it already appears in.
+  It was three until then. 005 made the column nullable and kept NULL as a real
+  third category — 'nobody recorded where this version came from' — because a
+  schema is in no position to guess who wrote v3. The owner is, and when he was
+  asked he said those versions were his: 010 wrote that answer down, brought
+  `has_human_edit` up to match it, and put the constraint in place so the
+  distinction cannot come back. What is left is a two-valued question, which is why
+  nothing in this namespace branches three ways any more.
+
+  The bit stays, and the two cannot disagree: `has_human_edit` is true exactly when
+  some version reads `'ui'`, and the same write sets both. Keeping the bit is what
+  keeps `?human=true` a plain `:where` on the row instead of an aggregate over
+  history on every listing read — the thing this namespace avoided when it put the
+  version number on the row. That it is now fully derivable does not make it
+  redundant; deriving it is precisely the cost being avoided.
 
   The one ordering that matters is in `archive!`: a save pushes the outgoing
   version into history together with **its own** source, and only the statement
@@ -206,20 +210,28 @@
 (defn- versions-with-source
   "One bucket of the provenance split, as a SQL expression over the joined
   `recipe_history`: how many of a recipe's versions carry `label` — the history
-  rows, plus the current row itself when it matches. `nil` asks for the unrecorded
-  bucket, which needs `IS NULL` rather than a comparison with NULL.
+  rows, plus the current row itself when it matches.
 
-  The `recipe_id IS NOT NULL` guard is what keeps a recipe with no history at all
-  from counting the LEFT JOIN's single all-NULL phantom row as an unrecorded
-  version — without it every brand-new Recipe would read one version too many."
+  There are **two** labels and no third: `'ui'` and `'machine'`, which migration
+  010 made the only two things the column can hold. This used to take `nil` as well,
+  for the unrecorded bucket, and that branch needed `IS NULL` rather than a
+  comparison — it is gone with the category.
+
+  The `recipe_id IS NOT NULL` guard **stays**, and it is worth saying why rather
+  than leaving it to look like a leftover of that branch. It is what keeps a recipe
+  with no history at all from counting the LEFT JOIN's single all-NULL phantom row;
+  without it, and with the `IS NULL` branch, every brand-new Recipe read one version
+  too many. A `source = 'ui'` comparison against that phantom row is NULL rather
+  than true, so today the guard is belt and braces — but the phantom row is a
+  property of the join and not of the column, and the guard is the one thing here
+  that says so out loud."
   [label]
-  (let [carries (fn [column] (if label [:= column [:inline label]] [:is column nil]))]
-    [:+
-     [:sum [:case [:and [:is-not :recipe_history.recipe_id nil]
-                   (carries :recipe_history.source)]
-            [:inline 1]
-            :else [:inline 0]]]
-     [:case (carries :recipes.source) [:inline 1] :else [:inline 0]]]))
+  [:+
+   [:sum [:case [:and [:is-not :recipe_history.recipe_id nil]
+                 [:= :recipe_history.source [:inline label]]]
+          [:inline 1]
+          :else [:inline 0]]]
+   [:case [:= :recipes.source [:inline label]] [:inline 1] :else [:inline 0]]])
 
 (def ^:private source-split-columns
   "The card's `3(machine)/17(ui)` split, computed from the `source` columns
@@ -227,11 +239,17 @@
   to keep in step, because a count that could drift from the labels the version
   list shows is worse than no count at all.
 
-  The three always sum to `version` — history holds 1..N-1 and the row is N — so
-  that is an invariant and not just an expectation."
+  **The two sum to `version`** — history holds 1..N-1 and the row is N, and since
+  migration 010 every one of those rows carries one of the two labels — so that is
+  an invariant and not just an expectation. It was three until 010 retired the
+  unrecorded bucket; `machine_versions + ui_versions = version` is the arithmetic
+  to hold on to now, and `the-two-counts-sum-to-the-version` pins it.
+
+  It is also what the approval gate reads: a Recipe is the agents' to write freely
+  exactly while `machine_versions = version`, which is now the same as saying no
+  version of it reads `'ui'`."
   [[(versions-with-source "machine") :machine_versions]
-   [(versions-with-source "ui") :ui_versions]
-   [(versions-with-source nil) :unrecorded_versions]])
+   [(versions-with-source "ui") :ui_versions]])
 
 (def ^:private ranking-score
   "How the shelf is ranked: **0.7 × `view_count` + 0.3 × `version`**, the owner's
@@ -328,8 +346,8 @@
   `has_human_edit` bit described above. It composes with the search rather than
   competing with it: both are clauses on the same query.
 
-  Every row also carries the **provenance split** — `machine_versions`,
-  `ui_versions` and `unrecorded_versions` — because the badge that shows it sits on
+  Every row also carries the **provenance split** — `machine_versions` and
+  `ui_versions`, which sum to `version` — because the badge that shows it sits on
   a collapsed card, which is to say on a lean listing row. It is aggregated in the
   query from a LEFT JOIN on `recipe_history`, and the join is deliberately
   invisible in the projection: every selected column is `recipes.`-qualified, so a
@@ -449,22 +467,31 @@
                  :where [:= :id id]})))
 
 (defn- source-of
-  "Which source to attribute a write to: `'ui'` when the caller says it is not a
-  machine, `'machine'` when it says it is, and nil when it said nothing at all.
+  "Which source to attribute a write to: `'ui'` when the caller is not a machine,
+  `'machine'` when it is. **Two values, and it always answers** — since migration
+  010 the column is `NOT NULL CHECK (source IN ('ui','machine'))`, so a write that
+  declined to say where it came from is a write the database refuses.
 
-  Nil is the third bucket, and leaving it reachable is deliberate. Every write
-  through a handler passes `:human?` — it comes from the token's `:machine?`
-  claim, so there is always an answer — which leaves the absent case to callers
-  that made no claim about themselves at all. `create-recipe` already describes
-  those as leaving the row of *unknown* provenance, and stamping `'machine'` on
-  them would turn 'nobody said' into a positive claim about an agent, which is the
-  same mistake migration 005 refuses to make with a column default.
+  It used to have a third answer, nil, for a caller that passed no `:human?` at
+  all: 005 kept 'unrecorded' as a category and stamping `'machine'` on silence
+  would have turned 'nobody said' into a claim about an agent. 010 retired that
+  category on the owner's own instruction, so the question now is which of the two
+  a silent caller gets, and the answer is `'machine'` — for one reason and not out
+  of convenience. **`has_human_edit` has read this same flag as `(if human? 1 0)`
+  since 004**, so silence has always meant 'not the owner acting for himself' on
+  the row; making it mean something else in the column would break the invariant
+  that the bit is true exactly when some version reads `'ui'`, on the very next
+  write, and 010's whole point was to make those two agree.
+
+  Nothing reaches the silent case from outside anyway: every write through a
+  handler passes `:human?`, taken from the token's `:machine?` claim, so an HTTP
+  caller is always attributed. What is left is internal callers and tests, and a
+  caller that wants the owner's label has to say so.
 
   There is deliberately no second way of deciding who the caller is: this reads
   the flag the handlers already pass down for `has_human_edit`."
   [opts]
-  (when (contains? opts :human?)
-    (if (:human? opts) "ui" "machine")))
+  (if (:human? opts) "ui" "machine"))
 
 (defn- machine-write?
   "Whether this write is an agent's, which is the one thing that puts an event in
@@ -497,11 +524,13 @@
   `:human?` records that this came from a caller that is not a machine — see
   `update-recipe` for what that means and why it is the fact worth recording. It
   sets both halves of the record on the one insert: `has_human_edit` for the row,
-  and `source` for the version being created, which is v1. It defaults to false,
-  which is the conservative reading: a caller that says nothing about itself leaves
-  the row of unknown provenance rather than claiming the owner's hand for it —
-  `has_human_edit` 0 and `source` NULL, the two ways this schema has of not
-  asserting something.
+  and `source` for the version being created, which is v1. It **defaults to
+  false**, which since migration 010 means `has_human_edit` 0 and `source`
+  `'machine'` rather than the 0-and-NULL this used to leave: the column can no
+  longer decline to answer, and the two halves are read off the one flag precisely
+  so they cannot say different things. `source-of` argues that choice; the short
+  version is that silence has meant 'not the owner acting for himself' on this row
+  since 004, and the label now says the same.
 
   `scope_ids` files the new Recipe under the caller's own Scopes, in the same
   transaction as the insert — so a Recipe is never briefly visible unfiled, and a
@@ -819,9 +848,10 @@
 
   Every entry carries `:source` — where that one version came from — and it comes
   from two places, mirroring rhizome's `get-description-history`: the current
-  entry's off the row, the older ones off their own history rows. The key is always
-  present and its value may be nil, which is a version written before anything
-  recorded this rather than a version whose author was withheld."
+  entry's off the row, the older ones off their own history rows. It is always one
+  of `'ui'` and `'machine'`; a nil was possible until migration 010 and is not any
+  more, so a reader stepping through a history no longer meets a version whose
+  origin is a third thing."
   [ds user-id id]
   (when-let [current (get-recipe ds user-id id {:lean? false})]
     (let [history (jdbc/execute! (db/get-conn ds)

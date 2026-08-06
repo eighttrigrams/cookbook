@@ -34,11 +34,17 @@
 
 (defn- insert-recipe!
   "Straight at the table, in whatever schema is current — so this still works
-  with 006 rolled back, which is the point."
-  [ds title]
+  with 006 rolled back, which is the point.
+
+  `source` is `'ui'` because from migration 010 the column is `NOT NULL`: a row
+  written into the *current* schema has to carry a label. The value is arbitrary
+  here — nothing in this namespace is about provenance — but it cannot be absent,
+  and a test rolled back past 005 would have to drop the key instead. No caller
+  here does that, since 006 is later than 005." [ds title]
   (:id (jdbc/execute-one! (db/get-conn ds)
          (sql/format {:insert-into :recipes
-                      :values [{:title title :useful_when "" :description "" :version 1}]
+                      :values [{:title title :useful_when "" :description ""
+                                :version 1 :source "ui"}]
                       :returning [:id]})
          db/jdbc-opts)))
 

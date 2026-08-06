@@ -111,15 +111,18 @@
   and not saved since reads as not-human-edited even if the owner wrote every word
   of it: what was never recorded is not asserted. It composes with ?search.
 
-  **Every row carries the provenance split**: `machine_versions`, `ui_versions`
-  and `unrecorded_versions`, counting how many of that Recipe's versions were
-  written by an agent, in the web UI, and before cookbook recorded this at all.
-  The three always sum to `version`. `source` is there too — the *current*
-  version's own label, one of `ui`, `machine` or null. Unrecorded is a third
-  category and not a synonym for machine: a Recipe last saved before this shipped
-  reads `unrecorded_versions` equal to its version and nothing else, because
-  nothing that could answer who wrote those versions was ever stored. Per-version
-  labels are on GET /api/recipes/:id/versions.
+  **Every row carries the provenance split**: `machine_versions` and
+  `ui_versions`, counting how many of that Recipe's versions an agent wrote and how
+  many were saved by hand in the web UI. **The two always sum to `version`**, so
+  `machine_versions = version` says every version of this Recipe is an agent's —
+  which is exactly the rule that decides whether an agent may edit it directly or
+  has to propose (see PUT /api/recipes/:id). `source` is there too, the *current*
+  version's own label, one of `ui` or `machine`.
+
+  There is no third bucket and no null: a version's origin used to be unrecorded for
+  everything written before cookbook noted it, and that category was retired — the
+  owner said those versions were his, so they read `ui` and the column now refuses
+  anything but the two. Per-version labels are on GET /api/recipes/:id/versions.
 
   **Lean by default**: the response carries no `description` key at all — and,
   for a visitor, no `tags` key either, at any ?detail. Pass ?detail=full to
@@ -364,11 +367,14 @@
   such thing as what a Recipe's tags were at v2.
 
   **`source` says where that one version came from**: `ui` for a save by the
-  owner, `machine` for one by an agent token, and **null for a version written
-  before cookbook recorded this** — the key is always present, and a null in it is
-  'never recorded' rather than 'withheld'. Each label belongs to the version it
+  owner, `machine` for one by an agent token, and those are the only two values —
+  every version of every Recipe carries one. Each label belongs to the version it
   sits on and not to the save that displaced it, so a version's label never changes
-  after the fact. The same three values are counted per Recipe on GET /api/recipes.
+  after the fact. The same two values are counted per Recipe on GET /api/recipes.
+
+  There used to be a third answer, null, for versions written before cookbook
+  recorded this at all. The owner settled what those were — his — so they read `ui`
+  now and nothing in the API returns a null here any more.
 
   The history is the owner's: an anonymous visitor gets a 404 for every id,
   published or not. Publishing puts today's text in public, not every draft

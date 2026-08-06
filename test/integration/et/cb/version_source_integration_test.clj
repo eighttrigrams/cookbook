@@ -43,7 +43,7 @@
   (first (filter #(= id (:id %)) (:body (GET-json "/api/recipes")))))
 
 (defn- split-of [id]
-  (select-keys (listed id) [:version :machine_versions :ui_versions :unrecorded_versions]))
+  (select-keys (listed id) [:version :machine_versions :ui_versions]))
 
 ;; ---------------------------------------------------------------------------
 ;; which token labels a version how
@@ -84,7 +84,7 @@
     (testing "the owner put his name to the agent's text; he did not write it"
       (is (= "machine" (:source (listed id))))
       (is (= {1 "machine"} (sources-by-version id)))
-      (is (= {:version 1 :machine_versions 1 :ui_versions 0 :unrecorded_versions 0}
+      (is (= {:version 1 :machine_versions 1 :ui_versions 0}
              (split-of id))))))
 
 (deftest a-save-that-changes-nothing-labels-nothing
@@ -117,22 +117,26 @@
       (testing "and the key is on every entry, which is what part 2 relies on"
         (is (every? #(contains? % :source) versions))))))
 
-(deftest an-unrecorded-version-reads-as-null-and-keeps-its-key
-  ;; A Recipe from before the column: written straight into the table, then saved
-  ;; through the API, so the ladder holds one unlabelled version and one labelled.
+(deftest no-version-reads-as-null-any-more
+  ;; This used to be `an-unrecorded-version-reads-as-null-and-keeps-its-key`, and it
+  ;; proved the third bucket: a Recipe written before the column, put back into that
+  ;; state with a helper that reached past the handlers, read `source` nil and was
+  ;; counted in a bucket of its own. Migration 010 retired the category on the
+  ;; owner's own instruction, so the test now asserts the opposite — and it asserts
+  ;; it where the old state was manufactured, because that is the one place that
+  ;; could still produce a null if the constraint were dropped.
   (let [{:keys [id]} (create-as-machine! "Older than the column")]
-    (h/clear-source! id)
+    (testing "the state the old test needed cannot be written any more: the database
+              refuses it rather than a handler declining to"
+      (is (thrown? org.sqlite.SQLiteException (h/clear-source! id))))
     (PUT-json (str "/api/recipes/" id) {:description "saved since"})
-    (let [versions (versions-of id)]
-      (is (= {2 "ui" 1 nil} (sources-by-version id)))
-      (testing "the null entry still has the key — a reader must be able to tell
-                'not recorded' from 'no such field'"
-        (is (contains? (last versions) :source))
-        (is (nil? (:source (last versions)))))
-      (testing "and the card counts it in the third bucket rather than rounding it
-                to the machine one"
-        (is (= {:version 2 :machine_versions 0 :ui_versions 1 :unrecorded_versions 1}
-               (split-of id)))))))
+    (testing "so every entry of every history carries one of the two labels, and a
+              reader never meets a third thing"
+      (is (= {2 "ui" 1 "machine"} (sources-by-version id)))
+      (is (every? #(contains? % :source) (versions-of id)))
+      (is (every? #{"ui" "machine"} (map :source (versions-of id)))))
+    (testing "and the card's split has two buckets that sum to the version"
+      (is (= {:version 2 :machine_versions 1 :ui_versions 1} (split-of id))))))
 
 ;; ---------------------------------------------------------------------------
 ;; the split on the listing
@@ -143,14 +147,15 @@
     (machine :put (str "/api/recipes/" id) {:description "v3 by the agent"})
     (PUT-json (str "/api/recipes/" id) {:description "v4 by the owner"})
     (testing "the badge's numbers are on the lean listing row itself"
-      (is (= {:version 4 :machine_versions 2 :ui_versions 2 :unrecorded_versions 0}
+      (is (= {:version 4 :machine_versions 2 :ui_versions 2}
              (split-of id))))
     (testing "and the lean listing is still lean — the join reaches a table with a
               `description` of its own, and no body may come back through it"
       (is (every? #(false? (contains? % :description)) (:body (GET-json "/api/recipes")))))
-    (testing "the three sum to the version, which is the invariant behind the badge"
-      (let [{:keys [version machine_versions ui_versions unrecorded_versions]} (split-of id)]
-        (is (= version (+ machine_versions ui_versions unrecorded_versions)))))
+    (testing "the two sum to the version, which is the invariant behind the badge —
+              it was three buckets until migration 010 retired the unrecorded one"
+      (let [{:keys [version machine_versions ui_versions]} (split-of id)]
+        (is (= version (+ machine_versions ui_versions)))))
     (testing "?detail=full adds the recipe's own body and nothing from history"
       (is (= "v4 by the owner"
              (:description (first (filter #(= id (:id %))
@@ -186,17 +191,18 @@
   (let [doc-for (fn [method path]
                   (:doc (first (filter #(and (= path (:path %)) (= method (:method %)))
                                        (h/describe-endpoints)))))]
-    (testing "the version list says what `source` is, including that a null in it
-              means never-recorded rather than withheld"
+    (testing "the version list says what `source` is, and that the two values are
+              all of them — an agent reading this catalogue must not be left
+              expecting a null that cannot arrive"
       (let [doc (doc-for "GET" "/api/recipes/:id/versions")]
         (is (re-find #"source" doc))
         (is (re-find #"(?i)machine" doc))
-        (is (re-find #"(?i)null" doc))
-        (is (re-find #"(?i)not recorded|never recorded|before cookbook recorded" doc))))
+        (is (re-find #"(?i)only two values|both|two" doc))))
     (testing "and the listing says the counts are there and that they sum to the
               version"
       (let [doc (doc-for "GET" "/api/recipes")]
         (is (re-find #"machine_versions" doc))
         (is (re-find #"ui_versions" doc))
-        (is (re-find #"unrecorded_versions" doc))
+        (is (not (re-find #"unrecorded_versions" doc))
+            "and it no longer promises a bucket the app has retired")
         (is (re-find #"(?i)sum to `?version" doc))))))

@@ -112,16 +112,28 @@
     (is (nil? (db.recipe/get-recipe h/*ds* h/*user-id* id)) "the delete really landed")
     (is (empty? (h/event-rows)) "and his delete makes nothing either")))
 
-(deftest a-caller-that-says-nothing-about-itself-makes-no-event
-  ;; `source-of` is nil for a caller that passed no `:human?` at all, which is the
-  ;; third bucket 005 keeps. Unknown provenance is not machine provenance, so it
-  ;; writes no event — the same direction 004 and 005 both round in.
+(deftest a-caller-that-says-nothing-about-itself-is-treated-as-an-agent
+  ;; **This test asserted the opposite until migration 010**, and the reason it
+  ;; flipped is worth keeping: `source-of` used to answer nil for a caller that
+  ;; passed no `:human?` at all — the third bucket — and an event is written exactly
+  ;; when the label would be `machine`, so silence made no event. 010 retired that
+  ;; bucket, silence now labels the version `machine`, and the event rule follows it
+  ;; without having a second opinion. That is the property being pinned here: the
+  ;; queue and the labels are decided by one expression, so they cannot drift.
+  ;;
+  ;; Only the db layer can get here. Every write through a handler passes `:human?`
+  ;; from the token, so no HTTP caller is ever unattributed.
   (let [{:keys [id]} (db.recipe/create-recipe h/*ds* h/*user-id* {:title "Unattributed"})]
-    (is (empty? (h/event-rows)))
+    (is (= ["created"] (kinds-of id)))
     (db.recipe/update-recipe h/*ds* h/*user-id* id {:description "body v2"} nil)
-    (is (empty? (h/event-rows)))
+    (is (= ["created" "modified"] (kinds-of id)))
+    (testing "and both of those versions are labelled `machine` — read while the
+              Recipe still exists, because the labels are the thing the events are
+              keyed off and after the delete there is no ladder left to read"
+      (is (= ["machine" "machine"]
+             (mapv :source (:versions (db.recipe/list-versions h/*ds* h/*user-id* id))))))
     (db.recipe/delete-recipe h/*ds* h/*user-id* id)
-    (is (empty? (h/event-rows)))))
+    (is (= ["created" "modified" "deleted"] (kinds-of id)))))
 
 (deftest his-save-over-an-agents-Recipe-adds-nothing-to-the-queue
   ;; The mixed history, which is the interesting case: the agent's two writes are in

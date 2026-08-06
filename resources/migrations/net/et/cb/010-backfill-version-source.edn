@@ -1,0 +1,205 @@
+{:up [;; 1 and 2 — the answer, written down. Every version whose origin was never
+      ;; recorded becomes `'ui'`.
+      "UPDATE recipes SET source = 'ui' WHERE source IS NULL"
+      "UPDATE recipe_history SET source = 'ui' WHERE source IS NULL"
+      ;; 3 — and the bit that says the same thing about the row, or `?human=true`
+      ;; would stop finding exactly the Recipes this backfill is about.
+      "UPDATE recipes SET has_human_edit = 1
+         WHERE source = 'ui'
+            OR id IN (SELECT recipe_id FROM recipe_history WHERE source = 'ui')"
+      ;; 4 — the AUTOINCREMENT high-water mark, saved before the table it lives on
+      ;; goes away. See the comment below: without this the rebuild hands out a
+      ;; deleted Recipe's id again.
+      "CREATE TABLE recipes_seq_keep AS
+         SELECT COALESCE((SELECT seq FROM sqlite_sequence WHERE name = 'recipes'), 0) AS seq"
+      ;; 5 to 9 — `recipes` rebuilt, because SQLite cannot add NOT NULL or a CHECK
+      ;; with ALTER TABLE. Every column reproduced from 002/004/005/006/008 with the
+      ;; same types, defaults and REFERENCES; AUTOINCREMENT kept, which other things
+      ;; depend on (see below).
+      "CREATE TABLE recipes_rebuilt (
+         id             INTEGER PRIMARY KEY AUTOINCREMENT,
+         title          TEXT NOT NULL,
+         useful_when    TEXT NOT NULL DEFAULT '',
+         description    TEXT NOT NULL DEFAULT '',
+         version        INTEGER NOT NULL DEFAULT 1,
+         published      INTEGER NOT NULL DEFAULT 0,
+         published_at   DATETIME,
+         created_at     DATETIME DEFAULT (datetime('now')),
+         modified_at    DATETIME DEFAULT (datetime('now')),
+         user_id        INTEGER REFERENCES users(id) ON DELETE CASCADE,
+         has_human_edit INTEGER NOT NULL DEFAULT 0,
+         source         TEXT NOT NULL CHECK (source IN ('ui','machine')),
+         tags           TEXT NOT NULL DEFAULT '',
+         view_count     INTEGER NOT NULL DEFAULT 0
+       )"
+      "INSERT INTO recipes_rebuilt
+         (id, title, useful_when, description, version, published, published_at,
+          created_at, modified_at, user_id, has_human_edit, source, tags, view_count)
+       SELECT
+          id, title, useful_when, description, version, published, published_at,
+          created_at, modified_at, user_id, has_human_edit, source, tags, view_count
+       FROM recipes"
+      "DROP TABLE recipes"
+      "ALTER TABLE recipes_rebuilt RENAME TO recipes"
+      "CREATE INDEX idx_recipes_user ON recipes (user_id)"
+      ;; 10 to 12 — and the mark put back, at whichever is higher: what it was
+      ;; before, or the largest id that actually survived the copy. The row the copy
+      ;; left behind is deleted first, because `sqlite_sequence` has no unique index
+      ;; on `name` and an `INSERT OR REPLACE` would quietly leave two rows for
+      ;; `recipes`.
+      "DELETE FROM sqlite_sequence WHERE name = 'recipes'"
+      "INSERT INTO sqlite_sequence (name, seq)
+         SELECT 'recipes', MAX(k.seq, COALESCE((SELECT MAX(id) FROM recipes), 0))
+         FROM recipes_seq_keep k"
+      "DROP TABLE recipes_seq_keep"
+      ;; 13 to 16 — and `recipe_history`, composite primary key included. No
+      ;; sequence to keep here: its key is `(recipe_id, version)` and it has no
+      ;; AUTOINCREMENT column, so there is no row for it in `sqlite_sequence`.
+      "CREATE TABLE recipe_history_rebuilt (
+         recipe_id   INTEGER NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+         version     INTEGER NOT NULL,
+         title       TEXT,
+         useful_when TEXT,
+         description TEXT,
+         created_at  DATETIME DEFAULT (datetime('now')),
+         source      TEXT NOT NULL CHECK (source IN ('ui','machine')),
+         PRIMARY KEY (recipe_id, version)
+       )"
+      "INSERT INTO recipe_history_rebuilt
+         (recipe_id, version, title, useful_when, description, created_at, source)
+       SELECT
+          recipe_id, version, title, useful_when, description, created_at, source
+       FROM recipe_history"
+      "DROP TABLE recipe_history"
+      "ALTER TABLE recipe_history_rebuilt RENAME TO recipe_history"]
+ ;; **The end of the third bucket.** `source` was nullable, and NULL meant 'nobody
+ ;; recorded where this version came from' — every version written before 005. The
+ ;; owner asked for that category to be retired: *you can also add a migration
+ ;; which migrates all 'unknown' source older events or versions to 'human/ui',
+ ;; such that we can put a constraint in place that its always either human or
+ ;; machine, and we dont have threefold case distinction going forward.* So from
+ ;; here `source` is two-valued, said by the database and not by a convention, and
+ ;; the code that used to branch three ways branches twice.
+ ;;
+ ;; **This is not 005's mistake made two migrations later, and the difference is
+ ;; the whole justification.** 005 refused a column default because it would have
+ ;; been "a silent claim about every version the owner wrote by hand before anybody
+ ;; was counting". That was right: a schema is in no position to say who wrote v3.
+ ;; **005 declined to guess. 010 is not guessing — it is recording the owner's own
+ ;; answer.** He is the one person who can settle it; cookbook was four days old and
+ ;; held nothing but his own writing when those versions were made; he was asked
+ ;; directly and said `ui`. A fact written down by the only party in a position to
+ ;; know it is a different act from a schema picking a plausible value.
+ ;;
+ ;; 005's comment stands untouched, deliberately. Migrations are an append-only log
+ ;; of what was decided when, and 005's argument is the reason the column was
+ ;; nullable at all — which is what made this answer his to give rather than
+ ;; something already assumed. This supersedes it; it does not go back and edit it.
+ ;;
+ ;; **`has_human_edit` is part of the same claim, not a nicety.** `db.recipe` states
+ ;; as an invariant that the bit is true exactly when some version reads `'ui'`.
+ ;; Backfilling the label without the bit would break that for every row written
+ ;; before 004 — and break it in the direction that matters, because those are the
+ ;; Recipes he typed by hand and `?human=true` is the filter whose one job is to
+ ;; find them. Statement 3 therefore reads the *whole* history, not just the row:
+ ;; a Recipe whose current version is an agent's but whose v1 is his still earns the
+ ;; bit. That the bit is now fully derivable does not make it redundant — deriving
+ ;; it would mean an aggregate over history on every listing read, which is the
+ ;; thing this schema avoided when it put the version count on the row.
+ ;;
+ ;; **The rebuild, and why it is the riskiest migration here.** SQLite can neither
+ ;; add NOT NULL nor add a CHECK with ALTER TABLE, so both tables go through the
+ ;; documented 12-step dance: new table, copy, drop, rename. Notes for whoever
+ ;; reads this next:
+ ;;
+ ;; - The column lists are written out **explicitly on both sides of the INSERT**.
+ ;;   `INSERT INTO … SELECT *` would silently depend on column order matching, and
+ ;;   the order here is the order four migrations happened to add things in.
+ ;; - **`AUTOINCREMENT` survives, and so does its counter — which is not the same
+ ;;   thing, and the difference is a real bug this migration had until it was run
+ ;;   against a copy of the owner's own database.** Declaring `AUTOINCREMENT` on the
+ ;;   new table is not enough: the high-water mark lives in `sqlite_sequence`, that
+ ;;   row goes away with the old table, and the copy sets it to the largest id it
+ ;;   inserted. So a Recipe created *after* the migration was handed the id of the
+ ;;   last Recipe that had been **deleted** before it — 55 in his database, where an
+ ;;   agent had made a note and deleted it again. That id is exactly what 009 leans
+ ;;   on when it leaves `recipe_id` unconstrained: an id is never reused, so an
+ ;;   orphaned event can never come to name a different Recipe. It would have named
+ ;;   one, the queue would have offered a link into somebody else's history, and
+ ;;   nothing would have looked wrong. `db.scope/delete-scope` leans on the same
+ ;;   fact. Hence statements 4 and 10 to 12: save the mark, put it back at
+ ;;   `MAX(saved, largest surviving id)`, and drop the scratch table.
+ ;; - `idx_recipes_user` is recreated, because a rebuild drops the table's indexes
+ ;;   with it and a missing index fails nothing visibly — it just gets slow.
+ ;; - `recipe_history`'s `PRIMARY KEY (recipe_id, version)` is part of the new
+ ;;   table, not an afterthought: it is the only thing keeping one version of one
+ ;;   Recipe from being archived twice.
+ ;; - `PRAGMA foreign_keys` is 0 on this connection and the `REFERENCES` clauses
+ ;;   here are documentation, as 007 already says. That is what makes dropping
+ ;;   `recipes` while `recipe_history` still points at it safe. If foreign keys are
+ ;;   ever switched on, this migration has to be re-read before it is re-run on a
+ ;;   fresh database: with them on, dropping a parent performs the FK actions, and
+ ;;   `ON DELETE CASCADE` would take the history with it.
+ ;; - `recipe_events` is untouched. It has no `source` column — every event is an
+ ;;   agent's (see 009) — so the third bucket never reached it.
+ ;;
+ ;; The `:down` puts both columns back to `TEXT` with no NOT NULL and no CHECK, by
+ ;; the same rebuild. **It cannot restore which rows were NULL**, and it does not
+ ;; pretend to: the information was destroyed on the way up, which is the point of
+ ;; going up. It also leaves `has_human_edit` where statement 3 put it, for the same
+ ;; reason — nothing records which rows it moved. A rollback therefore returns the
+ ;; *shape* of the schema and not the state, and re-migrating is a no-op on the data
+ ;; because there is nothing left to backfill.
+ :down ["CREATE TABLE recipes_seq_keep AS
+           SELECT COALESCE((SELECT seq FROM sqlite_sequence WHERE name = 'recipes'), 0) AS seq"
+        "CREATE TABLE recipes_rebuilt (
+           id             INTEGER PRIMARY KEY AUTOINCREMENT,
+           title          TEXT NOT NULL,
+           useful_when    TEXT NOT NULL DEFAULT '',
+           description    TEXT NOT NULL DEFAULT '',
+           version        INTEGER NOT NULL DEFAULT 1,
+           published      INTEGER NOT NULL DEFAULT 0,
+           published_at   DATETIME,
+           created_at     DATETIME DEFAULT (datetime('now')),
+           modified_at    DATETIME DEFAULT (datetime('now')),
+           user_id        INTEGER REFERENCES users(id) ON DELETE CASCADE,
+           has_human_edit INTEGER NOT NULL DEFAULT 0,
+           source         TEXT,
+           tags           TEXT NOT NULL DEFAULT '',
+           view_count     INTEGER NOT NULL DEFAULT 0
+         )"
+        "INSERT INTO recipes_rebuilt
+           (id, title, useful_when, description, version, published, published_at,
+            created_at, modified_at, user_id, has_human_edit, source, tags, view_count)
+         SELECT
+            id, title, useful_when, description, version, published, published_at,
+            created_at, modified_at, user_id, has_human_edit, source, tags, view_count
+         FROM recipes"
+        "DROP TABLE recipes"
+        "ALTER TABLE recipes_rebuilt RENAME TO recipes"
+        "CREATE INDEX idx_recipes_user ON recipes (user_id)"
+        ;; The same care on the way down as on the way up: a rollback that reused a
+        ;; deleted Recipe's id would be the same bug, and a `:down` nobody tested is
+        ;; discovered at the worst possible moment.
+        "DELETE FROM sqlite_sequence WHERE name = 'recipes'"
+        "INSERT INTO sqlite_sequence (name, seq)
+           SELECT 'recipes', MAX(k.seq, COALESCE((SELECT MAX(id) FROM recipes), 0))
+           FROM recipes_seq_keep k"
+        "DROP TABLE recipes_seq_keep"
+        "CREATE TABLE recipe_history_rebuilt (
+           recipe_id   INTEGER NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+           version     INTEGER NOT NULL,
+           title       TEXT,
+           useful_when TEXT,
+           description TEXT,
+           created_at  DATETIME DEFAULT (datetime('now')),
+           source      TEXT,
+           PRIMARY KEY (recipe_id, version)
+         )"
+        "INSERT INTO recipe_history_rebuilt
+           (recipe_id, version, title, useful_when, description, created_at, source)
+         SELECT
+            recipe_id, version, title, useful_when, description, created_at, source
+         FROM recipe_history"
+        "DROP TABLE recipe_history"
+        "ALTER TABLE recipe_history_rebuilt RENAME TO recipe_history"]}

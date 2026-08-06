@@ -193,6 +193,30 @@ correlated subquery per row in every listing.
 Publishing does not create a version and `published` is not in the history
 table: versions are about content, the latch is a separate fact about the row.
 
+### Where each version came from
+
+Every version carries a `source`, and it is **one of exactly two values**: `ui`
+for a save made by hand here, `machine` for one written by an agent. It sits where
+the version it describes sits — on the row for the current version, on each history
+row for the superseded ones — and it never changes after the fact: a save archives
+the outgoing version with *its own* label, so an agent's edit cannot retroactively
+relabel what the owner wrote. `GET /api/recipes` counts them per Recipe as
+`machine_versions` and `ui_versions`, which sum to `version`; `GET
+/api/recipes/:id/versions` gives the label per version.
+
+There used to be a third answer. `source` was nullable and NULL meant *nobody
+recorded this* — true of every version written before migration 005, which
+deliberately refused to guess who wrote them. That refusal is what left the answer
+to the one person who could give it: asked what those versions were, the owner said
+they were his. Migration 010 wrote that down, brought `has_human_edit` up to match
+it, and made the column `NOT NULL CHECK (source IN ('ui','machine'))` — so the
+distinction is now two-valued in the schema and nothing downstream has a third case
+to handle.
+
+`has_human_edit` is the row-level bit beside it, true exactly when some version
+reads `ui`, and it is what `?human=true` narrows by. It is kept rather than derived
+because deriving it would mean an aggregate over the history on every listing read.
+
 ### Rate limiting
 
 A single global window, outermost in the middleware chain: 180 requests/minute in

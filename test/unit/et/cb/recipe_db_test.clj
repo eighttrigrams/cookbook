@@ -184,7 +184,8 @@
 
 (deftest the-human-edit-mark-is-monotonic
   (testing "a machine's create leaves the row unmarked, and so does a caller who
-            says nothing about itself — an unrecorded author is not a human one"
+            says nothing about itself — silence is not a human hand, which is the
+            reading this bit has given it since 004 and the label since 010"
     (is (= 0 (:has_human_edit (create-as! false "Written by an agent"))))
     (is (= 0 (:has_human_edit (create! "Said nothing")))))
 
@@ -300,11 +301,12 @@
   (into {} (map (juxt :version :source) (:versions (versions-of id)))))
 
 (defn- split-of
-  "The badge's three counts as the listing serves them — from the listing, because
-  that is the only read that carries them and the card is a collapsed row."
+  "The badge's two counts as the listing serves them — from the listing, because
+  that is the only read that carries them and the card is a collapsed row. Two, and
+  not the three it was until migration 010 retired the unrecorded bucket."
   [id]
   (-> (first (filter #(= id (:id %)) (db.recipe/list-recipes h/*ds* h/*user-id*)))
-      (select-keys [:version :machine_versions :ui_versions :unrecorded_versions])))
+      (select-keys [:version :machine_versions :ui_versions])))
 
 (deftest archive-order-is-the-whole-design
   ;; The one bug this schema invites. `archive!` must write the *outgoing* row's
@@ -338,23 +340,31 @@
         (is (= "ui" (:source saved)))
         (is (= {1 "machine" 2 "ui"} (sources-by-version id))))
       (testing "which is one machine version and one ui version on the card"
-        (is (= {:version 2 :machine_versions 1 :ui_versions 1 :unrecorded_versions 0}
+        (is (= {:version 2 :machine_versions 1 :ui_versions 1}
                (split-of id)))))))
 
-(deftest a-caller-that-says-nothing-leaves-the-version-unrecorded
-  ;; The third bucket, reachable from the db layer only: every write through a
-  ;; handler carries `:human?`, because the token always answers it. Stamping
-  ;; 'machine' here would turn 'nobody said' into a claim about an agent.
+(deftest a-caller-that-says-nothing-about-itself-is-labelled-machine
+  ;; This was `a-caller-that-says-nothing-leaves-the-version-unrecorded`, and it
+  ;; asserted the third bucket: a db-layer write with no `:human?` at all left
+  ;; `source` NULL, because stamping 'machine' on silence would have turned 'nobody
+  ;; said' into a claim about an agent. Migration 010 removed the column's ability
+  ;; to say nothing, so silence now has to mean one of the two — and it means
+  ;; `machine`, because `has_human_edit` has read this same flag as
+  ;; `(if human? 1 0)` since 004. Any other choice would put the bit and the label
+  ;; in disagreement on the very next write, which is the thing 010 exists to end.
+  ;;
+  ;; Only the db layer can get here: every write through a handler carries `:human?`,
+  ;; taken from the token.
   (let [{:keys [id]} (create! "Said nothing")]
-    (is (nil? (source-of id)))
-    (is (= {:version 1 :machine_versions 0 :ui_versions 0 :unrecorded_versions 1}
-           (split-of id)))
-    (testing "and a labelled save afterwards leaves the unrecorded version
-              unrecorded rather than backfilling it"
+    (is (= "machine" (source-of id)))
+    (is (= 0 (:has_human_edit (db.recipe/get-recipe h/*ds* h/*user-id* id)))
+        "and the bit agrees with the label, which is the whole point")
+    (is (= {:version 1 :machine_versions 1 :ui_versions 0} (split-of id)))
+    (testing "and a labelled save afterwards leaves that version labelled as it was
+              — the backfill was a migration, not something a save does"
       (db.recipe/update-recipe h/*ds* h/*user-id* id {:description "body v2"} nil {:human? true})
-      (is (= {1 nil 2 "ui"} (sources-by-version id)))
-      (is (= {:version 2 :machine_versions 0 :ui_versions 1 :unrecorded_versions 1}
-             (split-of id))))))
+      (is (= {1 "machine" 2 "ui"} (sources-by-version id)))
+      (is (= {:version 2 :machine_versions 1 :ui_versions 1} (split-of id))))))
 
 (deftest what-does-not-touch-the-source
   (testing "publishing: not a version at all, so there is no provenance in it to
@@ -364,7 +374,7 @@
       (db.recipe/publish-recipe h/*ds* h/*user-id* id)
       (is (= "machine" (source-of id)))
       (is (= 1 (:version (db.recipe/get-recipe h/*ds* h/*user-id* id))))
-      (is (= {:version 1 :machine_versions 1 :ui_versions 0 :unrecorded_versions 0}
+      (is (= {:version 1 :machine_versions 1 :ui_versions 0}
              (split-of id)))
       (testing "publishing twice is no different"
         (db.recipe/publish-recipe h/*ds* h/*user-id* id)
@@ -384,36 +394,42 @@
                                          "1999-01-01 00:00:00" {:human? false})))
       (is (= "ui" (source-of id))))))
 
-(deftest the-three-counts-sum-to-the-version
+(deftest the-two-counts-sum-to-the-version
   ;; A real invariant and not a coincidence: history holds versions 1..N-1, one row
   ;; each, and the row itself is N. A split that stopped summing would mean the
-  ;; badge was counting something other than versions.
+  ;; badge was counting something other than versions. It was three counts until
+  ;; migration 010; now every version carries one of two labels, so the arithmetic
+  ;; is tighter than it was — there is no bucket left for a version to hide in.
   (let [{:keys [id]} (create-as! true "Much revised")]
     (doseq [[i human?] (map-indexed vector [false true false false true nil])]
       (if (nil? human?)
         (db.recipe/update-recipe h/*ds* h/*user-id* id {:description (str "body " i)} nil)
         (db.recipe/update-recipe h/*ds* h/*user-id* id {:description (str "body " i)} nil
                                  {:human? human?}))
-      (let [{:keys [version machine_versions ui_versions unrecorded_versions]} (split-of id)]
-        (is (= version (+ machine_versions ui_versions unrecorded_versions))
+      (let [{:keys [version machine_versions ui_versions]} (split-of id)]
+        (is (= version (+ machine_versions ui_versions))
             (str "the split must sum to the version at v" version))))
     (testing "and the tally matches the ladder the version list shows, one entry
               per version — the counts are aggregated from the same columns"
-      (is (= {:version 7 :machine_versions 3 :ui_versions 3 :unrecorded_versions 1}
+      (is (= {:version 7 :machine_versions 4 :ui_versions 3}
              (split-of id)))
-      (is (= {1 "ui" 2 "machine" 3 "ui" 4 "machine" 5 "machine" 6 "ui" 7 nil}
+      ;; v7 is the save that passed no `:human?` at all — `machine` now, where it
+      ;; used to be the null this test was partly about.
+      (is (= {1 "ui" 2 "machine" 3 "ui" 4 "machine" 5 "machine" 6 "ui" 7 "machine"}
              (sources-by-version id))))))
 
 (deftest a-recipe-with-no-history-counts-its-one-version-once
   ;; The LEFT JOIN's phantom row: with no history rows at all the join still yields
-  ;; one all-NULL row per recipe, which an unguarded `source IS NULL` count would
-  ;; read as an extra unrecorded version.
+  ;; one all-NULL row per recipe. An unguarded `source IS NULL` count read that as an
+  ;; extra version, which is why `versions-with-source` guards on `recipe_id IS NOT
+  ;; NULL` — and the guard stays after 010 even though a NULL source can no longer
+  ;; exist, because the phantom row is a property of the join rather than of the
+  ;; column. This is the read that would notice if it were removed *and* an `IS NULL`
+  ;; comparison ever came back.
   (let [{by-hand :id} (create-as! true "Fresh, by hand")
-        {said-nothing :id} (create! "Fresh, unlabelled")]
-    (is (= {:version 1 :machine_versions 0 :ui_versions 1 :unrecorded_versions 0}
-           (split-of by-hand)))
-    (is (= {:version 1 :machine_versions 0 :ui_versions 0 :unrecorded_versions 1}
-           (split-of said-nothing)))))
+        {by-machine :id} (create-as! false "Fresh, by an agent")]
+    (is (= {:version 1 :machine_versions 0 :ui_versions 1} (split-of by-hand)))
+    (is (= {:version 1 :machine_versions 1 :ui_versions 0} (split-of by-machine)))))
 
 (deftest the-split-does-not-widen-the-lean-projection
   ;; The counts come from a join on `recipe_history`, which has a `description`
@@ -476,9 +492,11 @@
           (is (pos? (:ui_versions (split-of id)))))))))
 
 (deftest every-version-entry-carries-a-source-key
-  ;; The version list is what part 2's diff viewer reads, so the key has to be
-  ;; there on every entry — including the ones whose value is nil, and including
-  ;; the current row, whose label comes off the row rather than off a history row.
+  ;; The version list is what the diff viewer reads, so the key has to be there on
+  ;; every entry — including the current row, whose label comes off the row rather
+  ;; than off a history row. It used to matter most for the entries whose *value*
+  ;; was nil; since migration 010 there are none, and what is left to hold is that
+  ;; each entry carries its own label and one of exactly two words.
   (let [{:keys [id]} (create! "Unlabelled first")]
     (db.recipe/update-recipe h/*ds* h/*user-id* id {:description "body v2"} nil {:human? false})
     (db.recipe/update-recipe h/*ds* h/*user-id* id {:description "body v3"} nil {:human? true})
@@ -490,8 +508,13 @@
         (is (true? (:current (first versions)))))
       (testing "the history entries' labels are their own, oldest included"
         (is (= "machine" (:source (second versions))))
-        (is (nil? (:source (last versions))))
-        (is (contains? (last versions) :source))))))
+        (is (= "machine" (:source (last versions)))
+            "v1 came from a caller that said nothing about itself, which is
+             `machine` now and was nil before 010")
+        (is (contains? (last versions) :source)))
+      (testing "and every label is one of the two, which is what the viewer can now
+                rely on instead of handling a third case"
+        (is (every? #{"ui" "machine"} (map :source versions)))))))
 
 (deftest delete-takes-the-history-with-it
   (let [{:keys [id]} (create! "Ciabatta")]

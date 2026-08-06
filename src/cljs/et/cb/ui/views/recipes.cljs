@@ -261,25 +261,29 @@
     [:div.card-body-loading "Loading…"]))
 
 (def ^:private source-badge-title
-  "Spelled out because `(?)` is the bucket every Recipe written before this
-  shipped falls into, and a reader who is not told would read it as the app being
-  unsure rather than as nothing having been recorded. The sentence itself comes
-  from `et.cb.ui.provenance`, so this badge and the version viewer's label cannot
-  end up naming the same fact differently."
+  "Spelled out because the two words decide who to trust for a Recipe's text, which
+  a bare `3(machine)/17(ui)` does not say. The sentence itself comes from
+  `et.cb.ui.provenance`, so this badge and the version viewer's label cannot end up
+  naming the same fact differently."
   (str "Where this Recipe's versions came from — " provenance/explanation))
 
 (defn- source-split
   "`3(machine)/17(ui)`, and only the buckets that have something in them: a
   Recipe nothing has written by machine says `17(ui)` rather than carrying a `0`
-  around. All three empty cannot happen — the counts sum to the version number, so
+  around. Both empty cannot happen — the counts sum to the version number, so
   there is always at least one — but a listing row from an older server would have
-  no counts at all, and that renders as nothing rather than as `0(?)`.
+  no counts at all, and that renders as nothing rather than as `0(ui)`.
+
+  **Two buckets, since migration 010.** There was a third, for versions whose
+  origin nothing had recorded; the owner said those were his, 010 wrote it down, and
+  the column cannot hold a third value any more. A row from a server older than that
+  would still carry `unrecorded_versions`, and this ignores it rather than showing a
+  bucket the app no longer has a word for.
 
   The bucket names are the shared ones, for the reason above the tooltip."
-  [{:keys [machine_versions ui_versions unrecorded_versions]}]
+  [{:keys [machine_versions ui_versions]}]
   (let [buckets (->> [[machine_versions provenance/machine-label]
-                      [ui_versions provenance/ui-label]
-                      [unrecorded_versions provenance/unrecorded-label]]
+                      [ui_versions provenance/ui-label]]
                      (filter (fn [[n _]] (and (number? n) (pos? n))))
                      (map (fn [[n label]] (str n "(" label ")"))))]
     (when (seq buckets)

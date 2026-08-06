@@ -90,11 +90,13 @@
           (testing "and no entry carries tags: a version is the content"
             (is (every? #(false? (contains? % :tags)) versions))))))
     (testing "the card's provenance split still sums to the version, which a tag
-              change quietly counting as a `ui` version would have broken"
+              change quietly counting as a `ui` version would have broken — two
+              buckets since migration 010, not three"
       (let [row (first (:body (GET-json "/api/recipes")))]
         (is (= 2 (:version row)))
-        (is (= 2 (+ (:machine_versions row) (:ui_versions row)
-                    (:unrecorded_versions row))))))))
+        (is (= 2 (+ (:machine_versions row) (:ui_versions row))))
+        (is (false? (contains? row :unrecorded_versions))
+            "and the retired bucket is not sent as a 0 either")))))
 
 ;; ---------------------------------------------------------------------------
 ;; the machine: on the owner's side of this line

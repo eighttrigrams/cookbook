@@ -16,9 +16,12 @@
   are on show above the pane, and a note says when the body is what did not
   change. An empty diff pane on its own reads as broken.
 
-  **An unrecorded source is shown, not omitted.** Rhizome appends ` · source`
-  only when there is one. Here nil is a category of its own — see
-  `et.cb.ui.provenance` — and dropping the suffix would read exactly like a bug.
+  **The source suffix is always there.** Rhizome appends ` · source` only when
+  there is one; here there always is one — since migration 010 a version is `ui` or
+  `machine` and nothing else — so the label is unconditional rather than a value
+  that might be missing. It used to be unconditional for a subtler reason: nil was
+  a third category, and dropping the suffix for it would have read exactly like a
+  bug. The category is gone and the habit was right anyway.
 
   `description` is the field being diffed: the only one long enough to warrant a
   merge view, and the one that already goes through the full markdown parser.
@@ -105,7 +108,7 @@
   (str "Version " version " · " (provenance/label source)))
 
 (defn- step-label
-  "`Version 1 · ? → Version 2 · ui (current)`. With one version there is no step,
+  "`Version 1 · ui → Version 2 · machine (current)`. With one version there is no step,
   so it names the single version rather than going blank — rhizome renders nothing
   there, and nothing is what a reader cannot tell from a failed fetch."
   [older newer current-step?]
