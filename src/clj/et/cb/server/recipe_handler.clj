@@ -95,6 +95,12 @@
                       :current (db.recipe/get-recipe ds user-id id
                                                      {:lean? false :scopes? true})}})
 
+(defn- published?
+  "Whether this row carries the latch. A comparison and not a truth test: JSON gives
+  0 and 1, and 0 is not falsey here any more than it is in the client."
+  [recipe]
+  (= 1 (:published recipe)))
+
 (defn- read-audience
   "Owner or visitor, decided once per read. A visitor is deliberately *not*
   described by a user-id: `common/get-user-id` gives nil for one, and the db
@@ -187,7 +193,14 @@
   private ones. An unpublished recipe is absent from that listing rather than
   redacted in it: no title, no id, and nothing that reveals it is there. Both
   narrowings run inside that audience, so ?human=true can only take rows away from
-  what the caller could already see."
+  what the caller could already see.
+
+  **And what a visitor is shown is the last approved version, always.** An agent's
+  proposal is not a version and no read here consults one, so a Recipe with a rewrite
+  waiting on it lists exactly as it did before the rewrite was offered — for a visitor,
+  for the owner, and for the agent that offered it. Publishing does not change that
+  either: it is allowed while a proposal pends, and it publishes the row, which is the
+  approved state."
   [req]
   {:status 200
    :body (db.recipe/list-recipes (common/ensure-ds) (read-audience req)
@@ -222,6 +235,10 @@
   see GET /api/recipes for what it does and does not say. A visitor gets no such key.
   Note what a pending proposal does *not* change: this response is the Recipe as it
   reads now, at the last approved version, whatever an agent has queued against it.
+  **That holds at `?detail=full` and it holds for a visitor**, which is the case worth
+  stating outright: a published Recipe with an unapproved rewrite waiting on it hands an
+  anonymous reader the approved text and no part of the proposal. What a visitor is
+  shown is the last approved version, always.
 
   **A ?detail=full read of an existing Recipe counts as a consumption**: it bumps
   that Recipe's `view_count`, which is how the shelf is ranked (see GET
@@ -353,14 +370,24 @@
   ## When a machine's save becomes a proposal instead
 
   **A Recipe is yours to write directly only while every one of its versions was
-  written by an agent.** In the numbers this endpoint already gives you (GET
-  /api/recipes): `machine_versions = version`. One save of the owner's anywhere in
-  its history — even a superseded one, so the row's own `source` does not answer
-  this — and your next edit to its **content** is not applied; it is filed as a
-  proposal for him to approve or dismiss, and the Recipe goes on reading exactly as
-  it did. There is no flag for this on the row, deliberately: the rule is a
-  comparison of two numbers you are already sent, so it is checkable before you
+  written by an agent and it is not published.** In the numbers this endpoint already
+  gives you (GET /api/recipes): `machine_versions = version`, and `published` 0. One
+  save of the owner's anywhere in its history — even a superseded one, so the row's own
+  `source` does not answer this — and your next edit to its **content** is not applied;
+  it is filed as a proposal for him to approve or dismiss, and the Recipe goes on
+  reading exactly as it did. There is no flag for this on the row, deliberately: the
+  rule is a comparison of numbers you are already sent, so it is checkable before you
   write rather than something to be told afterwards.
+
+  **A published Recipe is the second half of that rule, and it outranks the first.** A
+  content PUT to one is *always* a proposal, even when every version of it is an
+  agent's and the count above would otherwise let you write straight through: the owner
+  has put his name to that text, so a change to it is his to accept. What you may not
+  do to a published Recipe is anything else — a `DELETE` is 403, a publish is 403, and
+  a PUT carrying `tags` or `scope_ids` is **403 with nothing applied**, whether or not
+  it also carries content. Filing a published Recipe stays the owner's, and a mixed
+  request would otherwise half-land. So on a published Recipe, propose the three
+  content fields and nothing else in the same call.
 
   A proposal answers **202**, not 200 — 'accepted, not applied' — with
   `{:pending {…} :recipe {…}}`: what you proposed, and the Recipe as it *still*
@@ -389,8 +416,7 @@
   A machine's `DELETE` of such a Recipe is refused outright (403) rather than
   proposed: there is no way to propose a deletion, and deleting a Recipe he has
   written is not something an agent should be able to queue up. Publishing is
-  refused for a machine on any Recipe, as before, and **every** mutation of a
-  published one still is — a proposal is not a way around the latch."
+  refused for a machine on any Recipe, as before."
   [req]
   (let [ds (common/ensure-ds)
         user-id (common/get-user-id req)
@@ -408,12 +434,20 @@
       bad-scope-ids-response
 
       ;; **The three conditions that make this a proposal instead of a save**, in this
-      ;; order and all of them. A machine caller, a Recipe that is not the agents'
-      ;; alone, and content that would actually change — the last one is what keeps a
+      ;; order and all of them. A machine caller, a Recipe that is not the agents' to
+      ;; write, and content that would actually change — the last one is what keeps a
       ;; machine PUT sending the same title back the no-op it has always been rather
       ;; than a pending proposal of nothing.
+      ;;
+      ;; The middle condition is **two** questions joined by `or`, and the order they
+      ;; are written in is not the order they are checked in — that is the point of the
+      ;; `or`. A published Recipe is never the agents' to write, however the gate reads,
+      ;; so an all-machine Recipe the owner has published proposes like any other. Had
+      ;; this been written as 'ask the gate, then ask about the latch', that Recipe
+      ;; would have taken the direct-write path below.
       (and (common/machine-caller? req)
-           (not (db.recipe/machine-only? ds user-id id))
+           (or (published? current)
+               (not (db.recipe/machine-only? ds user-id id)))
            (db.recipe/content-would-change? ds user-id id (select-keys body writable-fields)))
       (cond
         ;; The `modified_at` guard first: an agent proposing against text that has
@@ -483,7 +517,15 @@
   it was — the first publish is the fact being recorded. It is not a content
   change: no version bump, no history row, and neither `has_human_edit` nor
   `source` is touched — putting your name to text is not writing it. 404 when the
-  id matches nothing you own."
+  id matches nothing you own.
+
+  **What you publish is the version you have approved.** This is allowed while an
+  agent's proposal is waiting on the Recipe, and it publishes the row — which is the
+  last approved state, because a proposal is not a version and no read of a Recipe
+  consults one. So a pending rewrite cannot ride out to the public on the back of a
+  publish: what a visitor is shown is the last approved version, always. A machine may
+  propose against the Recipe afterwards as well, and the same holds — see PUT
+  /api/recipes/:id."
   [req]
   (let [user-id (common/get-user-id req)
         id (common/recipe-id req)

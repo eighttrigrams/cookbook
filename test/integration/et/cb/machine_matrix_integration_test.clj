@@ -5,27 +5,41 @@
 
   The two rows that *are* the feature:
 
-  | caller  | recipe      | text     | create | edit | delete | publish | read |
-  |---------|-------------|----------|--------|------|--------|---------|------|
-  | owner   | unpublished | either   | 201    | 200  | 200    | 200     | 200  |
-  | owner   | published   | either   | –      | 200  | 200    | 200 no-op | 200 |
-  | machine | unpublished | agents'  | 201    | 200  | 200    | **403** | 200  |
-  | machine | unpublished | **his**  | –      | **202** | **403** | **403** | 200 |
-  | machine | published   | either   | –      | **403** | **403** | **403** | 200 |
-  | anon    | unpublished | either   | 401    | 401  | 401    | 401     | absent |
-  | anon    | published   | either   | 401    | 401  | 401    | 401     | 200  |
+  | caller  | recipe      | text     | create | edit | file | delete | publish | read |
+  |---------|-------------|----------|--------|------|------|--------|---------|------|
+  | owner   | unpublished | either   | 201    | 200  | 200  | 200    | 200     | 200  |
+  | owner   | published   | either   | –      | 200  | 200  | 200    | 200 no-op | 200 |
+  | machine | unpublished | agents'  | 201    | 200  | 200  | 200    | **403** | 200  |
+  | machine | unpublished | **his**  | –      | **202** | 200 | **403** | **403** | 200 |
+  | machine | published   | either   | –      | **202** | **403** | **403** | **403** | 200 |
+  | anon    | unpublished | either   | 401    | 401  | 401  | 401    | 401     | absent |
+  | anon    | published   | either   | 401    | 401  | 401  | 401    | 401     | 200  |
 
   A machine writes unsupervised — that is what cookbook is for — and it meets two
-  walls. The publish latch, which was the only one; and, since proposals, **whose
-  text it is**: a Recipe every version of which an agent wrote is still the agents'
-  to rewrite and delete at will, while one the owner has written any part of is
-  neither. An edit of his text is not refused but *deferred* — 202, filed as a
-  proposal, the row unchanged until he approves — and a delete of it is refused
-  outright, because there is no such thing as proposing a deletion.
+  walls. The publish latch; and, since proposals, **whose text it is**: a Recipe every
+  version of which an agent wrote is still the agents' to rewrite and delete at will,
+  while one the owner has written any part of is neither. An edit of his text is not
+  refused but *deferred* — 202, filed as a proposal, the row unchanged until he
+  approves — and a delete of it is refused outright, because there is no such thing as
+  proposing a deletion.
 
-  So `text` is an axis of this table now, and it is the one a reader is most likely
-  to get wrong: the guard rule is `DELETE`-only, and writing it on every mutating
-  method would refuse the very PUTs the proposal path exists for.
+  **The latch defers rather than refuses too, and it outranks the other wall.** A
+  machine may propose against a published Recipe — the owner's call: *its up to the
+  human to approve or not* — so the published `edit` cell is 202 and not 403. What makes
+  the published row more than a copy of the middle one is that it reads 202 for
+  **either** text: on a published Recipe an all-machine Recipe is *not* the agents' to
+  write, so the row above's 200 becomes a proposal here. That is the cell that would
+  slip through if the two rules were asked in the wrong order.
+
+  `file` is `edit`'s other half and it is where the two states part company. Tags and
+  Scopes are not the text he wrote, so a machine files an approval-required Recipe
+  freely (200, no version); on a published one filing is refused outright (403, nothing
+  applied), because filing a published Recipe stays the owner's and a request carrying
+  both would otherwise half-land.
+
+  So `text` is an axis of this table, and it is the one a reader is most likely to get
+  wrong: the guard rule is `DELETE`-only, and writing it on every mutating method would
+  refuse the very PUTs the proposal path exists for.
 
   Every ✓ case asserts the write actually **landed in the row**, and every refusal
   *and every deferral* asserts the row did **not** change: a status code alone would
@@ -49,7 +63,7 @@
 
 (defn- row [id]
   (jdbc/execute-one! (db/get-conn h/*ds*)
-    (sql/format {:select [:id :title :version :published :published_at :user_id]
+    (sql/format {:select [:id :title :version :published :published_at :user_id :tags]
                  :from [:recipes] :where [:= :id id]})
     db/jdbc-opts))
 
@@ -121,10 +135,12 @@
   [;; --- the owner: everything, on both states -----------------------------
    {:caller :owner   :state :unpublished :op :create  :expect 201 :lands? true}
    {:caller :owner   :state :unpublished :op :edit    :expect 200 :lands? true}
+   {:caller :owner   :state :unpublished :op :file    :expect 200 :lands? true}
    {:caller :owner   :state :unpublished :op :delete  :expect 200 :lands? true}
    {:caller :owner   :state :unpublished :op :publish :expect 200 :lands? true}
    {:caller :owner   :state :unpublished :op :read    :expect 200 :visible? true}
    {:caller :owner   :state :published   :op :edit    :expect 200 :lands? true}
+   {:caller :owner   :state :published   :op :file    :expect 200 :lands? true}
    {:caller :owner   :state :published   :op :delete  :expect 200 :lands? true}
    {:caller :owner   :state :published   :op :publish :expect 200 :lands? false} ;; idempotent no-op
    {:caller :owner   :state :published   :op :read    :expect 200 :visible? true}
@@ -132,6 +148,7 @@
    ;; --- the machine on its own text: unsupervised, until it meets the latch
    {:caller :machine :state :unpublished :op :create  :expect 201 :lands? true}
    {:caller :machine :text :agents :state :unpublished :op :edit    :expect 200 :lands? true}
+   {:caller :machine :text :agents :state :unpublished :op :file    :expect 200 :lands? true}
    {:caller :machine :text :agents :state :unpublished :op :delete  :expect 200 :lands? true}
    {:caller :machine :text :agents :state :unpublished :op :publish :expect 403 :lands? false}
    {:caller :machine :text :agents :state :unpublished :op :read    :expect 200 :visible? true}
@@ -139,21 +156,34 @@
    ;; --- the machine on *his* text: deferred, not refused, except the delete
    ;; 202 is "accepted, not applied": the proposal is filed and the row is untouched,
    ;; which is why this row asserts `:lands? false` rather than being a refusal.
+   ;; Filing **does** land here, and that is the contrast with a published Recipe two
+   ;; blocks down: tags and Scopes are not the text he wrote, so an agent files an
+   ;; approval-required Recipe freely and only its content waits.
    {:caller :machine :text :his :state :unpublished :op :edit    :expect 202 :lands? false}
+   {:caller :machine :text :his :state :unpublished :op :file    :expect 200 :lands? true}
    {:caller :machine :text :his :state :unpublished :op :delete  :expect 403 :lands? false}
    {:caller :machine :text :his :state :unpublished :op :publish :expect 403 :lands? false}
    {:caller :machine :text :his :state :unpublished :op :read    :expect 200 :visible? true}
-   {:caller :machine :text :his :state :published :op :edit    :expect 403 :lands? false}
+
+   ;; --- the machine on a published Recipe: one door open, everything else shut.
+   ;; An edit is **202** and not a refusal — the owner opened that door: *i think a
+   ;; machine should be able to propose against a published Recipe. its up to the human
+   ;; to approve or not.* Filing is not that door: a PUT carrying tags is 403 with
+   ;; nothing applied, because filing a published Recipe stays his and a mixed request
+   ;; would half-land.
+   {:caller :machine :text :his :state :published :op :edit    :expect 202 :lands? false}
+   {:caller :machine :text :his :state :published :op :file    :expect 403 :lands? false}
    {:caller :machine :text :his :state :published :op :delete  :expect 403 :lands? false}
    {:caller :machine :text :his :state :published :op :publish :expect 403 :lands? false}
    {:caller :machine :text :his :state :published :op :read    :expect 200 :visible? true}
 
-   ;; --- and published text the agents wrote every word of, which is the cell where
-   ;; the latch has to *beat* a permission rather than reinforce a refusal. Everywhere
-   ;; else on the machine's rows, whose text it is decides the answer; here it must not.
-   ;; The table's own header says `published | either`, and until these four rows it
-   ;; said so on the strength of the `:his` half alone.
-   {:caller :machine :text :agents :state :published :op :edit    :expect 403 :lands? false}
+   ;; --- and published text the agents wrote **every word of**, which is the row that
+   ;; would slip through if the latch and the approval gate were asked in the wrong
+   ;; order. `machine-only?` says this Recipe is theirs to rewrite freely; `published`
+   ;; says it is not. Published outranks the gate, so the edit is a proposal here too —
+   ;; a 200 in this cell would mean an agent had rewritten public text unsupervised.
+   {:caller :machine :text :agents :state :published :op :edit    :expect 202 :lands? false}
+   {:caller :machine :text :agents :state :published :op :file    :expect 403 :lands? false}
    {:caller :machine :text :agents :state :published :op :delete  :expect 403 :lands? false}
    {:caller :machine :text :agents :state :published :op :publish :expect 403 :lands? false}
    {:caller :machine :text :agents :state :published :op :read    :expect 200 :visible? true}
@@ -161,11 +191,13 @@
    ;; --- anonymous: refused every write, and shown only what is published --
    {:caller :anon    :state :unpublished :op :create  :expect 401 :lands? false}
    {:caller :anon    :state :unpublished :op :edit    :expect 401 :lands? false}
+   {:caller :anon    :state :unpublished :op :file    :expect 401 :lands? false}
    {:caller :anon    :state :unpublished :op :delete  :expect 401 :lands? false}
    {:caller :anon    :state :unpublished :op :publish :expect 401 :lands? false}
    {:caller :anon    :state :unpublished :op :read    :expect 404 :visible? false}
    {:caller :anon    :state :published   :op :create  :expect 401 :lands? false}
    {:caller :anon    :state :published   :op :edit    :expect 401 :lands? false}
+   {:caller :anon    :state :published   :op :file    :expect 401 :lands? false}
    {:caller :anon    :state :published   :op :delete  :expect 401 :lands? false}
    {:caller :anon    :state :published   :op :publish :expect 401 :lands? false}
    {:caller :anon    :state :published   :op :read    :expect 200 :visible? true}])
@@ -189,6 +221,23 @@
     {:resp resp
      :landed? (and (= "Renamed by the caller" (:title after))
                    (= (inc (:version before)) (:version after)))
+     :unchanged? (= before after)}))
+
+(defn- run-file
+  "A PUT that carries **filing** and no content — the other half of what this route
+  accepts, and a different question from `run-edit` for exactly one caller. A machine
+  files an approval-required Recipe freely, because tags are not the text he wrote, and
+  is refused outright on a published one, because filing a published Recipe stays his.
+  Landing is judged on `tags`, which is why the row projection selects it."
+  [caller id]
+  (let [before (row id)
+        resp (request caller :put (str "/api/recipes/" id) {:tags "filed by the caller"})
+        after (row id)]
+    {:resp resp
+     ;; The version must *not* move: filing is not content, so a landing filing write
+     ;; that bumped it would be a different bug wearing this one's clothes.
+     :landed? (and (= "filed by the caller" (:tags after))
+                   (= (:version before) (:version after)))
      :unchanged? (= before after)}))
 
 (defn- run-delete [caller id]
@@ -223,6 +272,7 @@
             (case op
               :create  (run-create caller)
               :edit    (run-edit caller id)
+              :file    (run-file caller id)
               :delete  (run-delete caller id)
               :publish (run-publish caller id)
               :read    (run-read caller id))]
@@ -288,14 +338,21 @@
 
 (def ^:private spelling-labels (vec (keys (spellings 11))))
 
-;; Edit and delete are asked of a **published** recipe, which is the state the rule
-;; is about. Publish is asked of an unpublished one as well, and that is the case
-;; that matters most: publishing an already-published recipe is a 200 no-op that
-;; changes no row, so only the unpublished case can tell a refusal from a
-;; permitted write.
+;; **Only the operations that are actually refused belong here**, and `edit` stopped
+;; being one: a content PUT to a published Recipe is now a proposal, so it answers 202
+;; whether or not the guard resolved the id — it would discriminate nothing. `file` is
+;; the PUT that is still refused on a published Recipe, so it takes edit's place and the
+;; hazard stays covered for the method that carries a body.
+;;
+;; Delete is asked of a published recipe *and* of his own text, because those are two
+;; different rules refusing the same method and either could be walked past on its own.
+;; Publish is asked of an unpublished one as well, and that is the case that matters
+;; most: publishing an already-published recipe is a 200 no-op that changes no row, so
+;; only the unpublished case can tell a refusal from a permitted write.
 (def ^:private spelling-cases
-  [{:op :edit    :state :published}
+  [{:op :file    :state :published}
    {:op :delete  :state :published}
+   {:op :delete  :state :unpublished}
    {:op :publish :state :unpublished}
    {:op :publish :state :published}])
 
@@ -304,7 +361,7 @@
   [op id spelling]
   (let [path (str "/api/recipes/" spelling)]
     (case op
-      :edit    (request :machine :put path {:title "Rewritten by a machine"})
+      :file    (request :machine :put path {:tags "filed by a machine"})
       :delete  (request :machine :delete path)
       :publish (request :machine :post (str path "/publish")))))
 
@@ -349,9 +406,14 @@
       (doseq [label ["plain" "fully encoded" "Arabic-Indic digits"]]
         (let [path (str "/api/recipes/" (get (spellings id) label))]
           (testing (str "a machine gets nowhere with the id spelt: " label)
-            (is (= 403 (:status (request :machine :put path {:title "Edited through prod"}))))
+            (is (= 403 (:status (request :machine :put path {:tags "filed through prod"})))
+                "filing a published Recipe is the owner's, in prod as everywhere")
             (is (= 403 (:status (request :machine :post (str path "/publish")))))
             (is (= 403 (:status (request :machine :delete path)))))))
+      (testing "while the one door that is open is open here too — a content PUT is
+                accepted as a proposal and still changes nothing"
+        (is (= 202 (:status (request :machine :put (str "/api/recipes/" id)
+                                     {:title "Proposed through prod"})))))
       (testing "and none of that landed"
         (is (= before (row id))))
       (testing "while the owner's own token goes through the same chain — so those
@@ -388,10 +450,10 @@
         before (row-count)]
     (is (= 1 (table-count :scopes)))
     (is (= 1 (table-count :recipe_scopes)))
-    (testing "a machine token is refused — the same caller the guard refuses an
-              edit and a delete on the published one"
+    (testing "a machine token is refused — the same caller the guard refuses a
+              filing write and a delete on the published one"
       (is (= 403 (:status (request :machine :put (str "/api/recipes/" signed)
-                                   {:title "Rewritten by a machine"}))))
+                                   {:tags "filed by a machine"}))))
       (is (= 403 (:status (request :machine :delete (str "/api/recipes/" signed)))))
       (is (= 403 (:status (request :machine :post "/api/test/reset")))))
 

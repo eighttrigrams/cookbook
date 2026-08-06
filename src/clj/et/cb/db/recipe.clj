@@ -455,11 +455,17 @@
     db/jdbc-opts))
 
 (defn machine-only?
-  "Whether **every** version of this Recipe was written by an agent — the gate that
-  decides whether a machine may write straight through or has to propose.
+  "Whether **every** version of this Recipe was written by an agent — one of the two
+  things that decide whether a machine may write straight through or has to propose.
 
-  `machine_versions = version` and nothing else. Three things that are *not* the
-  gate, each of which someone will be tempted by:
+  **It is not the whole answer, and it does not know the other half.** A published
+  Recipe is never the agents' to write however this reads, so
+  `recipe-handler/update-recipe-handler` asks about the latch as a *peer* of this
+  question rather than reaching for this one first. Answering `true` here means 'no
+  version of it is his', which is exactly what the name says and no more.
+
+  `machine_versions = version` and nothing else. Three things that are *not* this
+  question, each of which someone will be tempted by:
 
   - **Not `has_human_edit = 0`.** That bit read 0 for every Recipe he typed by hand
     before migration 004, so keying on it would have let an agent overwrite exactly
@@ -841,6 +847,12 @@
     against older text and this replaces his newer text with the agent's. That is his
     call to make with his eyes open, so the UI says so on the item and this does not
     refuse it. Refusing would strand the agent's work with nothing to do about it.
+  - **The Recipe may be published, and then this writes an agent's wording into text he
+    has put his name to.** A machine may propose against a published Recipe — *its up
+    to the human to approve or not* — and that is the whole reason the inbox item says
+    in words that the Recipe is published before he clicks. Nothing here refuses it,
+    for the same reason nothing here reads `base_version`: this function applies a
+    decision, it does not second-guess one.
   - **`archive!` is called before the write**, like every other save here, so the
     outgoing version goes into history with its *own* source rather than with
     `machine`. Approving must not relabel what he wrote — the
@@ -871,6 +883,18 @@
   "Set the latch on a recipe the user owns: `published` on, `published_at`
   stamped. One way — there is no unpublish, because un-latching would hand a
   machine back the right to rewrite something the owner had signed.
+
+  **It publishes the row, and the row is the last approved version — so what a visitor
+  is shown is the last approved version, always.** Publishing is deliberately allowed
+  while an agent's proposal is waiting, because the two facts do not touch: a proposal
+  is not a version, it lives in `recipe_proposals`, and nothing in any read of the
+  Recipe consults it. The owner's own case, in his words: *if say the last version v3
+  was from a machine and the human approved, and then the machine sends another request,
+  on publish, what an anon user sees is v3.* That is not a happy accident of this
+  design, it is the load-bearing part of it — with publishing open while a proposal
+  pends, the invisibility of that proposal to every read is the only thing between an
+  unapproved wording and an anonymous reader. `what-a-visitor-sees-is-the-last-approved-version`
+  is the test that holds it.
 
   Publishing an already-published recipe returns it untouched: the first publish
   is the fact being recorded, so `published_at` never moves. It is not a content

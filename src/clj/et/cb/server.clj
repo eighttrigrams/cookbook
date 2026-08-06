@@ -234,6 +234,29 @@
       {:status 401 :body {:error "Authentication required"}}
       (handler req))))
 
+(defn- content-only-put?
+  "Whether this request is the one thing a machine may do to a **published** Recipe:
+  offer a rewrite of its text, which `update-recipe-handler` files as a proposal.
+
+  A `PUT` carrying nothing but content. `tags` or `scope_ids` in the body — with or
+  without content beside them — is **not** this, and that is the owner's call rather
+  than a simplification: filing a published Recipe stays his, and a mixed request that
+  applied the filing while the content waited (which is exactly what the *unpublished*
+  approval path does on purpose) would half-apply a call this rule means to refuse.
+  Refusing the whole call is the honest answer, so the mere presence of either key
+  decides it. `scope_ids: []` counts as filing, because clearing them is a write.
+
+  It reads the parsed body, which is there to read: `wrap-json-body` sits outside the
+  router, so `:body` is already a map by the time any of this runs. A body that is not
+  a map — no content type, or a JSON array — answers false through `contains?` on a
+  non-map... which would throw, so it is asked of an explicit map only, and anything
+  else is treated as *not* a bare content PUT and refused. A machine that wants to
+  propose sends the three fields it wants to propose."
+  [req]
+  (and (= :put (:request-method req))
+       (map? (:body req))
+       (not-any? #(contains? (:body req) %) [:tags :scope_ids])))
+
 (defn- approval-required-target?
   "Whether the named recipe is one a machine may not write directly — some version of
   it is the owner's. Asked in the caller's own audience, like `published-target?`, so
@@ -246,13 +269,19 @@
   (false? (db.recipe/machine-only? (common/ensure-ds) (common/get-user-id req) id)))
 
 (defn- wrap-machine-recipe-rules
-  "A published Recipe is the owner's: a machine caller may not change one, and may
-  not publish at all. And a Recipe he has *written* part of may not be deleted by a
-  machine, though it may be proposed against. So, for a machine token only:
+  "A published Recipe is the owner's: a machine caller may **offer** a rewrite of one
+  and may change nothing about it directly, and may not publish at all. And a Recipe he
+  has *written* part of may not be deleted by a machine, though it may be proposed
+  against. So, for a machine token only:
 
-  - any mutation naming a **published** recipe → 403, which covers delete as well
-    as edit, because deleting a published recipe is un-latching by demolition and
-    leaving it open would be a hole in the same wall;
+  - any mutation naming a **published** recipe → 403, **except a `PUT` carrying only
+    content**, which reaches the handler and is filed as a proposal. The owner asked
+    for that door: *i think a machine should be able to propose against a published
+    Recipe. its up to the human to approve or not.* His click is the gate, and the
+    inbox item says the Recipe is published before he makes it. Everything else about a
+    published Recipe stays refused — a direct write, the filing, a delete (which is
+    un-latching by demolition, and there is no such thing as proposing one) and a
+    publish;
   - any **publish** → 403, published or not, because the latch is irreversible and
     a machine that could set it could make private content permanently public and
     freeze the recipe out of its own reach;
@@ -260,6 +289,16 @@
     argument as the published rule: an agent that cannot rewrite his text must not be
     able to remove it instead, which is un-latching by demolition again and a hole in
     the same wall.
+
+  **Published outranks the approval gate, and this is where a reader has to be
+  careful.** `machine-only?` says a Recipe every version of which an agent wrote is the
+  agents' to rewrite freely — but not once it is published. On a published Recipe a
+  machine `PUT` is *always* a proposal, never a direct write, however the gate reads.
+  The exemption here is only 'let the PUT through to the handler'; the handler is what
+  decides it cannot land, and it asks about `published` as a peer of the gate rather
+  than after it. Written the other way round — gate first, published second — an
+  all-machine Recipe the owner had published would take the direct-write path, and the
+  latch would mean nothing on exactly the Recipes an agent writes most.
 
   **The delete rule is `DELETE`-only, and that is the trap in this middleware.** It
   runs for every mutating method, so writing the new rule on `mutating-request?` — the
@@ -310,8 +349,13 @@
         (and machine? (publish-request? req))
         {:status 403 :body {:error "Publishing is the owner's: a machine caller cannot set the publish latch"}}
 
-        (and machine? (when-let [id (common/recipe-id req)] (published-target? req id)))
-        {:status 403 :body {:error "This Recipe is published, and a published Recipe is the owner's: a machine caller cannot change it"}}
+        ;; `content-only-put?` first, and cheaply: a bare content PUT is allowed
+        ;; whatever the latch says, so there is no reason to ask the database about the
+        ;; Recipe at all. What that PUT then *does* is the handler's answer, not this
+        ;; one — on a published Recipe it can only become a proposal.
+        (and machine? (not (content-only-put? req))
+             (when-let [id (common/recipe-id req)] (published-target? req id)))
+        {:status 403 :body {:error "This Recipe is published, and a published Recipe is the owner's: a machine caller can propose a change to its text, but cannot write, file or delete it"}}
 
         ;; `= :delete` and not `mutating-request?`: see the docstring. A PUT here has
         ;; to reach the handler and become a proposal.

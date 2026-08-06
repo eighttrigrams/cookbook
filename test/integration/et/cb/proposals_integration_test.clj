@@ -243,6 +243,122 @@
           (is (false? (contains? row :pending))))))))
 
 ;; ---------------------------------------------------------------------------
+;; a published Recipe: one door open
+
+(deftest a-machine-may-propose-against-a-published-recipe-and-do-nothing-else-to-it
+  (let [{:keys [id]} (his-recipe! "Signed and public")
+        _ (POST-json (str "/api/recipes/" id "/publish") {})
+        before (listed id)]
+    (testing "a content PUT is accepted as a proposal — the owner opened this door,
+              and his click is the gate"
+      (let [resp (machine :put (str "/api/recipes/" id) {:description "the agent's body"})]
+        (is (= 202 (:status resp)))
+        (is (= "the agent's body" (:description (:pending (:body resp)))))))
+    (testing "and the published Recipe is untouched while it waits"
+      (is (= (dissoc before :pending) (dissoc (listed id) :pending)))
+      (is (= 1 (:published (listed id))))
+      (is (= 1 (:pending (listed id)))))
+    (testing "filing it is not that door: refused, and refused whole"
+      (doseq [body [{:tags "smuggled"}
+                    {:scope_ids []}
+                    {:tags "smuggled" :description "and a rewrite with it"}]]
+        (is (= 403 (:status (machine :put (str "/api/recipes/" id) body)))
+            (str body " must be refused on a published Recipe")))
+      (is (= "" (:tags (listed id))) "nothing was filed")
+      (is (= "the agent's body" (:description (:pending (:body (machine :put (str "/api/recipes/" id)
+                                                                       {:description "x"})))))
+          "and the mixed request did not replace the pending proposal either"))
+    (testing "nor is deleting it"
+      (is (= 403 (:status (machine :delete (str "/api/recipes/" id)))))
+      (is (some? (listed id))))
+    (testing "approving puts the agent's wording into the published text, which is what
+              the inbox item warns about before the click"
+      (let [entry (latest-proposal-entry)]
+        (is (= 1 (:recipe_published (:proposal entry)))
+            "and the entry says the Recipe is published, so he can see what he is doing")
+        (let [resp (h/API :post (str "/api/inbox/" (:id entry) "/approve") {})]
+          (is (= 200 (:status resp)))
+          (is (= 2 (:version (:body resp))))
+          (is (= "machine" (:source (:body resp))))
+          (is (= 1 (:published (:body resp)))))))))
+
+(deftest published-outranks-the-gate
+  ;; The row that would slip through if the two rules were asked in the wrong order.
+  ;; Every version of this Recipe is an agent's, so `machine_versions = version` and the
+  ;; gate alone would let it write straight through — but it is published, and a
+  ;; published Recipe is never the agents' to write. A 200 here would mean an agent had
+  ;; rewritten public text unsupervised.
+  (let [{:keys [id]} (agents-recipe! "Written by an agent, published by him")]
+    (is (= 200 (:status (machine :put (str "/api/recipes/" id) {:description "v2, freely"})))
+        "unpublished, the gate lets it through — which is what makes the next part a test")
+    (is (= 200 (:status (POST-json (str "/api/recipes/" id "/publish") {}))))
+    (let [row (listed id)]
+      (is (= (:version row) (:machine_versions row)) "the gate still says yes")
+      (is (= 1 (:published row)) "and the latch says no"))
+    (let [resp (machine :put (str "/api/recipes/" id) {:description "v3, unsupervised?"})]
+      (is (= 202 (:status resp)) "so it is a proposal, not a write")
+      (is (= 2 (:version (listed id))) "and the public text is still what he published")
+      (is (= "v2, freely"
+             (:description (:body (GET-json (str "/api/recipes/" id "?detail=full")))))))))
+
+;; ---------------------------------------------------------------------------
+;; what a visitor sees
+
+(deftest what-a-visitor-sees-is-the-last-approved-version
+  ;; **The guarantee, in his words:** *if say the last version v3 was from a machine and
+  ;; the human approved, and then the machine sends another request, on publish, what an
+  ;; anon user sees is v3.*
+  ;;
+  ;; This is a guarantee and not a consequence. Publishing is allowed while a proposal
+  ;; is pending, and a machine may propose against a published Recipe — so the
+  ;; invisibility of a pending proposal to every read is the only thing standing between
+  ;; an unapproved agent wording and an anonymous reader. Nothing else is in the way:
+  ;; not the latch, not the gate, not the approval flow.
+  (let [{:keys [id]} (his-recipe! "Restarting a stuck dev server")]
+    ;; v1 his, v2 his, v3 the agent's — approved by him, which is the state his
+    ;; sentence starts from.
+    (PUT-json (str "/api/recipes/" id) {:description "his second draft"})
+    (machine :put (str "/api/recipes/" id) {:title "Restarting a stuck dev server"
+                                            :useful_when "when make start hangs"
+                                            :description "the approved agent text"})
+    (h/API :post (str "/api/inbox/" (:id (latest-proposal-entry)) "/approve") {})
+    (is (= 200 (:status (POST-json (str "/api/recipes/" id "/publish") {}))))
+    (let [row (listed id)]
+      (is (= 3 (:version row)) "v3")
+      (is (= "machine" (:source row)) "from a machine")
+      (is (= 1 (:published row)) "and public"))
+    ;; and then the machine sends another request.
+    (is (= 202 (:status (machine :put (str "/api/recipes/" id)
+                                 {:title "UNAPPROVED TITLE"
+                                  :useful_when "UNAPPROVED USEFUL WHEN"
+                                  :description "UNAPPROVED BODY"}))))
+    (is (= 1 (:pending (listed id))) "so there really is one waiting")
+    (h/with-real-auth
+      (let [listing (:body (h/API :get "/api/recipes" {:anonymous? true}))
+            row (first listing)
+            full (:body (h/API :get (str "/api/recipes/" id "?detail=full") {:anonymous? true}))]
+        (testing "an anonymous listing is v3"
+          (is (= 1 (count listing)))
+          (is (= id (:id row)))
+          (is (= 3 (:version row)))
+          (is (= "when make start hangs" (:useful_when row))))
+        (testing "and so is an anonymous ?detail=full"
+          (is (= "Restarting a stuck dev server" (:title full)))
+          (is (= "the approved agent text" (:description full))))
+        (testing "and no part of the proposal is in either of them"
+          (is (not (re-find #"UNAPPROVED" (pr-str [listing full])))))
+        (testing "nor is the history a way to it — a visitor has none at all"
+          (is (= 404 (:status (h/API :get (str "/api/recipes/" id "/versions")
+                                     {:anonymous? true})))))
+        (testing "and a visitor is not even told something is waiting"
+          (is (false? (contains? row :pending))))))
+    (testing "while the owner's own reads are the approved version too — the proposal is
+              a question, not a draft anybody is served"
+      (is (= "the approved agent text"
+             (:description (:body (GET-json (str "/api/recipes/" id "?detail=full"))))))
+      (is (= 3 (:total (:body (GET-json (str "/api/recipes/" id "/versions")))))))))
+
+;; ---------------------------------------------------------------------------
 ;; approving and dismissing
 
 (deftest approving-writes-the-agents-text-and-clears-the-queue
@@ -412,4 +528,20 @@
       (is (re-find #"(?i)owner" (doc-for "POST" "/api/inbox/:id/approve")))
       (is (re-find #"(?i)machine" (doc-for "POST" "/api/inbox/:id/approve")))
       (is (re-find #"(?i)not touched|untouched"
-                   (doc-for "POST" "/api/inbox/:id/dismiss"))))))
+                   (doc-for "POST" "/api/inbox/:id/dismiss"))))
+    (testing "**a published Recipe's two answers are in it**, because an agent that
+              read only the approval rule would expect a 403 for its proposal and a
+              202 for its filing, and both would be wrong"
+      (let [doc (doc-for "PUT" "/api/recipes/:id")]
+        (is (re-find #"(?i)published" doc))
+        (is (re-find #"(?i)outranks" doc) "that published beats the gate, in words")
+        (is (re-find #"403 with nothing applied" doc)
+            "and that a filing write on a published Recipe is refused whole")))
+    (testing "and the visitor guarantee is said where a visitor's caller reads it,
+              in his own terms"
+      (doseq [path ["/api/recipes" "/api/recipes/:id"]]
+        (is (re-find #"last approved version, always" (doc-for "GET" path))
+            (str path " has to say what a visitor is shown")))
+      (is (re-find #"last approved version, always"
+                   (doc-for "POST" "/api/recipes/:id/publish"))
+          "and so does the route that makes a Recipe public"))))

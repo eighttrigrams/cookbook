@@ -27,13 +27,19 @@ wrote** rather than about agents being untrusted:
 |---|---|
 | a Recipe with only agent-written versions | the owner **and** any credentialled agent — the shared scratch space |
 | a Recipe he has written part of | the owner writes; an agent **proposes** and he approves |
-| a published Recipe | **the owner only** — he has put his name to it |
+| a published Recipe | the owner writes; an agent **proposes** and he approves — he has put his name to it |
 
 The first is the **publish latch**: publishing is not primarily a visibility act
-but an act of taking ownership. It makes a Recipe public *and* freezes it against
-machine mutation, in one irreversible step, and there is no unpublish, because
+but an act of taking ownership. It makes a Recipe public *and* takes it out of an
+agent's hands, in one irreversible step, and there is no unpublish, because
 un-latching would hand a machine back the right to rewrite something the owner
 had signed.
+
+Out of its hands, not out of its reach: an agent may still **propose** against a
+published Recipe. His call — *i think a machine should be able to propose against a
+published Recipe. its up to the human to approve or not.* So the latch and the approval
+rule refuse the same thing in the same way, and the latch is the stronger of the two,
+because it also holds on a Recipe an agent wrote every word of.
 
 The second is the **approval rule**, and it is deliberately softer: an agent's
 edit of his text is neither applied nor refused, it is *filed* — a 202 and a
@@ -72,32 +78,43 @@ Recipe is published, and **whose writing it holds**.
 |---|---|---|---|
 | read | yes | yes | yes |
 | create | yes | – | – |
-| edit | yes, unsupervised | **202, filed as a proposal** | **403** |
+| edit (content) | yes, unsupervised | **202, filed as a proposal** | **202, filed as a proposal** |
+| file (`tags`, `scope_ids`) | yes, unsupervised | yes, unsupervised | **403** |
 | delete | yes, unsupervised | **403** | **403** |
 | publish | **403** | **403** | **403** |
 
-Delete is refused on a published Recipe for the same reason edit is: removing one
-takes it out of the public listing, history and all, which is un-latching by
-demolition. And a machine may not publish at all, published or not, because the
-latch is irreversible — a machine that could set it could make private content
+**Published outranks the approval rule**, which is the one thing to get right in that
+table: on a published Recipe a machine `PUT` is *always* a proposal, even in the first
+column's case where every version is an agent's and the rule would otherwise let it
+write straight through. A 200 in that cell would mean an agent had rewritten public text
+unsupervised, so the two are asked as peers rather than one after the other.
+
+Filing is the exception in the other direction. Tags and Scopes are not the text he
+wrote, so an agent files an approval-required Recipe freely — but not a published one,
+where filing stays his, and a `PUT` carrying `tags` or `scope_ids` is refused **whole**,
+content and all: half-applying a request this rule means to refuse would be worse than
+refusing it.
+
+Delete is refused on a published Recipe because removing one takes it out of the public
+listing, history and all, which is un-latching by demolition, and there is no such thing
+as proposing a deletion. And a machine may not publish at all, published or not, because
+the latch is irreversible — a machine that could set it could make private content
 permanently public *and* freeze the Recipe out of its own reach. Those rules live
 in one place, `wrap-machine-recipe-rules`, which every mutating recipe route
 passes through — installed with compojure's `wrap-routes` so that it runs *after*
 the route has matched, and therefore reads the same recipe id the handler does
 rather than parsing one off the raw path. There is no switch that lifts any of them.
 
-The middle column is the approval rule, below. Note that an edit there is **not**
-refused: it is accepted and not applied. The delete is refused outright, because
-there is no such thing as proposing a deletion — and that rule is `DELETE`-only
-in the guard, deliberately, since a `PUT` has to reach the handler to become a
-proposal.
+The `DELETE`-only shape of the delete rule is the trap in that middleware: written on
+every mutating method it would refuse the very `PUT`s the proposal path exists for.
 
 ### Edits that need approving
 
 **A Recipe is the agents' to write freely only while every one of its versions was
-written by an agent.** One save of the owner's anywhere in its history and the next
-machine edit to its *content* is not applied: it is filed as a **proposal**, and the
-Recipe goes on reading exactly as it did until he approves it.
+written by an agent and it is not published.** One save of the owner's anywhere in its
+history — or the latch — and the next machine edit to its *content* is not applied: it
+is filed as a **proposal**, and the Recipe goes on reading exactly as it did until he
+approves it.
 
 His words: *an agent can modify any recipe which has been generated by an agent and
 has only agent-stamped versions. but when there is a human modification inbetween,
@@ -118,6 +135,7 @@ wanted for.
 | the same with `?overwrite=true` | 202, replacing it in place, keeping its place in the queue |
 | a machine `PUT` whose `modified_at` is stale | **409** `reason: modified-elsewhere`, checked first |
 | `tags` or `scope_ids` in the same request | applied immediately — filing is not the text he wrote |
+| the same on a **published** Recipe | **403**, nothing applied — filing a published Recipe stays his |
 | a machine `PUT` that changes nothing | 200, still a no-op; it proposes nothing |
 
 202 rather than 200 because the honest thing to say is *accepted, not applied* —
@@ -141,7 +159,20 @@ undone.
 
 `base_version` says what the proposal was written against and is deliberately not a
 guard. If he saved in between, approving replaces his newer text with the agent's —
-so the inbox says that in words, on the item, before the click.
+so the inbox says that in words, on the item, before the click. The item says when the
+Recipe is **published** for the same reason: approving then replaces text that is
+already public and signed, and there is no unpublish.
+
+**What a visitor is shown is the last approved version, always.** Publishing is allowed
+while a proposal is waiting, and an agent may propose against a published Recipe — so
+this sentence is the whole of what stands between an unapproved wording and an anonymous
+reader, and it is a guarantee rather than a consequence. It holds because a proposal is
+not a version: it lives in `recipe_proposals`, the `recipes` row is the last approved
+state, every read serves the row, and publishing publishes the row. His case, in his
+words: *if say the last version v3 was from a machine and the human approved, and then
+the machine sends another request, on publish, what an anon user sees is v3.*
+`what-a-visitor-sees-is-the-last-approved-version` is the test that holds it, and it
+reddens if any read starts serving the pending text.
 
 ### The inbox
 
@@ -179,6 +210,13 @@ acknowledges one — and **refuses a `proposed` entry**, which is answered rathe
 acknowledged. All of it is the owner's alone: a machine token is refused, and so is a
 caller with no credentials.
 
+A `proposed` entry is the one that has to say more than what happened, because
+approving it writes. It carries the agent's three fields *and* the Recipe's current
+three, so the comparison is against what the Recipe says now; it says in words when the
+proposal was written against an older version; and it says in words when the Recipe is
+**published**, because approving then replaces text that is already public and signed
+and there is no unpublish. Two notes, and both can be on at once.
+
 Two things the queue is careful about. It is ordered by the event `id` and never by
 `created_at`, which is second-resolution — two entries in one second is the normal
 case. And **events outlive their Recipe**: deleting one takes its history and its
@@ -196,6 +234,12 @@ behind a published Recipe were never published themselves.
 
 The lean rule applies to a visitor unchanged, `?detail=full` and all: the
 collapse is about verbosity, the privacy boundary is the latch.
+
+And **what a visitor sees is the last approved version, always** — see *Edits that need
+approving*. An agent's proposal is not a version and no read consults one, so a published
+Recipe with an unapproved rewrite waiting on it hands a visitor the approved text and no
+part of the proposal, at any `?detail`. That is the guarantee the whole approval design
+rests on now that publishing is allowed while a proposal pends.
 
 ## Recipes
 
