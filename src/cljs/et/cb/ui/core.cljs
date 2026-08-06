@@ -24,30 +24,30 @@
          [:button {:on-click do-login} "Sign in"]]))))
 
 (defn- top-bar []
-  (let [{:keys [auth-required? logged-in? show-login? dark-mode settings-open? scopes-open?]}
+  (let [{:keys [auth-required? logged-in? show-login? dark-mode page]}
         @state/*app-state]
     [:div.top-bar
      [:div.brand
       [:span.brand-mark "▤"]
       [:span.brand-name "Cookbook"]]
      [:div.top-bar-right
-      ;; The Scopes page. Owner-only, and gated the same way the settings panel is
-      ;; — this shell has no router, so a private page is a flag in the atom and a
-      ;; button that flips it. The gate is `logged-in?` and not a claim about
-      ;; safety: the endpoints behind it answer 403 to anybody else, which is the
-      ;; boundary. It borrows `.settings-toggle`'s styling because it is the same
-      ;; kind of control in the same corner.
+      ;; The Scopes page. Owner-only, and gated the same way the Settings page is
+      ;; — this shell has no router, so which page is on is one value in the atom
+      ;; and these two buttons move between them. The gate is `logged-in?` and not
+      ;; a claim about safety: the endpoints behind it answer 403 to anybody else,
+      ;; which is the boundary. It borrows `.settings-toggle`'s styling because it
+      ;; is the same kind of control in the same corner.
       (when logged-in?
         [:button.settings-toggle.scopes-toggle
          {:on-click state/toggle-scopes
-          :class (when scopes-open? "active")
+          :class (when (= :scopes page) "active")
           :title "Scopes"}
          "▦"])
       ;; only the owner has a setting to make: the machine user's password
       (when logged-in?
         [:button.settings-toggle
          {:on-click state/toggle-settings
-          :class (when settings-open? "active")
+          :class (when (= :settings page) "active")
           :title "Machine user"}
          "⚙"])
       [:button.dark-mode-toggle
@@ -61,9 +61,27 @@
         :else [:button.secondary
                {:on-click #(swap! state/*app-state assoc :show-login? true)} "Sign in"])]]))
 
+(defn- page-body
+  "Exactly one of the three, chosen by `:page` — the shelf is not a backdrop the
+  other two are laid over. It used to be: both panels rendered `(when open?)` and
+  the shelf rendered unconditionally underneath, so opening Settings gave you the
+  settings *and* the search box, the compose form and every card below it.
+
+  **A caller who is not signed in gets the shelf whatever `:page` says.** The
+  Settings and Scopes pages are reached by buttons only the owner has, so a
+  visitor left on one would be looking at a blank page with no way off it.
+  `logout` already puts `:page` back to `:shelf`; this is the second half of that
+  guarantee, and the one that does not depend on every future writer of the state
+  remembering it."
+  [logged-in? page]
+  (case (if logged-in? page :shelf)
+    :scopes [scopes/scopes-page]
+    :settings [settings/machine-user-block]
+    [:div.main-layout
+     [recipes/recipes-tab]]))
+
 (defn app []
-  (let [{:keys [auth-required? logged-in? show-login? error settings-open? scopes-open?]}
-        @state/*app-state]
+  (let [{:keys [auth-required? logged-in? show-login? error page]} @state/*app-state]
     (if (nil? auth-required?)
       [:div.loading "Loading…"]
       [:div
@@ -72,12 +90,7 @@
          [:div.error error [:button.error-dismiss {:on-click state/clear-error} "×"]])
        (when (and auth-required? (not logged-in?) show-login?)
          [login-form])
-       (when (and logged-in? scopes-open?)
-         [scopes/scopes-page])
-       (when (and logged-in? settings-open?)
-         [settings/machine-user-block])
-       [:div.main-layout
-        [recipes/recipes-tab]]])))
+       [page-body logged-in? page]])))
 
 (defonce root (rdomc/create-root (.getElementById js/document "app")))
 

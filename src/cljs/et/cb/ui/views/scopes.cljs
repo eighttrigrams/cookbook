@@ -2,10 +2,12 @@
   "The Scopes page: the owner's categories, where he makes and edits them.
 
   **A private page, in the sense the app already has one.** Cookbook's shell has
-  no router, and the existing pattern for an owner-only surface is the settings
-  panel: a button in the top bar flips a flag, and the block renders only `(when
-  (and logged-in? scopes-open?))`. So this follows it rather than introducing a
-  route — see `et.cb.ui.core`.
+  no router, and the existing pattern for an owner-only surface is the Settings
+  page: a button in the top bar names a page, and `:page` in the atom says which
+  one is on. So this follows it rather than introducing a route — see
+  `et.cb.ui.core/page-body`, which renders exactly one of the three, and
+  `state/go-to-page`, where being *one value* is what makes 'this page and the
+  shelf are both up' unreachable rather than merely avoided.
 
   A Scope is a title and a description and nothing else, so this page is a compose
   row and a list. The description is not decoration: it is what the badge's tooltip

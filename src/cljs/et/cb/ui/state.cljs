@@ -37,10 +37,9 @@
            :search ""
            :human-only? false    ;; show only what a human has edited here
            :recipes-request 0    ;; only the newest listing request may land
-           :settings-open? false ;; the owner's settings panel, asked for like the login form
+           :page :shelf          ;; which page is on: :shelf, :settings or :scopes — see below
            :machine-user nil     ;; {:exists :username :password_set_at} — never a password
            :scopes []            ;; the owner's Scopes — [{:id :title :description :recipe_count}]
-           :scopes-open? false   ;; the Scopes page, revealed like the settings panel
            :editing-scope nil    ;; id of the Scope being edited in place
            :deleting-scope nil})) ;; id of the Scope awaiting a delete confirmation
 
@@ -61,6 +60,48 @@
 (defn- err-handler [fallback]
   (fn [resp]
     (set-error (get-in resp [:response :error] fallback))))
+
+;; ---------------------------------------------------------------------------
+;; pages
+
+(declare fetch-machine-user)
+(declare fetch-scopes)
+
+(defn go-to-page
+  "Show one page: `:shelf`, `:settings` or `:scopes`.
+
+  **One value and not three booleans, so 'both pages are open' is a state that
+  cannot be reached** rather than one that has to be defended wherever the state
+  is read. It used to be `:settings-open?` and `:scopes-open?`, each flipped by
+  its own toggle, and the two panels stacked over the shelf when both were on.
+  Whoever adds a fourth page inherits the invariant instead of the bug.
+
+  Arriving re-reads what the page draws rather than trusting what was fetched
+  before — an agent may have added a Scope through the API, and the machine
+  user's password can be reset from any client — which is why this is a function
+  and not an `assoc` at each call site.
+
+  The Scopes page's two dialogs are dropped on every move, including a move
+  *away* from it: the only buttons that open them are on that page, so one left
+  latched would be a confirmation nobody could have asked for, waiting for the
+  next visit."
+  [page]
+  (swap! *app-state assoc :page page :editing-scope nil :deleting-scope nil)
+  (case page
+    :settings (fetch-machine-user)
+    :scopes (fetch-scopes)
+    nil))
+
+(defn- toggle-page
+  "The top bar's buttons are toggles: pressing the one for the page you are on
+  goes back to the shelf, and pressing the other one goes straight there without
+  a stop in between."
+  [page]
+  (go-to-page (if (= page (:page @*app-state)) :shelf page)))
+
+(defn toggle-settings [] (toggle-page :settings))
+
+(defn toggle-scopes [] (toggle-page :scopes))
 
 ;; ---------------------------------------------------------------------------
 ;; auth
@@ -122,20 +163,27 @@
   `:versions-request` goes with it, and that is the half that does the work: it
   is what a landing `/versions` response checks itself against, so clearing it
   makes an in-flight request from before the sign-out find no match and drop its
-  body instead of writing a history into a signed-out shelf."
+  body instead of writing a history into a signed-out shelf.
+
+  **Back to the shelf**, in the same swap rather than through `go-to-page`: this
+  is a reset and not a navigation — there is nothing to re-read on the way, and
+  the machine-user fetch a move to `:settings` would make is the request a
+  signed-out client must not send. Both owner-only pages are reached by a button
+  only the owner has, so a visitor left on one would have no way back."
   []
   (clear-token!)
   (swap! *app-state assoc
          :logged-in? false :token nil :current-user nil
          :recipes [] :details {} :open #{} :editing nil :publishing nil :deleting nil
          :versions {} :versions-request {} :diffing nil
+         :page :shelf
          ;; the machine user's state is the owner's business too, and the panel
          ;; must not stay open over a signed-out shelf
-         :settings-open? false :machine-user nil
+         :machine-user nil
          ;; and the Scopes more so: the server sends a signed-out client no
          ;; `scopes` key at all, so keeping the fetched list here would be the one
          ;; copy of the owner's filing left on a signed-out page
-         :scopes [] :scopes-open? false :editing-scope nil :deleting-scope nil)
+         :scopes [] :editing-scope nil :deleting-scope nil)
   (fetch-recipes))
 
 ;; ---------------------------------------------------------------------------
@@ -147,14 +195,6 @@
 (defn fetch-machine-user []
   (api/fetch-json "/api/machine-user" (auth-headers)
     (fn [m] (swap! *app-state assoc :machine-user m))))
-
-(defn toggle-settings
-  "Opening re-reads the state rather than trusting what was fetched before, since
-  the password could have been reset from an API client in between."
-  []
-  (let [open? (not (:settings-open? @*app-state))]
-    (swap! *app-state assoc :settings-open? open?)
-    (when open? (fetch-machine-user))))
 
 (defn set-machine-user-password
   "Creates the machine user the first time and resets its password afterwards —
@@ -181,17 +221,6 @@
 (defn fetch-scopes []
   (api/fetch-json "/api/scopes" (auth-headers)
     (fn [scopes] (swap! *app-state assoc :scopes (vec scopes)))))
-
-(defn toggle-scopes
-  "Opening re-reads the list rather than trusting what was fetched before, the way
-  the settings panel does: an agent may have added a Scope through the API since."
-  []
-  (let [open? (not (:scopes-open? @*app-state))]
-    ;; both dialogs are dropped on the way through: the only buttons that open
-    ;; them are inside the panel, so a closed panel with one still latched would
-    ;; be a confirmation nobody could have asked for waiting for the next open
-    (swap! *app-state assoc :scopes-open? open? :editing-scope nil :deleting-scope nil)
-    (when open? (fetch-scopes))))
 
 (defn add-scope [{:keys [title description]} on-success]
   (api/post-json "/api/scopes" {:title title :description (or description "")}
