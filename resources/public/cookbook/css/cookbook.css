@@ -331,6 +331,25 @@ textarea:focus {
 html.dark-mode .published-badge { background: rgba(245, 158, 11, 0.18); }
 .card.published { border-left: 3px solid var(--accent); }
 
+/* A proposal waiting on this Recipe. Deliberately `.inbox-kind.kind-proposed`'s
+   treatment rather than a fourth badge style of its own: that is the same fact on
+   the other page, and this badge's whole job is to send him there — a card and a
+   queue row that looked unrelated would make him work out that they are about the
+   same thing. Lower-case and unspaced where `.published-badge` is an uppercase
+   announcement, because the latch is permanent and this is a state the next click
+   in the Inbox ends. No `cursor: pointer`: it is not a control. */
+.pending-badge {
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgba(180, 83, 9, 0.12);
+  color: var(--accent);
+  font-size: 0.72em;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: help;
+}
+html.dark-mode .pending-badge { background: rgba(245, 158, 11, 0.18); }
+
 .card-useful-when {
   margin-top: 8px;
   color: var(--text-secondary);

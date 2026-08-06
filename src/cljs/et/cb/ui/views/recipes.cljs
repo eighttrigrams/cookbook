@@ -27,6 +27,12 @@
   fetched and it goes up on the next listing rather than under your cursor. The
   same number ranks the shelf, together with the version count.
 
+  A card also says when **a proposal is waiting** on its Recipe, which is what the
+  `pending` flag on a lean listing row is for: a collapsed card is exactly the
+  place that cannot go and fetch one. It is a badge and not a control — the
+  deciding happens in the Inbox, against the agent's text — and it is owner-only
+  like the others, cosmetically here and for real on the server.
+
   The shelf can be narrowed three ways at once — by a search over titles and tags,
   to the Recipes a human has edited here rather than an agent, and away from the
   Recipes filed under given Scopes. All three are the listing endpoint's own
@@ -336,6 +342,35 @@
     [:span.views-badge {:title views-badge-title}
      (str view-count (if (= 1 view-count) " read" " reads"))]))
 
+(def ^:private pending-badge-title
+  "Three things a one-word badge does not say: what is waiting, that the Recipe
+  still reads as it always did, and where to go about it. The last one is the
+  point — this badge is not a control, so it has to name the page that is."
+  (str "An agent proposes to rewrite this Recipe and is waiting for you. Nothing "
+       "here has changed yet — approve or dismiss it in the Inbox"))
+
+(defn- pending-badge
+  "That a proposal is waiting on this Recipe, on the collapsed card.
+
+  **This is why `pending` is on a lean listing row at all.** The flag was put
+  there so the shelf could show it, and until now only the reads had it: a
+  collapsed card is exactly the place that cannot go and fetch a proposal, so
+  without the flag the shelf could not say that one was queued.
+
+  **It is a badge and not a control.** Approving or dismissing happens in the
+  Inbox, where the agent's text can be read against the Recipe's own — a decision
+  nobody should make from a word on a card — so nothing here is clickable and the
+  tooltip says where to go instead.
+
+  **The `logged-in?` gate at the call site is cosmetic and must not be read as the
+  boundary**, the same distinction `card-tags` draws: a visitor's projection does
+  not name the column, so a signed-out client is not holding a `pending` it has
+  been asked not to draw — there is no key in what it was sent. Deleting the gate
+  would show a visitor nothing extra; deleting the server half would tell strangers
+  which of the owner's Recipes an agent is queued to rewrite."
+  []
+  [:span.pending-badge {:title pending-badge-title} "proposal"])
+
 (defn- card-tags
   "The owner's extra search words, on his own card.
 
@@ -426,13 +461,16 @@
       title])])
 
 (defn- card [{:keys [id title useful_when tags scopes version published published_at modified_at
-                     view_count]
+                     view_count pending]
               :as recipe}
              {:keys [logged-in? open details]}]
   (let [expanded? (contains? open id)
-        ;; JSON gives 0/1 and 0 is truthy in cljs, so this has to be a
-        ;; comparison rather than a test for presence.
-        published? (= 1 published)]
+        ;; JSON gives 0/1 and 0 is truthy in cljs, so these have to be
+        ;; comparisons rather than tests for presence. `pending` is absent
+        ;; altogether from a visitor's row, which `= 1` reads as false — the same
+        ;; answer, arrived at without the client having to know.
+        published? (= 1 published)
+        pending? (= 1 pending)]
     [:div.card {:class (when published? "published")}
      [:div.card-header {:on-click #(state/toggle-open id)}
       [:span.card-toggle (if expanded? "▾" "▸")]
@@ -441,6 +479,14 @@
         [:span.published-badge {:title (str "Published " (day published_at)
                                             " — public, and one way")}
          "published"])
+      ;; Next to the latch rather than next to the counts: both are states the
+      ;; Recipe is *in* — one settled and one waiting — where the version, the
+      ;; provenance split and the reads are all numbers about its past. And a
+      ;; Recipe can wear both, which is not a contradiction: a machine may propose
+      ;; against a published Recipe, and what a visitor sees stays the approved
+      ;; version until he says otherwise.
+      (when (and logged-in? pending?)
+        [pending-badge])
       (when (and logged-in? (seq scopes))
         [card-scopes scopes])
       [:span.version-badge {:title "Every edit makes a new version"} (str "v" version)]
