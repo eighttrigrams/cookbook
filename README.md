@@ -171,8 +171,14 @@ not a version: it lives in `recipe_proposals`, the `recipes` row is the last app
 state, every read serves the row, and publishing publishes the row. His case, in his
 words: *if say the last version v3 was from a machine and the human approved, and then
 the machine sends another request, on publish, what an anon user sees is v3.*
-`what-a-visitor-sees-is-the-last-approved-version` is the test that holds it, and it
-reddens if any read starts serving the pending text.
+**Two tests hold it, one per half.**
+`what-a-visitor-sees-is-the-last-approved-version` is the reads: it reddens if any read
+starts serving the pending text, at any `?detail`, to anybody.
+`publishing-while-a-proposal-pends-publishes-the-approved-version` is the publish: it
+reddens if the latch is refused while something waits, or if publishing applies the
+pending proposal on its way out. The second one is named here because the first cannot
+fail for it — a bug in the publish is not a bug in a read, and it went untested until it
+was looked for.
 
 ### The inbox
 

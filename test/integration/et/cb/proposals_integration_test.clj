@@ -302,7 +302,10 @@
               not on the Recipe"
       (is (empty? (:body (GET-json "/api/recipes?search=agent")))))
     (testing "and a visitor is not even told something is waiting"
-      (h/API :post (str "/api/recipes/" id "/publish") {})
+      (is (= 200 (:status (h/API :post (str "/api/recipes/" id "/publish") {})))
+          "publishing while a proposal pends is allowed — see
+           publishing-while-a-proposal-pends-publishes-the-approved-version, which is
+           where that is the subject rather than the setup")
       (h/with-real-auth
         (let [row (first (:body (h/API :get "/api/recipes" {:anonymous? true})))]
           (is (= "His own" (:title row)))
@@ -423,6 +426,61 @@
       (is (= "the approved agent text"
              (:description (:body (GET-json (str "/api/recipes/" id "?detail=full"))))))
       (is (= 3 (:total (:body (GET-json (str "/api/recipes/" id "/versions")))))))))
+
+(deftest publishing-while-a-proposal-pends-publishes-the-approved-version
+  ;; **The publish half of the same guarantee, and the half no test was the subject
+  ;; of.** The one above asks what every *read* serves while a proposal waits.
+  ;; Publishing is a different write meeting the same pending proposal, and it is the
+  ;; one that makes a Recipe public — so if anything were going to carry an unapproved
+  ;; wording out to a stranger, it would be this.
+  ;;
+  ;; Two ways it could go wrong, and both used to redden exactly one assertion, in
+  ;; another test, inside a `testing` block about whether a visitor is told something is
+  ;; waiting: refusing the publish because something is pending, and helpfully applying
+  ;; the proposal on the way. Neither would have read as itself.
+  (let [{:keys [id]} (his-recipe! "Public while a rewrite waits")]
+    (is (= 202 (:status (machine :put (str "/api/recipes/" id)
+                                 {:title "UNAPPROVED TITLE"
+                                  :useful_when "UNAPPROVED USEFUL WHEN"
+                                  :description "UNAPPROVED BODY"}))))
+    (is (= 1 (:pending (listed id))) "so there really is one waiting")
+    (testing "the publish is allowed, and is not turned into a decision about the
+              proposal"
+      (let [resp (POST-json (str "/api/recipes/" id "/publish") {})]
+        (is (= 200 (:status resp)))
+        (is (= 1 (:published (:body resp))))
+        (is (= "Public while a rewrite waits" (:title (:body resp))))
+        (is (= 1 (:version (:body resp))) "and it writes no version, as ever")))
+    (testing "the proposal is still waiting: publishing neither approved nor dismissed it"
+      (is (= 1 (:pending (listed id))))
+      (is (= 1 (count (filter #(= "proposed" (:kind %)) (inbox))))))
+    (testing "and what went public is the approved version"
+      (h/with-real-auth
+        (let [full (:body (h/API :get (str "/api/recipes/" id "?detail=full")
+                                 {:anonymous? true}))]
+          (is (= "Public while a rewrite waits" (:title full)))
+          (is (= "his body" (:description full)))
+          (is (not (re-find #"UNAPPROVED" (pr-str full)))))))
+    (testing "he can save over it himself and publish again, and a visitor follows
+              *his* newer text rather than the one still waiting"
+      (is (= 200 (:status (PUT-json (str "/api/recipes/" id)
+                                    {:description "his second draft"}))))
+      (is (= 200 (:status (POST-json (str "/api/recipes/" id "/publish") {}))))
+      (h/with-real-auth
+        (let [full (:body (h/API :get (str "/api/recipes/" id "?detail=full")
+                                 {:anonymous? true}))]
+          (is (= "his second draft" (:description full)))
+          (is (not (re-find #"UNAPPROVED" (pr-str full)))))))
+    (testing "so the agent's wording reaches a reader when he approves it and not
+              before — which is the whole of what the guarantee claims"
+      (let [entry (latest-proposal-entry)]
+        (is (= 1 (:recipe_published (:proposal entry)))
+            "and the item says the Recipe is public before he clicks")
+        (is (= 200 (:status (h/API :post (str "/api/inbox/" (:id entry) "/approve") {}))))
+        (h/with-real-auth
+          (is (= "UNAPPROVED BODY"
+                 (:description (:body (h/API :get (str "/api/recipes/" id "?detail=full")
+                                             {:anonymous? true}))))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; approving and dismissing

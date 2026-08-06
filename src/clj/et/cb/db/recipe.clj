@@ -927,8 +927,17 @@
   on publish, what an anon user sees is v3.* That is not a happy accident of this
   design, it is the load-bearing part of it — with publishing open while a proposal
   pends, the invisibility of that proposal to every read is the only thing between an
-  unapproved wording and an anonymous reader. `what-a-visitor-sees-is-the-last-approved-version`
-  is the test that holds it.
+  unapproved wording and an anonymous reader.
+
+  **Two tests hold it, because it has two halves and one of them is this function's.**
+  `what-a-visitor-sees-is-the-last-approved-version` is the reads: nothing serves the
+  pending text, at any `?detail`, to anybody.
+  `publishing-while-a-proposal-pends-publishes-the-approved-version` is this write: the
+  publish is allowed, it resolves nothing, and what goes public is the row. The second
+  had to be written because the first cannot fail for it — a publish that refused while
+  something waited, or that helpfully applied the proposal on the way out, is a bug in
+  here rather than in a read, and it reddened one incidental assertion about an
+  anonymous listing's title inside a test about something else.
 
   Publishing an already-published recipe returns it untouched: the first publish
   is the fact being recorded, so `published_at` never moves. It is not a content
