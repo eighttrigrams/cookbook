@@ -489,15 +489,29 @@
     (testing "the Recipe was written once, not twice"
       (is (= 2 (:version (listed id)))))))
 
-(deftest approving-a-proposal-whose-recipe-is-gone-closes-it
+(deftest deleting-a-recipe-is-what-closes-a-proposal-nobody-answered
+  ;; **There is no "the Recipe is gone" answer on approve, because there is no such
+  ;; entry.** The delete resolves the pending proposal and marks its entry seen in one
+  ;; transaction, so the queue never offers him a proposal he cannot act on — which is
+  ;; also what lets `attach-to-events` join `recipes` inner and `approve-proposal!` be
+  ;; total. Approving afterwards is the ordinary already-resolved 409, and the route
+  ;; used to document a 404 for a state nothing could produce.
   (let [{:keys [id]} (his-recipe! "Doomed")
         _ (machine :put (str "/api/recipes/" id) {:description "the agent's body"})
         entry (latest-proposal-entry)]
     (is (= 200 (:status (h/API :delete (str "/api/recipes/" id) {}))))
     (testing "his delete already closed it, so the entry is out of the queue"
       (is (empty? (filter #(= "proposed" (:kind %)) (inbox)))))
-    (testing "and approving it now says the Recipe is gone rather than 500ing"
-      (is (= 409 (:status (h/API :post (str "/api/inbox/" (:id entry) "/approve") {})))))))
+    (testing "and every entry the queue does still show carries a Recipe it can be
+              read against"
+      (is (every? #(= 1 (:recipe_exists %)) (filter :proposal (inbox)))))
+    (testing "while approving that entry answers 'already resolved', with no resolution
+              word, because he decided nothing — the Recipe went"
+      (let [resp (h/API :post (str "/api/inbox/" (:id entry) "/approve") {})]
+        (is (= 409 (:status resp)))
+        (is (nil? (:resolution (:body resp))))))
+    (testing "and so does dismissing it, rather than the two disagreeing"
+      (is (= 409 (:status (h/API :post (str "/api/inbox/" (:id entry) "/dismiss") {})))))))
 
 (deftest seen-refuses-a-proposal
   (let [{:keys [id]} (his-recipe! "His own")

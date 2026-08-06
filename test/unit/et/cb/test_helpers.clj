@@ -107,20 +107,6 @@
   [f]
   (jdbc/with-transaction [tx (db/get-conn *ds*)] (f tx)))
 
-(defn delete-recipe-row!
-  "Delete the `recipes` row and nothing else — no history, no associations, and
-  **without resolving a pending proposal**, which `db.recipe/delete-recipe`
-  deliberately does.
-
-  Reaches past that path for the same reason `clear-source!` reached past the
-  handlers: it manufactures a state no request produces, so that a read can be asked
-  what it does with a proposal whose Recipe has gone missing some other way — a
-  restored backup, a manual repair, a bug. A test that went through
-  `delete-recipe` would be testing the cleanup rather than the read."
-  [recipe-id]
-  (jdbc/execute-one! (db/get-conn *ds*)
-    (sql/format {:delete-from :recipes :where [:= :id recipe-id]})))
-
 (defn insert-scope-row!
   "An association written straight at the join table, bypassing
   `db.scope/set-recipe-scopes!` and the ownership intersection it does.

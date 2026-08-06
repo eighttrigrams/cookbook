@@ -849,10 +849,15 @@
   outgoing version, write the proposal's three fields, resolve the proposal
   `approved`, and mark its inbox entry seen.
 
-  nil when the Recipe is gone — and the caller is expected to resolve the proposal
-  anyway, which `inbox-handler` does: a question about a Recipe that no longer exists
-  cannot be answered, and leaving it pending would block the agent that filed it
-  forever.
+  **It does not answer 'the Recipe is gone', because an unresolved proposal always has
+  one.** `delete-recipe` resolves the pending proposal and marks its entry seen in the
+  same transaction as the delete, and `inbox-handler/resolving` has already established
+  that this proposal is unresolved — so there is no request that arrives here with a
+  missing Recipe. It used to return nil for that, and the route documented a 404 for
+  it, which was a state this design does not have described as one of its answers. A
+  missing row is now thrown: it is a broken invariant and not a case, and the only way
+  to reach it would be a delete landing between `resolving`'s read and this
+  transaction, which this database does not currently let two writers do.
 
   Five decisions, all of which read oddly unless they are said out loud:
 
@@ -884,7 +889,11 @@
     `archive-order-is-the-whole-design` property, met by a second write path."
   [ds user-id proposal]
   (jdbc/with-transaction [tx (db/get-conn ds)]
-    (when-let [current (get-recipe tx user-id (:recipe_id proposal) {:lean? false})]
+    (let [current (get-recipe tx user-id (:recipe_id proposal) {:lean? false})]
+      (when (nil? current)
+        (throw (ex-info "An unresolved proposal names a Recipe that is gone"
+                        {:proposal-id (:id proposal)
+                         :recipe-id (:recipe_id proposal)})))
       (archive! tx current)
       (let [result (jdbc/execute-one! tx
                      (sql/format {:update :recipes

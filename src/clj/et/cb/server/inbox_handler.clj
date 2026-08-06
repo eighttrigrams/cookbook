@@ -107,9 +107,10 @@
   *visitor* sees meanwhile is unchanged and stays unchanged: the last approved version,
   never the proposal (see GET /api/recipes/:id).
 
-  A proposal whose Recipe has since been deleted still comes back, with
-  `recipe_version` and the three current fields null: the entry has to be able to
-  say why it cannot be approved rather than vanishing from the queue.
+  **A `proposed` entry always has its Recipe**, unlike the other three kinds: deleting
+  a Recipe resolves its pending proposal and takes that entry out of the queue in one
+  transaction (see DELETE /api/recipes/:id), so `recipe_exists` is 1 on every entry
+  that carries a `proposal` and the three `current_` fields are never null.
 
   **Reading this list moves no `view_count`.** The current text is read straight from
   the table, not through `GET /api/recipes/:id?detail=full` — that endpoint counts a
@@ -213,7 +214,7 @@
   be the entire mechanism undone, so a machine token gets 403 here as it does on the
   listing.
 
-  Three things worth knowing before calling it:
+  Two things worth knowing before calling it:
 
   - **The new version is labelled `machine`.** The agent wrote the text; approving is
     letting it in, not authoring it. `has_human_edit` is therefore untouched too, so
@@ -224,25 +225,21 @@
     diffed against the Recipe as it reads *now* and says in words when the two have
     diverged, so this is a decision you make with your eyes open rather than one the
     API refuses on your behalf.
-  - **A proposal whose Recipe has been deleted answers 404 and is resolved anyway.**
-    The question can no longer be answered, and leaving it pending would block the
-    agent that filed it forever.
+  **Deleting the Recipe is what closes a proposal nobody answered**, and it is not
+  this route's business: DELETE /api/recipes/:id resolves the pending proposal and
+  takes its entry out of the queue in the same transaction. So there is no answer here
+  for 'the Recipe is gone' — such an entry is not in the queue to be clicked, and a
+  call naming one after the fact meets the 409, because the delete already resolved it.
 
-  409 when the proposal has already been approved or dismissed, 404 when the entry
-  names no proposal of yours, 403 for a machine token or an anonymous caller."
+  409 when the proposal has already been approved, dismissed, or closed by a delete;
+  404 when the entry names no proposal of yours; 403 for a machine token or an
+  anonymous caller."
   [req]
   (resolving req
     (fn [proposal]
-      (let [ds (common/ensure-ds)
-            user-id (common/get-user-id req)]
-        (if-let [recipe (db.recipe/approve-proposal! ds user-id proposal)]
-          {:status 200 :body recipe}
-          ;; The Recipe is gone. Resolve the proposal anyway — in its own
-          ;; transaction, since there is no Recipe write to share one with — so the
-          ;; queue does not keep an unanswerable question and the agent is unblocked.
-          (do (jdbc/with-transaction [tx (db/get-conn ds)]
-                (db.proposal/resolve! tx user-id proposal nil))
-              {:status 404 :body {:error "That Recipe has been deleted, so there is nothing to approve. The proposal has been closed"}}))))))
+      {:status 200
+       :body (db.recipe/approve-proposal! (common/ensure-ds)
+                                          (common/get-user-id req) proposal)})))
 
 (defn dismiss-proposal-handler
   "POST /api/inbox/:id/dismiss — decline an agent's proposed rewrite, by the **event**

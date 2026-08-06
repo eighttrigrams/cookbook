@@ -332,17 +332,6 @@
       (is (nil? (db.proposal/pending-for h/*ds* h/*user-id* id)))
       (is (= "approved" (:resolution (db.proposal/by-event h/*ds* h/*user-id* (:id entry))))))))
 
-(deftest approving-a-proposal-whose-recipe-is-gone-answers-nil
-  (let [{:keys [id]} (create! "Doomed" false)
-        _ (save! id {:description "his correction"} true)
-        _ (db.proposal/propose! h/*ds* h/*user-id* id 2 {:title "Doomed"
-                                                         :description "proposed"})
-        entry (first (filter #(= "proposed" (:kind %)) (events-of id)))
-        proposal (db.proposal/by-event h/*ds* h/*user-id* (:id entry))]
-    (db.recipe/delete-recipe h/*ds* h/*user-id* id {:human? true})
-    (is (nil? (db.recipe/approve-proposal! h/*ds* h/*user-id* proposal))
-        "there is nothing to write it onto")))
-
 (deftest deleting-a-recipe-closes-its-pending-proposal
   ;; The opposite call from the events, which are left behind: an event records that
   ;; something happened, a proposal is a question, and a question about a Recipe that
@@ -367,7 +356,19 @@
       (is (nil? (:resolution (db.proposal/by-event h/*ds* h/*user-id* (:id entry)))))
       (is (some? (:resolved_at (db.proposal/by-event h/*ds* h/*user-id* (:id entry))))))
     (testing "and the row is kept: what an agent tried is a fact even now"
-      (is (some? (db.proposal/by-event h/*ds* h/*user-id* (:id entry)))))))
+      (is (some? (db.proposal/by-event h/*ds* h/*user-id* (:id entry)))))
+    ;; **This is the invariant two other things now rest on**, so it is asserted here
+    ;; rather than worked around there. `attach-to-events` joins `recipes` inner,
+    ;; because every `proposed` entry left in the queue has a row to join to; and
+    ;; `db.recipe/approve-proposal!` throws rather than answering 'the Recipe is gone',
+    ;; because no request can arrive with one missing. Both were written the other way
+    ;; round first — a LEFT JOIN, a nil, a documented 404 and a note in the UI — for a
+    ;; state that only raw SQL could produce.
+    (testing "so no proposal is left for the queue to render without a Recipe"
+      (is (empty? (filter :proposal
+                          (db.proposal/attach-to-events
+                            h/*ds* h/*user-id*
+                            (db.event/list-unseen h/*ds* h/*user-id*))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; what the reads say
@@ -454,26 +455,6 @@
     (testing "entries that are not proposals are handed back untouched"
       (is (every? #(false? (contains? % :proposal))
                   (filter #(not= "proposed" (:kind %)) entries))))))
-
-(deftest a-proposal-whose-recipe-is-gone-still-renders
-  ;; The LEFT JOIN in `attach-to-events`: the entry has to come back and be able to
-  ;; say why it cannot be approved, rather than disappearing from the queue.
-  (let [{:keys [id]} (create! "Doomed" false)
-        _ (save! id {:description "his correction"} true)
-        _ (db.proposal/propose! h/*ds* h/*user-id* id 2 {:title "Rewritten"
-                                                         :description "the agent's"})
-        entry-id (:id (first (filter #(= "proposed" (:kind %)) (events-of id))))]
-    ;; reach past `delete-recipe`, which resolves the proposal — this is the state a
-    ;; queue would be in if a Recipe went missing any other way
-    (h/delete-recipe-row! id)
-    (let [entries (db.proposal/attach-to-events h/*ds* h/*user-id*
-                                                (db.event/list-unseen h/*ds* h/*user-id*))
-          proposed (first (filter #(= entry-id (:id %)) entries))]
-      (is (some? (:proposal proposed)) "the entry still carries its proposed text")
-      (is (= "Rewritten" (:title (:proposal proposed))))
-      (is (nil? (:recipe_version (:proposal proposed)))
-          "and says there is no current version to diff against")
-      (is (nil? (:current_title (:proposal proposed)))))))
 
 (deftest one-owners-proposals-are-their-own
   (let [{:keys [id]} (create! "Mine" false)]

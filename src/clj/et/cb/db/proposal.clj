@@ -301,12 +301,16 @@
                                                 [:recipes.useful_when :current_useful_when]
                                                 [:recipes.description :current_description]]
                                        :from [:recipe_proposals]
-                                       ;; A LEFT JOIN, so a proposal whose Recipe has
-                                       ;; been deleted still comes back — the entry has
-                                       ;; to render and say why it cannot be approved,
-                                       ;; rather than vanishing from the queue.
-                                       :left-join [:recipes
-                                                   [:= :recipes.id :recipe_proposals.recipe_id]]
+                                       ;; An inner join, because **an unresolved
+                                       ;; proposal always has its Recipe**:
+                                       ;; `db.recipe/delete-recipe` resolves the pending
+                                       ;; one and marks its entry seen in the same
+                                       ;; transaction, so a `proposed` entry that is
+                                       ;; still in the queue has a row to join to.
+                                       ;; `deleting-a-recipe-closes-its-pending-proposal`
+                                       ;; is what holds that.
+                                       :join [:recipes
+                                              [:= :recipes.id :recipe_proposals.recipe_id]]
                                        :where [:and [:in :recipe_proposals.id ids]
                                                (db/user-id-where-clause
                                                  :recipe_proposals.user_id user-id)]})

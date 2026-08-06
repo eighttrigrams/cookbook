@@ -149,11 +149,6 @@
       Approving replaces that public text with the agent's wording, and there is no
       unpublish. Until you do, a reader still sees the version you approved."]))
 
-(defn- gone-note []
-  [:p.inbox-stale
-   "This Recipe has been deleted, so there is nothing left to approve this against.
-    Dismissing it is all that is left."])
-
 (defn- proposal-review
   "A proposal, shown against the Recipe's **current** text: current on the left,
   proposed on the right.
@@ -182,15 +177,17 @@
                   :useful_when (:useful_when proposal)
                   :description (:description proposal)}]
     [:div.inbox-review
-     (if (nil? (:recipe_version proposal))
-       [gone-note]
-       ;; Both notes, and both can be on at once: a proposal against older text on a
-       ;; Recipe that is also published is two things he needs to know, not a choice
-       ;; between them. Only the deleted case is exclusive, because there is nothing
-       ;; left for the other two to be about.
-       [:<>
-        [published-note proposal]
-        [staleness-note proposal]])
+     ;; Both notes, and both can be on at once: a proposal against older text on a
+     ;; Recipe that is also published is two things he needs to know, not a choice
+     ;; between them.
+     ;;
+     ;; There is no third, deleted case to be exclusive with them. A `proposed` entry
+     ;; always has its Recipe — deleting one resolves the proposal and takes the entry
+     ;; out of the queue in the same transaction — so this pane never has to explain a
+     ;; missing left-hand side, and a note that said it did was describing a state the
+     ;; server cannot send.
+     [published-note proposal]
+     [staleness-note proposal]
      ;; Keyed on the texts and the theme, like the viewer's own call site: nothing
      ;; mutates a live merge view, it is replaced.
      ^{:key (str (:base_version proposal) "-" (boolean diff-unified?) "-"
