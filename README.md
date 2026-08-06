@@ -37,9 +37,11 @@ had signed.
 
 Out of its hands, not out of its reach: an agent may still **propose** against a
 published Recipe. His call — *i think a machine should be able to propose against a
-published Recipe. its up to the human to approve or not.* So the latch and the approval
-rule refuse the same thing in the same way, and the latch is the stronger of the two,
-because it also holds on a Recipe an agent wrote every word of.
+published Recipe. its up to the human to approve or not.* So on a **content** edit the
+latch and the approval rule do the same thing, and the latch is the stronger of the two
+there, because it also holds on a Recipe an agent wrote every word of. On everything
+else they part company, and in both directions: the latch refuses the filing and the
+approval rule allows it — see the table below, which is where that is spelled out.
 
 The second is the **approval rule**, and it is deliberately softer: an agent's
 edit of his text is neither applied nor refused, it is *filed* — a 202 and a
@@ -99,7 +101,8 @@ Delete is refused on a published Recipe because removing one takes it out of the
 listing, history and all, which is un-latching by demolition, and there is no such thing
 as proposing a deletion. And a machine may not publish at all, published or not, because
 the latch is irreversible — a machine that could set it could make private content
-permanently public *and* freeze the Recipe out of its own reach. Those rules live
+permanently public, and take its own writing out of its hands, with no way back for
+either. Those rules live
 in one place, `wrap-machine-recipe-rules`, which every mutating recipe route
 passes through — installed with compojure's `wrap-routes` so that it runs *after*
 the route has matched, and therefore reads the same recipe id the handler does
@@ -335,12 +338,14 @@ are the interface, not decoration.
 - `POST /api/recipes` — `{:title :useful_when :description}`. Title required.
   The new recipe is version 1 and private; `published` is not accepted here.
 - `PUT /api/recipes/:id` — the same three fields; anything you leave out keeps
-  its current value. Pass `modified_at` from your last read to be told (409)
-  when someone else saved in between. A save that changes nothing is a no-op.
-  **From a machine token, on a Recipe the owner has written part of, this answers
-  202 and files a proposal** — see *Edits that need approving*, and note the two
-  different 409s that route can give, told apart by `reason`. `?overwrite=true`
-  replaces a proposal already pending.
+  its current value, on a proposal exactly as on a save. Pass `modified_at` from your
+  last read to be told (409) when someone else saved in between. A save that changes
+  nothing is a no-op. **From a machine token, this answers 202 and files a proposal on
+  a Recipe the owner has written part of *or* that is published** — both triggers, and
+  the second one holds even when every version is an agent's — see *Edits that need
+  approving*, and note the two different 409s that route can give, told apart by
+  `reason`. `?overwrite=true` replaces a proposal already pending. On a published
+  Recipe a `tags` or `scope_ids` key makes the whole call a 403.
 - `DELETE /api/recipes/:id` — the recipe and its whole history. Its inbox entries
   survive it; a pending proposal on it is closed.
 - `GET /api/recipes/:id/versions` — every version, newest first, each with all

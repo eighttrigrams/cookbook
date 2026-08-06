@@ -293,8 +293,9 @@
     un-latching by demolition, and there is no such thing as proposing one) and a
     publish;
   - any **publish** → 403, published or not, because the latch is irreversible and
-    a machine that could set it could make private content permanently public and
-    freeze the recipe out of its own reach;
+    a machine that could set it could make private content permanently public *and*
+    take its own writing out of its hands — out of its hands and not out of its reach,
+    since it may still propose, but there is no way back from either;
   - a **`DELETE`** naming a recipe that is not machine-only → 403, by the same
     argument as the published rule: an agent that cannot rewrite his text must not be
     able to remove it instead, which is un-latching by demolition again and a hole in
