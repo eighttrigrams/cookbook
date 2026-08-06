@@ -129,6 +129,26 @@
           recipe_version " — you have saved it since. The comparison below is against "
           "your current text, so approving replaces it with the agent's.")]))
 
+(defn- published-note
+  "Said in words, before the click, when the Recipe is published.
+
+  An agent may propose against a published Recipe — the owner's call, *its up to the
+  human to approve or not* — so this button is the only thing standing between an
+  agent's wording and text that is already public and that he has put his name to.
+  There is no unpublish. That is a decision worth making deliberately rather than
+  discovering afterwards, which is the same argument `staleness-note` makes about a
+  base version, one door along.
+
+  What it does **not** say, because it is not true: nothing about a visitor's view
+  changes while this sits here. They are served the last approved version and never the
+  proposal, published or not."
+  [{:keys [recipe_published]}]
+  (when (= 1 recipe_published)
+    [:p.inbox-stale
+     "This Recipe is published — it is public, and publishing put your name to it.
+      Approving replaces that public text with the agent's wording, and there is no
+      unpublish. Until you do, a reader still sees the version you approved."]))
+
 (defn- gone-note []
   [:p.inbox-stale
    "This Recipe has been deleted, so there is nothing left to approve this against.
@@ -164,7 +184,13 @@
     [:div.inbox-review
      (if (nil? (:recipe_version proposal))
        [gone-note]
-       [staleness-note proposal])
+       ;; Both notes, and both can be on at once: a proposal against older text on a
+       ;; Recipe that is also published is two things he needs to know, not a choice
+       ;; between them. Only the deleted case is exclusive, because there is nothing
+       ;; left for the other two to be about.
+       [:<>
+        [published-note proposal]
+        [staleness-note proposal]])
      ;; Keyed on the texts and the theme, like the viewer's own call site: nothing
      ;; mutates a live merge view, it is replaced.
      ^{:key (str (:base_version proposal) "-" (boolean diff-unified?) "-"

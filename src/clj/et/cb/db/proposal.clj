@@ -258,6 +258,13 @@
   proposal was filed. `base_version` beside the current `version` is what tells him
   the two are not the same thing.
 
+  **`recipe_published` comes with them, and it is not decoration.** A machine may
+  propose against a published Recipe — *its up to the human to approve or not* — so
+  approving one puts an agent's wording into text he has already put his name to, in
+  public, with no unpublish. His click is the only gate there is on that, which is
+  exactly why the item has to be able to say what the click will do before he makes it.
+  Same argument as `base_version` beside `recipe_version`, one door along.
+
   **It reads the Recipe's text straight from the table and must keep doing so.**
   Going through `GET /api/recipes/:id?detail=full` would bump `view_count`, which
   ranks the shelf — so working through a queue of proposals would quietly reorder
@@ -282,6 +289,7 @@
                                                 :recipe_proposals.created_at
                                                 :recipe_proposals.modified_at
                                                 [:recipes.version :recipe_version]
+                                                [:recipes.published :recipe_published]
                                                 [:recipes.title :current_title]
                                                 [:recipes.useful_when :current_useful_when]
                                                 [:recipes.description :current_description]]

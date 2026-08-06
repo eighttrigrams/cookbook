@@ -274,6 +274,26 @@
     (testing "nothing was acknowledged by either refusal"
       (is (= 1 (count (inbox)))))))
 
+(deftest a-proposed-entry-says-whether-the-recipe-is-published
+  ;; The one thing about approving *this* proposal that cannot be left to be discovered
+  ;; afterwards. An agent may propose against a published Recipe — the owner's call —
+  ;; so approving one replaces text that is already public and that he has put his name
+  ;; to, and there is no unpublish. The client says so on the item, and it can only say
+  ;; it because the entry carries the flag.
+  (let [{:keys [id]} (:body (POST-json "/api/recipes" {:title "Signed and public"
+                                                       :description "his body"}))
+        {other :id} (:body (POST-json "/api/recipes" {:title "Still a draft"
+                                                      :description "his body"}))]
+    (machine :put (str "/api/recipes/" other) {:description "the agent's body"})
+    (is (= 0 (:recipe_published (:proposal (last (inbox)))))
+        "0 while it is his own private draft")
+    (POST-json (str "/api/recipes/" id "/publish") {})
+    (machine :put (str "/api/recipes/" id) {:description "the agent's body"})
+    (let [by-recipe (into {} (map (juxt :recipe_id identity)) (inbox))]
+      (is (= 1 (:recipe_published (:proposal (get by-recipe id)))))
+      (is (= 0 (:recipe_published (:proposal (get by-recipe other))))
+          "and the two entries in one queue do not borrow each other's answer"))))
+
 ;; ---------------------------------------------------------------------------
 ;; what reading it must not touch
 

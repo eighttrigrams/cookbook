@@ -100,6 +100,13 @@
   newer text with the agent's, and both numbers are here so a client can say so
   before the click rather than leaving it to be discovered after.
 
+  **`recipe_published` is on the proposal for the same reason**, 1 or 0. An agent may
+  propose against a published Recipe, so approving one writes an agent's wording into
+  text that is already public and that he has put his name to — and there is no
+  unpublish. The client says so on the item, in words, before the button. What a
+  *visitor* sees meanwhile is unchanged and stays unchanged: the last approved version,
+  never the proposal (see GET /api/recipes/:id).
+
   A proposal whose Recipe has since been deleted still comes back, with
   `recipe_version` and the three current fields null: the entry has to be able to
   say why it cannot be approved rather than vanishing from the queue.
