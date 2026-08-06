@@ -355,14 +355,41 @@
       (is (contains? (set (map :path (h/describe-endpoints {:anonymous? true})))
                      "/api/inbox")))))
 
+(defn- table-count
+  "Rows in a table, read straight from it. The queue alone cannot answer what a reset
+  destroyed: `recipe_events` is cleared either way, so a `recipe_proposals` row left
+  behind is invisible to every read this app has — which is exactly how it went
+  unnoticed."
+  [table]
+  (:n (jdbc/execute-one! (db/get-conn h/*ds*)
+        (sql/format {:select [[[:count :*] :n]] :from [table]}) db/jdbc-opts)))
+
 (deftest resetting-the-database-empties-the-inbox
   ;; `delete-recipe` deliberately leaves a Recipe's events behind; a reset must not.
   ;; A queue naming Recipes that no longer exist at all is a record of nothing, and
   ;; a fixture that half-resets is one a later test can pass because of the half
   ;; that stayed.
-  (let [{:keys [id]} (machine-create! "Written by an agent")]
+  (let [{:keys [id]} (machine-create! "Written by an agent")
+        his (:body (POST-json "/api/recipes" {:title "His own" :description "his body"}))]
     (machine :put (str "/api/recipes/" id) {:description "body v2"})
-    (is (= 2 (count (inbox))))
+    ;; And a **pending proposal**, which is the half of this that the queue cannot
+    ;; see. A reset that stopped clearing `recipe_proposals` passed every assertion
+    ;; below, because the `proposed` entry goes with `recipe_events` and the row it
+    ;; points at is unreachable afterwards: the Recipe is gone, so no read consults
+    ;; it. What is left is a question nobody can answer, still holding the partial
+    ;; unique index against a recipe id the next agent may be given.
+    (is (= 202 (:status (machine :put (str "/api/recipes/" (:id his))
+                                 {:description "the agent's body"}))))
+    (is (= 3 (count (inbox))))
+    (is (= 1 (table-count :recipe_proposals)))
     (is (= 200 (:status (h/API :post "/api/test/reset" {}))))
     (is (empty? (inbox)))
-    (is (empty? (:body (GET-json "/api/recipes"))))))
+    (is (empty? (:body (GET-json "/api/recipes"))))
+    (testing "and the tables behind them, including the one no read would show"
+      (is (zero? (table-count :recipe_events)))
+      (is (zero? (table-count :recipe_proposals))))
+    (testing "so the next agent's write on a reused id is a write and not a 409 about
+              a proposal from a database that no longer exists"
+      (let [{:keys [id]} (machine-create! "Written after the reset")]
+        (is (= 200 (:status (machine :put (str "/api/recipes/" id)
+                                     {:description "body v2"}))))))))

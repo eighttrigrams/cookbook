@@ -603,6 +603,13 @@
         (is (re-find #"(?i)outranks" doc) "that published beats the gate, in words")
         (is (re-find #"403 with nothing applied" doc)
             "and that a filing write on a published Recipe is refused whole")))
+    (testing "**and the reset says it takes the proposals**, which is the one piece of
+              state here that something outside this app is waiting on: an agent that
+              was holding off because of a 409 has to be told its queued work went with
+              everything else"
+      (let [doc (doc-for "POST" "/api/test/reset")]
+        (is (re-find #"recipe_proposals" doc))
+        (is (re-find #"(?i)proposal" doc))))
     (testing "and the visitor guarantee is said where a visitor's caller reads it,
               in his own terms"
       (doseq [path ["/api/recipes" "/api/recipes/:id"]]

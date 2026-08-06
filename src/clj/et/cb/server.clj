@@ -29,11 +29,12 @@
 
 (defn reset-test-db-handler
   "POST /api/test/reset — drop every Recipe and its whole version history, **every
-  Scope with it, and the owner's whole inbox**: `recipes`, `recipe_history`,
-  `scopes`, the `recipe_scopes` filing between them and `recipe_events`, all of it,
-  for every user. Nothing is kept and there is no undo. Dev only: 403 in production.
-  The owner's alone, like the machine-user routes — a machine token is refused and
-  so is a caller with no credentials.
+  Scope with it, the owner's whole inbox, and every proposal waiting in it**:
+  `recipes`, `recipe_history`, `scopes`, the `recipe_scopes` filing between them,
+  `recipe_events` and `recipe_proposals`, all of it, for every user. Nothing is kept
+  and there is no undo. Dev only: 403 in production. The owner's alone, like the
+  machine-user routes — a machine token is refused and so is a caller with no
+  credentials.
 
   The Scopes are named here because this catalogue is what an agent reads before
   calling a route, and 'drop every Recipe' would have it believe the owner's
@@ -47,6 +48,15 @@
   is about one Recipe going away, not about the store being emptied — a queue of
   entries naming Recipes that no longer exist at all is a record of nothing, and it
   would greet the next caller as unread work.
+
+  **The proposals are named because an agent is the party this one surprises.** A
+  pending proposal is the one piece of state here that something outside this app is
+  *waiting on*: it answers 409 to the next write and it is the reason an agent has not
+  retried. So an agent that calls this route has to be told its own queued work goes
+  with everything else, rather than discovering it from a 202 where it expected a
+  409. It also cannot be left behind — a proposal naming a Recipe that no longer
+  exists is a question about nothing, kept alive by the partial index that only sees
+  unresolved rows.
 
   It is a sibling of `/api/recipes` and so outside both recipe guards, which is
   how it came to be the one destructive route in this app with no caller check at
