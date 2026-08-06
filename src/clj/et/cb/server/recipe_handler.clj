@@ -271,7 +271,11 @@
   `[{id, title, description}]`, empty for an unfiled Recipe; a visitor gets no
   `scopes` key at any ?detail, and there is no query that would produce one for
   them — the join is not run rather than run and then hidden. Unlike the tags,
-  their presence is not testable either: nothing searches them.
+  their presence is not testable either: nothing searches them, and the one
+  parameter that could have made them testable by omission — ?exclude-scopes on
+  the listing — is ignored outright for an anonymous caller rather than applied to
+  their published rows. Watching rows vanish is a way of asking, so it is refused
+  as one.
 
   **`pending`** rides along here too, 1 when a proposal is waiting on this Recipe —
   see GET /api/recipes for what it does and does not say. A visitor gets no such key.
