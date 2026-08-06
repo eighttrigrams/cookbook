@@ -163,6 +163,27 @@
                  :set {:seen [:inline 1]}
                  :where [:and [:= :id id] (db/user-id-where-clause user-id)]})))
 
+(defn rebase-proposal!
+  "Move a `proposed` entry's `version` to the base its proposal now answers, leaving
+  everything else about the entry alone — **including its id and its `created_at`,
+  which is its place in the queue**.
+
+  An agent that revises its proposal three times must be one thing for the owner to
+  answer, not three, and it must not push itself to the bottom of a queue he is
+  working through oldest-first. So an overwrite updates in place; what moves is the
+  version, because the text now being proposed was written against the Recipe as it
+  reads now, and an entry claiming an older base would overstate how stale it is.
+
+  Keyed by the proposal rather than by the event id, because that is what the caller
+  in `db.proposal/propose!` holds: it found a pending proposal, not an entry."
+  [tx user-id proposal-id version]
+  (jdbc/execute-one! tx
+    (sql/format {:update :recipe_events
+                 :set {:version version}
+                 :where [:and [:= :proposal_id proposal-id]
+                         [:= :kind [:inline "proposed"]]
+                         (db/user-id-where-clause user-id)]})))
+
 (def no-such-event
   "`mark-seen!`'s answer for 'there is no such event of yours'. A named value at
   both ends, the shape `db.scope/no-such-scope` already uses: the caller compares

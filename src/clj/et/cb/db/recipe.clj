@@ -125,6 +125,7 @@
             [taoensso.telemere :as tel]
             [et.cb.db :as db]
             [et.cb.db.event :as db.event]
+            [et.cb.db.proposal :as db.proposal]
             [et.cb.db.scope :as db.scope]))
 
 (def visitor-audience
@@ -385,8 +386,14 @@
                  search-clause (conj search-clause)
                  human-only? (conj [:= :has_human_edit 1]))]
      (->> (jdbc/execute! (db/get-conn ds)
-            (sql/format {:select (into (qualify (select-columns lean? audience))
-                                      source-split-columns)
+            (sql/format {:select (cond-> (into (qualify (select-columns lean? audience))
+                                              source-split-columns)
+                                   ;; `pending` is the owner's business, so it is a
+                                   ;; select-column choice like the tags and not a
+                                   ;; dissoc afterwards: a visitor's row does not name
+                                   ;; the column rather than carrying a false.
+                                   (not (visitor? audience))
+                                   (conj (db.proposal/pending-exists-clause :recipes.id)))
                          :from [:recipes]
                          :left-join [:recipe_history [:= :recipe_history.recipe_id :recipes.id]]
                          :where where
@@ -418,13 +425,59 @@
    ;; `{:scopes []}` for a recipe that does not exist, turning every 404 in this
    ;; app into a 200.
    (let [recipe (jdbc/execute-one! (db/get-conn ds)
-                  (sql/format {:select (select-columns lean? audience)
+                  (sql/format {:select (cond-> (select-columns lean? audience)
+                                         (not (visitor? audience))
+                                         (conj (db.proposal/pending-exists-clause :recipes.id)))
                                :from [:recipes]
                                :where [:and [:= :id id] (audience-clause audience)]})
                   db/jdbc-opts)]
      (if (and recipe scopes?)
        (first (with-scopes ds audience [recipe]))
        recipe))))
+
+(defn version-split
+  "One Recipe's provenance split — `{:version :machine_versions :ui_versions}` — or
+  nil when the id matches nothing in this audience.
+
+  **The same expression the listing serves the card**, run for one row: it selects
+  `source-split-columns` over the same `LEFT JOIN` and `GROUP BY`. That is the point
+  of the function existing rather than a second count written for the gate — a
+  predicate that could disagree with the number on the card would be the worst of
+  both, since he would be looking at `3(machine)` while an agent was told to ask
+  permission."
+  [ds audience id]
+  (jdbc/execute-one! (db/get-conn ds)
+    (sql/format {:select (into [:recipes.version] source-split-columns)
+                 :from [:recipes]
+                 :left-join [:recipe_history [:= :recipe_history.recipe_id :recipes.id]]
+                 :where [:and [:= :recipes.id id] (audience-clause audience)]
+                 :group-by [:recipes.id]})
+    db/jdbc-opts))
+
+(defn machine-only?
+  "Whether **every** version of this Recipe was written by an agent — the gate that
+  decides whether a machine may write straight through or has to propose.
+
+  `machine_versions = version` and nothing else. Three things that are *not* the
+  gate, each of which someone will be tempted by:
+
+  - **Not `has_human_edit = 0`.** That bit read 0 for every Recipe he typed by hand
+    before migration 004, so keying on it would have let an agent overwrite exactly
+    the text this exists to protect. 010 has since brought the bit up on those rows,
+    which makes the two agree today — and that is a reason to leave this alone
+    rather than to switch: the bit is one fact about the row, the gate is a claim
+    about every version, and they answer different questions.
+  - **Not the row's own `source`.** A Recipe whose current version is an agent's can
+    have his save two versions back; that is the common case after he corrects
+    something, and it is precisely when approval is wanted.
+  - **Not `ui_versions = 0`.** True today, because the two counts sum to `version`,
+    but it says the same thing one indirection further from the invariant.
+
+  nil for an id the caller cannot see, which callers read as 'no' — a Recipe you
+  cannot see is not one you may write."
+  [ds audience id]
+  (when-let [{:keys [version machine_versions]} (version-split ds audience id)]
+    (= machine_versions version)))
 
 (defn record-view!
   "Count one **consumption** of a Recipe: somebody asked for this one's
@@ -589,6 +642,25 @@
   [current {:keys [tags]}]
   (if (some? tags) tags (:tags current)))
 
+(defn content-would-change?
+  "Whether saving `fields` would actually write a new version of this Recipe.
+
+  **It reuses `merge-content` and `content-of`**, which is the whole reason it lives
+  here rather than in the handler that needs it: absent-keeps and present-replaces is
+  one rule with one implementation, and a caller that re-derived it would eventually
+  disagree with `update-recipe` about whether a save is a no-op. The write path asks
+  this before proposing, so that a machine `PUT` sending the same title back stays
+  the no-op it has always been instead of becoming a pending proposal of nothing.
+
+  It is placed here, immediately under the two functions it is made of, rather than
+  beside the other predicate the gate uses: the point is that there is one merge rule
+  and this reads it.
+
+  nil for an id the caller cannot see."
+  [ds audience id fields]
+  (when-let [current (get-recipe ds audience id {:lean? false})]
+    (not= (merge-content current fields) (content-of current))))
+
 (defn- archive!
   "Push the outgoing state into history — with **its own** `source`, taken off the
   row alongside its own text and its own version number, and never the source of
@@ -738,6 +810,60 @@
                      result)))]
            (db.scope/attach-one tx user-id result)))))))
 
+(defn approve-proposal!
+  "Apply a proposal as the Recipe's next version, in **one transaction**: archive the
+  outgoing version, write the proposal's three fields, resolve the proposal
+  `approved`, and mark its inbox entry seen.
+
+  nil when the Recipe is gone — and the caller is expected to resolve the proposal
+  anyway, which `inbox-handler` does: a question about a Recipe that no longer exists
+  cannot be answered, and leaving it pending would block the agent that filed it
+  forever.
+
+  Five decisions, all of which read oddly unless they are said out loud:
+
+  - **The new version's `source` is `machine`.** The agent wrote this text. Approving
+    is the owner letting it in, not authoring it.
+  - **It does not set `has_human_edit`.** `publish-recipe` already makes exactly this
+    argument in these words: putting your name to text an agent wrote is not writing
+    it. Which also means the Recipe still needs approval next time — the `ui` version
+    that closed the gate is still in its history — and that is intended rather than a
+    side effect.
+  - **It writes no `modified` event.** The proposal's own entry is the record of what
+    the agent did, and it has just been resolved. A second entry would ask him to
+    acknowledge a change he had personally approved a statement earlier. The rule
+    that events follow the `machine` label agrees: this write is his act, not an
+    agent's, however the version is labelled.
+  - **`base_version` is not a guard.** If he saved in between, the proposal is
+    against older text and this replaces his newer text with the agent's. That is his
+    call to make with his eyes open, so the UI says so on the item and this does not
+    refuse it. Refusing would strand the agent's work with nothing to do about it.
+  - **`archive!` is called before the write**, like every other save here, so the
+    outgoing version goes into history with its *own* source rather than with
+    `machine`. Approving must not relabel what he wrote — the
+    `archive-order-is-the-whole-design` property, met by a second write path."
+  [ds user-id proposal]
+  (jdbc/with-transaction [tx (db/get-conn ds)]
+    (when-let [current (get-recipe tx user-id (:recipe_id proposal) {:lean? false})]
+      (archive! tx current)
+      (let [result (jdbc/execute-one! tx
+                     (sql/format {:update :recipes
+                                  :set {:title (str/trim (str (:title proposal)))
+                                        :useful_when (or (:useful_when proposal) "")
+                                        :description (or (:description proposal) "")
+                                        :version (inc (:version current))
+                                        :source [:inline "machine"]
+                                        :modified_at [:raw "datetime('now')"]}
+                                  :where [:= :id (:recipe_id proposal)]
+                                  :returning (select-columns false user-id)})
+                     db/jdbc-opts)]
+        (db.proposal/resolve! tx user-id proposal "approved")
+        (tel/log! {:level :info :data {:id (:recipe_id proposal) :user-id user-id
+                                       :version (:version result)
+                                       :proposal-id (:id proposal)}}
+                  "Recipe proposal approved")
+        (db.scope/attach-one tx user-id result)))))
+
 (defn publish-recipe
   "Set the latch on a recipe the user owns: `published` on, `published_at`
   stamped. One way — there is no unpublish, because un-latching would hand a
@@ -809,6 +935,14 @@
   keeps an orphaned event readable is `recipe_title`, the snapshot migration 009
   takes for exactly this.
 
+  **A pending proposal is resolved rather than left behind**, and that is the
+  opposite call from the events one line above. An event records that something
+  happened, and it did; a proposal is a question waiting for an answer, and a question
+  about a Recipe that no longer exists cannot be answered — left pending it would sit
+  at the top of his queue unanswerable and go on blocking the agent that filed it.
+  The row is kept with `resolved_at` set and no resolution word, because he did not
+  decide anything. `db.proposal/resolve-for-recipe!` argues it at length.
+
   **An agent's delete writes one last event, `deleted`**, carrying the version the
   Recipe died on; the owner's own delete writes none, like every other write of his.
   Which is why this takes `opts` at all — `:human?`, the same flag the create and
@@ -829,6 +963,7 @@
          (jdbc/execute-one! tx (sql/format {:delete-from :recipe_history
                                             :where [:= :recipe_id id]}))
          (db.scope/delete-recipe-scopes! tx id)
+         (db.proposal/resolve-for-recipe! tx user-id id)
          (jdbc/execute-one! tx (sql/format {:delete-from :recipes :where own}))
          (when (machine-write? opts)
            (db.event/record! tx user-id "deleted" current))

@@ -1,0 +1,274 @@
+(ns et.cb.db.proposal
+  "**A proposal**: a rewrite an agent wants to make to a Recipe it may not write
+  directly, waiting for the owner to approve or dismiss it.
+
+  The rule that sends a write here instead of through is `db.recipe/machine-only?`
+  — a Recipe is the agents' to write freely only while *every* one of its versions
+  is stamped `machine`. One save of his own anywhere in its history and the next
+  agent edit has to ask, which is what he asked for: *when there is a human
+  modification inbetween, it needs approval.*
+
+  **A proposal is a proposed version, so it is exactly the three content fields.**
+  Title, useful-when, description — the same three `recipe_history` holds. No tags
+  and no `scope_ids`: filing is not versioned and the rule is about the text he
+  wrote, so a machine retags and refiles an approval-required Recipe freely and only
+  its content waits.
+
+  **At most one unresolved proposal per Recipe, and the schema says so** — a partial
+  unique index, not a check in a handler (migration 011). That is what makes *there
+  are no merge conflicts* a property of the database: a second proposal cannot land
+  while one is pending, so the write path answers 409 with the pending text and an
+  agent replaces it with `?overwrite=true` rather than racing.
+
+  **Resolved rows are kept.** The index is partial, so they cost nothing, and a
+  dismissal is a fact about what an agent tried and the owner declined.
+
+  Two invariants tie this table to the inbox, and both are held here rather than
+  hoped for:
+
+  - **A `proposed` event is unseen exactly while its proposal is unresolved.**
+    Every path that resolves marks the event seen in the same transaction, and
+    `POST /api/inbox/:id/seen` refuses a `proposed` event outright, so the two
+    cannot come apart.
+  - **An overwrite keeps the event where it is in the queue.** The proposal is
+    updated in place — `modified_at` moves, `created_at` does not — and the event
+    keeps its id, so an agent revising three times does not push itself to the
+    bottom of a queue he is working through oldest-first, and does not appear three
+    times."
+  (:require [next.jdbc :as jdbc]
+            [honey.sql :as sql]
+            [taoensso.telemere :as tel]
+            [et.cb.db :as db]
+            [et.cb.db.event :as db.event]))
+
+(def ^:private proposal-columns
+  "What a proposal is, read back. The three content fields, what it was written
+  against, and the two stamps — `created_at` for its place in the queue and
+  `modified_at` for the last revision of it."
+  [:id :recipe_id :base_version :title :useful_when :description
+   :created_at :modified_at])
+
+(defn- unresolved
+  "The clause that makes this table's whole design work, in one place: a proposal is
+  pending exactly while `resolved_at` is NULL, which is the condition the partial
+  unique index is built on. Written once so a read cannot come to disagree with the
+  constraint about what 'pending' means."
+  []
+  [:is :resolved_at nil])
+
+(defn pending-for
+  "The unresolved proposal for one Recipe, or nil. At most one can exist — the
+  index, not a `LIMIT`."
+  [ds user-id recipe-id]
+  (jdbc/execute-one! (db/get-conn ds)
+    (sql/format {:select proposal-columns
+                 :from [:recipe_proposals]
+                 :where [:and [:= :recipe_id recipe-id]
+                         (db/user-id-where-clause user-id)
+                         (unresolved)]})
+    db/jdbc-opts))
+
+(defn by-event
+  "The proposal a `proposed` inbox entry points at, or nil — by **event** id, which
+  is what the approve and dismiss routes are keyed by.
+
+  Keyed by the event and not by the proposal because the queue is what he is acting
+  on: he is looking at an entry, and the entry is the thing with an id in the URL.
+  Joined rather than read in two steps so that 'this event, that proposal, one
+  owner' is one question with one answer.
+
+  It deliberately does **not** narrow on `unresolved`: a caller that resolves an
+  already-resolved proposal has to be told which of the two it is — gone or already
+  answered — and a read that hid resolved rows could only ever say 'not found'."
+  [ds user-id event-id]
+  (jdbc/execute-one! (db/get-conn ds)
+    (sql/format {:select (into (mapv #(keyword (str "recipe_proposals." (name %)))
+                                     proposal-columns)
+                               [[:recipe_proposals.resolved_at :resolved_at]
+                                [:recipe_proposals.resolution :resolution]
+                                [:recipe_events.id :event_id]])
+                 :from [:recipe_events]
+                 :join [:recipe_proposals
+                        [:= :recipe_proposals.id :recipe_events.proposal_id]]
+                 :where [:and [:= :recipe_events.id event-id]
+                         [:= :recipe_events.kind [:inline "proposed"]]
+                         (db/user-id-where-clause :recipe_events.user_id user-id)]})
+    db/jdbc-opts))
+
+(defn propose!
+  "Write a proposal for `recipe-id`, or replace the one already pending, **in one
+  transaction with its inbox entry**.
+
+  `current-version` is the Recipe's version now, which becomes `base_version`: the
+  caller has it in hand and passing it in is what keeps this namespace from needing
+  `db.recipe` (which needs *this* one).
+
+  Two paths, and the difference between them is the queue:
+
+  - **Nothing pending** — insert, then append one `proposed` event carrying the new
+    proposal's id and the base version. That entry is his notification, and it goes
+    to the bottom of the queue like every other.
+  - **Something pending** — update it in place. `created_at` stays where it was, so
+    the entry keeps its position in a queue he works through oldest-first, and the
+    event keeps its id, so three revisions are one thing to answer rather than
+    three. `modified_at` moves, and so does `base_version` — with the event's
+    `version` alongside it — because the text being proposed now answers the Recipe
+    as it reads now, and telling him it was proposed against an older version would
+    overstate how stale it is.
+
+  Returns the proposal as it now reads."
+  [ds user-id recipe-id current-version {:keys [title useful_when description]}]
+  (jdbc/with-transaction [tx (db/get-conn ds)]
+    (let [existing (pending-for tx user-id recipe-id)
+          values {:base_version current-version
+                  :title title
+                  :useful_when (or useful_when "")
+                  :description (or description "")}]
+      (if existing
+        (let [result (jdbc/execute-one! tx
+                       (sql/format {:update :recipe_proposals
+                                    :set (assoc values :modified_at [:raw "datetime('now')"])
+                                    :where [:= :id (:id existing)]
+                                    :returning proposal-columns})
+                       db/jdbc-opts)]
+          (db.event/rebase-proposal! tx user-id (:id existing) current-version)
+          (tel/log! {:level :info :data {:id (:id existing) :recipe-id recipe-id
+                                         :user-id user-id :base-version current-version}}
+                    "Recipe proposal replaced")
+          result)
+        (let [result (jdbc/execute-one! tx
+                       (sql/format {:insert-into :recipe_proposals
+                                    :values [(assoc values :recipe_id recipe-id
+                                                    :user_id user-id)]
+                                    :returning proposal-columns})
+                       db/jdbc-opts)]
+          (db.event/record! tx user-id "proposed" {:id recipe-id :title title
+                                                   :version current-version}
+                            {:proposal_id (:id result)})
+          (tel/log! {:level :info :data {:id (:id result) :recipe-id recipe-id
+                                         :user-id user-id :base-version current-version}}
+                    "Recipe proposal filed")
+          result)))))
+
+(defn resolve!
+  "Close a proposal — `\"approved\"` or `\"dismissed\"` — and mark its inbox entry
+  seen, **in the caller's transaction**.
+
+  A `tx` and not a datasource, because this is never the whole of what happens: a
+  dismissal is this plus nothing, an approval is this plus a new version of the
+  Recipe, and a delete is this plus the Recipe going away. All three have to be one
+  write or the invariant that a `proposed` entry is unseen exactly while its
+  proposal is unresolved is only true most of the time.
+
+  `resolution` may be nil, which is the one case that is neither of the two words:
+  the Recipe was deleted, so the question can no longer be answered. `resolved_at`
+  is what the partial index reads, so a nil resolution still takes the proposal out
+  of the way — and the `CHECK` permits it, because inventing a third word would be
+  claiming he decided something he never saw."
+  [tx user-id {:keys [id event_id]} resolution]
+  (jdbc/execute-one! tx
+    (sql/format {:update :recipe_proposals
+                 :set {:resolved_at [:raw "datetime('now')"]
+                       :resolution resolution}
+                 :where [:= :id id]}))
+  (when event_id
+    (db.event/seen! tx user-id event_id))
+  (tel/log! {:level :info :data {:id id :user-id user-id :resolution resolution}}
+            "Recipe proposal resolved"))
+
+(defn resolve-for-recipe!
+  "Close whatever proposal is pending for a Recipe, with no resolution word, and
+  mark its entry seen. Called by `db.recipe/delete-recipe` inside its transaction.
+
+  **The opposite choice from `recipe_events`, deliberately.** A deleted Recipe's
+  events are left alone, because an event records that something happened and it
+  did; a proposal is a question waiting for an answer, and a question about a Recipe
+  that no longer exists cannot be answered — leaving it pending would keep an
+  unanswerable entry at the top of the queue and go on blocking the agent that filed
+  it. The `deleted` event is what remains as the record.
+
+  The row itself is kept, like every other resolved proposal: what an agent tried is
+  a fact even when the Recipe is gone."
+  [tx user-id recipe-id]
+  (when-let [pending (pending-for tx user-id recipe-id)]
+    (let [event (jdbc/execute-one! tx
+                  (sql/format {:select [:id] :from [:recipe_events]
+                               :where [:and [:= :proposal_id (:id pending)]
+                                       [:= :kind [:inline "proposed"]]
+                                       (db/user-id-where-clause user-id)]})
+                  db/jdbc-opts)]
+      (resolve! tx user-id (assoc pending :event_id (:id event)) nil))))
+
+(defn pending-exists-clause
+  "`pending` for a listing row, as an **`EXISTS` subquery** correlated on the
+  Recipe's id — true when something is waiting for him on that Recipe.
+
+  **Not a second `LEFT JOIN`.** The listing already left-joins `recipe_history`
+  under a `GROUP BY` to count the provenance split; adding another table to that
+  multiplies the rows the aggregate sees, which would silently double the counts on
+  the card. An `EXISTS` answers per row and joins nothing.
+
+  Narrowed on the owner as well as the recipe id, and with `IS` rather than `=` on
+  the `user_id` pair: both columns are nullable, dev's owner is the NULL one, and
+  `NULL = NULL` is NULL rather than true — the same trap `db.event/recipe-still-there`
+  documents, met a second time."
+  [recipe-id-column]
+  [[:exists {:select [[[:inline 1]]]
+             :from [:recipe_proposals]
+             :where [:and [:= :recipe_proposals.recipe_id recipe-id-column]
+                     [:is :recipe_proposals.user_id :recipes.user_id]
+                     [:is :recipe_proposals.resolved_at nil]]}]
+   :pending])
+
+(defn attach-to-events
+  "Put the proposed text, and the Recipe's **current** text, on every `proposed`
+  entry of an inbox page — and leave every other entry exactly as it was.
+
+  Both texts, because reviewing a proposal means reading a diff, and the diff is
+  against what the Recipe says now rather than against what it said when the
+  proposal was filed. `base_version` beside the current `version` is what tells him
+  the two are not the same thing.
+
+  **It reads the Recipe's text straight from the table and must keep doing so.**
+  Going through `GET /api/recipes/:id?detail=full` would bump `view_count`, which
+  ranks the shelf — so working through a queue of proposals would quietly reorder
+  his Cookbook, and reviewing what an agent wrote is not consuming a Recipe.
+  `reading-the-inbox-moves-no-view-count-and-no-modified-at` pins that.
+
+  One statement for the whole page rather than one per entry, which is
+  `db.scope/attach`'s shape and the same reason: a queue of thirteen entries must
+  not cost thirteen round trips."
+  [ds user-id events]
+  (let [ids (into #{} (comp (filter #(= "proposed" (:kind %))) (map :proposal_id)) events)]
+    (if (empty? ids)
+      events
+      (let [by-id (into {}
+                        (map (juxt :id identity))
+                        (jdbc/execute! (db/get-conn ds)
+                          (sql/format {:select [:recipe_proposals.id
+                                                :recipe_proposals.base_version
+                                                :recipe_proposals.title
+                                                :recipe_proposals.useful_when
+                                                :recipe_proposals.description
+                                                :recipe_proposals.created_at
+                                                :recipe_proposals.modified_at
+                                                [:recipes.version :recipe_version]
+                                                [:recipes.title :current_title]
+                                                [:recipes.useful_when :current_useful_when]
+                                                [:recipes.description :current_description]]
+                                       :from [:recipe_proposals]
+                                       ;; A LEFT JOIN, so a proposal whose Recipe has
+                                       ;; been deleted still comes back — the entry has
+                                       ;; to render and say why it cannot be approved,
+                                       ;; rather than vanishing from the queue.
+                                       :left-join [:recipes
+                                                   [:= :recipes.id :recipe_proposals.recipe_id]]
+                                       :where [:and [:in :recipe_proposals.id ids]
+                                               (db/user-id-where-clause
+                                                 :recipe_proposals.user_id user-id)]})
+                          db/jdbc-opts))]
+        (mapv (fn [event]
+                (if-let [p (get by-id (:proposal_id event))]
+                  (assoc event :proposal (dissoc p :id))
+                  event))
+              events)))))

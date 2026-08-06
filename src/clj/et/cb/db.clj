@@ -80,10 +80,21 @@
 (defn get-conn [ds]
   (if (map? ds) (:conn ds) ds))
 
-(defn user-id-where-clause [user-id]
-  (if user-id
-    [:= :user_id user-id]
-    [:is :user_id nil]))
+(defn user-id-where-clause
+  "Whose rows a caller may see, as a `:where` clause — and **the one place the NULL
+  case is handled**. A nil user-id is a real owner in this schema (dev's owner has no
+  `users` row), so it needs `IS NULL` rather than `= NULL`, which matches nothing.
+  Nothing in this codebase writes `= user-id` by hand for that reason.
+
+  The two-argument form names the column, for a query where `user_id` is ambiguous —
+  a join whose both sides have one — and it exists so that such a query can still
+  ask this question here instead of inlining its own comparison. Same rule, same
+  implementation; only the column moves."
+  ([user-id] (user-id-where-clause :user_id user-id))
+  ([column user-id]
+   (if user-id
+     [:= column user-id]
+     [:is column nil])))
 
 (def word-separator-chars
   "What ends a word for `build-word-prefix-search-clause`.
@@ -166,8 +177,15 @@
   the Recipe; here, the whole store is being wiped and an inbox full of entries
   pointing at Recipes that never existed is not a record of anything. A reset that
   spared them would also be exactly the half-reset this docstring warns about — the
-  next test's queue would open on the last test's events."
+  next test's queue would open on the last test's events.
+
+  `recipe_proposals` goes before `recipes` for the reason the ordering exists at all:
+  it points at one, and nothing enforces the foreign key. It is also the table whose
+  survival would be least visible — a resolved proposal is invisible to every read,
+  and a *pending* one left behind would go on blocking an agent from writing a Recipe
+  that no longer exists."
   [ds]
   (let [conn (get-conn ds)]
-    (doseq [table [:recipe_history :recipe_scopes :recipe_events :recipes :scopes]]
+    (doseq [table [:recipe_history :recipe_scopes :recipe_events :recipe_proposals
+                   :recipes :scopes]]
       (jdbc/execute-one! conn (sql/format {:delete-from table})))))

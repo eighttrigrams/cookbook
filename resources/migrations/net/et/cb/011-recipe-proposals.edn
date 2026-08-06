@@ -1,0 +1,75 @@
+{:up ["CREATE TABLE recipe_proposals (
+         id           INTEGER PRIMARY KEY AUTOINCREMENT,
+         recipe_id    INTEGER NOT NULL REFERENCES recipes(id),
+         user_id      INTEGER REFERENCES users(id),
+         base_version INTEGER NOT NULL,
+         title        TEXT NOT NULL,
+         useful_when  TEXT NOT NULL DEFAULT '',
+         description  TEXT NOT NULL DEFAULT '',
+         created_at   DATETIME DEFAULT (datetime('now')),
+         modified_at  DATETIME DEFAULT (datetime('now')),
+         resolved_at  DATETIME,
+         resolution   TEXT CHECK (resolution IN ('approved','dismissed'))
+       )"
+      "CREATE UNIQUE INDEX idx_recipe_proposals_one_pending
+         ON recipe_proposals (recipe_id) WHERE resolved_at IS NULL"]
+ ;; **A proposal**: a rewrite an agent wants to make to a Recipe it is not allowed
+ ;; to write directly, waiting for the owner to approve or dismiss it. The rule that
+ ;; sends a write here instead of through is in `db.recipe/machine-only?` — a Recipe
+ ;; is the agents' to write freely only while *every* one of its versions is stamped
+ ;; `machine`, so one save of his own anywhere in the history means the next agent
+ ;; edit has to ask. His words: *when there is a human modification inbetween, it
+ ;; needs approval.*
+ ;;
+ ;; **At most one unresolved proposal per Recipe, said by a partial unique index and
+ ;; not by a handler.** That is this app's own precedent — the single `machine-user`
+ ;; row is enforced the same way in 003 — and it is what makes "so there are no merge
+ ;; conflicts" a property of the schema rather than of whichever code path happens to
+ ;; be taken. A second agent (or the same one twice) meets a 409 carrying the pending
+ ;; text and can replace it with `?overwrite=true`; nothing has to remember to check
+ ;; first, and two concurrent proposals cannot both land.
+ ;;
+ ;; `WHERE resolved_at IS NULL` is what makes that constraint *partial*, and it is
+ ;; the reason resolved rows can be **kept**. A dismissal is a fact about what an
+ ;; agent tried and the owner declined; keeping it costs nothing, because a resolved
+ ;; row is outside the index and does not block the next proposal.
+ ;;
+ ;; **Three content fields and no more.** A proposal is a proposed *version*, and a
+ ;; version in this app is exactly title / useful-when / description — the same three
+ ;; `recipe_history` holds and the same three `list-versions` returns. Deliberately no
+ ;; `tags` and no `scope_ids`: those are filing, they are not versioned (see 006 and
+ ;; 007), and the approval rule is about the text he wrote. A machine may retag and
+ ;; refile an approval-required Recipe freely, and a request that carries both applies
+ ;; the filing and proposes the content.
+ ;;
+ ;; **No `source` column.** Only a machine ever proposes — the owner does not have to
+ ;; ask himself for permission — so the column would have exactly one possible value.
+ ;; That is 007's argument about `category_type` and 009's about `recipe_events`,
+ ;; made a third time: a column that can only hold one answer answers nothing and has
+ ;; to be threaded through every insert to keep saying it.
+ ;;
+ ;; `base_version` is the Recipe's `version` at the moment the proposal was written.
+ ;; It is what lets the inbox say *proposed against v3, the Recipe is on v4* when he
+ ;; edited in between, and it is deliberately **not** a guard: approving is his call,
+ ;; he is shown a diff against the current text, and refusing the approval because
+ ;; the Recipe moved would leave the agent's work stranded with nothing to do about
+ ;; it. The UI says so in words instead.
+ ;;
+ ;; `title` is `NOT NULL` because a version with no title is not a version — the
+ ;; write path refuses a blank one before it gets here, like every other write in
+ ;; this app. The other two default to empty, exactly as they do on `recipes`.
+ ;;
+ ;; `user_id` is nullable for the reason every other table's is: dev's owner has no
+ ;; `users` row, and `db/user-id-where-clause` reads a missing id as `user_id IS
+ ;; NULL`, which is a real owner here. Every read goes through that function.
+ ;;
+ ;; **The `REFERENCES` clauses are documentation, not enforcement** — `PRAGMA
+ ;; foreign_keys` is 0 on this connection, as 007 says at length. So there is no
+ ;; cascade: `db.recipe/delete-recipe` resolves a deleted Recipe's pending proposal
+ ;; itself, in its own transaction, the way it already deletes the history and the
+ ;; Scope associations by hand. Note that this is the *opposite* choice from
+ ;; `recipe_events`, which is left behind on purpose: an event is a record that
+ ;; something happened, while a proposal is a question waiting for an answer, and a
+ ;; question about a Recipe that no longer exists cannot be answered.
+ :down ["DROP INDEX IF EXISTS idx_recipe_proposals_one_pending"
+        "DROP TABLE IF EXISTS recipe_proposals"]}
