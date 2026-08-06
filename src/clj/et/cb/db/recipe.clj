@@ -88,11 +88,14 @@
 
   **Scopes** are the other half of the filing, and the half that is a relation
   rather than a column: `et.cb.db.scope` owns them, this namespace only ever asks
-  it two things. On a read, whether to attach them — no, for a visitor, and the
-  join is not run at all rather than run and hidden. On a write, to replace them,
-  which is a touch and not a version: `modified_at` moves, nothing is archived.
-  Everything else about them, including why the boundary is the missing key rather
-  than a client that declines to draw it, is documented over there.
+  it three things. On a read, whether to attach them — no, for a visitor, and the
+  join is not run at all rather than run and hidden. On a read again, for a clause
+  hiding the Recipes filed under given ones, which is the listing's third
+  narrowing and is refused to a visitor for a sharper version of the same reason.
+  On a write, to replace them, which is a touch and not a version: `modified_at`
+  moves, nothing is archived. Everything else about them, including why the
+  boundary is the missing key rather than a client that declines to draw it, is
+  documented over there.
 
   **Consumption** is `view_count`, and it is the one column here that a *read*
   writes: how often somebody asked for this Recipe's description and got it. Not
@@ -347,6 +350,26 @@
   `has_human_edit` bit described above. It composes with the search rather than
   competing with it: both are clauses on the same query.
 
+  `excluded-scope-ids` is the third narrowing and the only **negative** one: the
+  Recipes filed under any of those Scopes drop out, and one filed under none of
+  them stays whatever else it carries. `db.scope/exclusion-clause` is the clause
+  and argues its own shape — including that a Recipe with no Scopes at all is
+  never excluded, and that an id the caller does not own excludes nothing rather
+  than erroring. It composes with the other two the same way, being a clause like
+  them.
+
+  **A visitor's `excluded-scope-ids` is ignored outright, and that is a refusal
+  rather than a narrowing applied to less.** Not 'excluded within the published
+  rows' — not run at all. `with-scopes` already refuses a visitor the Scopes by not
+  running the join, and `get-recipe-handler` states the consequence that their
+  presence is not testable either, unlike the tags'. Honouring this for a visitor
+  would make it testable: an anonymous caller could binary-search which published
+  Recipes carry Scope 4 by watching rows disappear, which quietly demotes Scopes to
+  the tags' weaker boundary. The decision is made here, off the audience, for the
+  reason `with-scopes` gives — one function decides, and it takes the audience
+  precisely so that no caller can decide instead. A machine token reads in the
+  owner's audience and so is honoured, like every other Scope read.
+
   Every row also carries the **provenance split** — `machine_versions` and
   `ui_versions`, which sum to `version` — because the badge that shows it sits on
   a collapsed card, which is to say on a lean listing row. It is aggregated in the
@@ -355,7 +378,7 @@
   lean read still cannot reach a `description` — not the row's, and not a history
   row's either.
 
-  Both narrowings are `:where` clauses and not filters over the rows, so they
+  All three narrowings are `:where` clauses and not filters over the rows, so they
   narrow *inside* the audience they are given. A visitor's search runs against the
   published recipes rather than against everything followed by a hiding step, and
   so does a visitor's human filter — it can only ever take rows away from what
@@ -365,10 +388,11 @@
   an unfiled Recipe — for a caller who may see them, and **no `scopes` key at all**
   for a visitor. That is one extra statement for the whole listing rather than one
   per row (`db.scope/attach`), which is what lets a collapsed card wear its badges
-  without going and fetching anything. Nothing filters the shelf by them: the
-  Scopes are on the rows this query already chose."
+  without going and fetching anything. The badges are attached to the rows this
+  query chose; `excluded-scope-ids` is what decides which rows it chose."
   ([ds audience] (list-recipes ds audience {}))
-  ([ds audience {:keys [search-term human-only? lean?] :or {lean? true}}]
+  ([ds audience {:keys [search-term human-only? excluded-scope-ids lean?]
+                 :or {lean? true}}]
    ;; The search clause names `recipes.title` for the same reason the projection
    ;; is qualified: `recipe_history` has a `title` too, and an unqualified one
    ;; would have SQLite refuse the query as ambiguous. `recipes.tags` is
@@ -382,9 +406,24 @@
    ;; docstring. What the audience decides is the projection, one line down.
    (let [search-clause (db/build-word-prefix-search-clause search-term
                                                            [:recipes.title :recipes.tags])
+         ;; The visitor refusal, and it is *this* line rather than a check in the
+         ;; handler: the audience is the answer, and a caller that could pass one
+         ;; meaning 'a visitor' is the shape this avoids. `audience` is a user-id
+         ;; below the guard, which is what `with-scopes` relies on too.
+         ;;
+         ;; `:recipes.id` is qualified for the reason `qualify` gives: the listing
+         ;; left-joins `recipe_history` and groups by `recipes.id`, and an
+         ;; unqualified `id` inside the subquery would resolve against
+         ;; `recipe_scopes` — a correlation to itself, which is always true, so the
+         ;; clause would silently exclude every filed Recipe rather than the named
+         ;; ones.
+         scope-exclusion (when-not (visitor? audience)
+                           (db.scope/exclusion-clause audience :recipes.id
+                                                      excluded-scope-ids))
          where (cond-> [:and (audience-clause audience)]
                  search-clause (conj search-clause)
-                 human-only? (conj [:= :has_human_edit 1]))]
+                 human-only? (conj [:= :has_human_edit 1])
+                 scope-exclusion (conj scope-exclusion))]
      (->> (jdbc/execute! (db/get-conn ds)
             (sql/format {:select (cond-> (into (qualify (select-columns lean? audience))
                                               source-split-columns)

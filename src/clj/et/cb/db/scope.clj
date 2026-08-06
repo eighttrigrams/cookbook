@@ -25,6 +25,14 @@
   Scope, and a curated retrieval index is most of what an agent gets out of an
   agentic memory store.
 
+  **The same boundary covers narrowing by them, not only reading them.**
+  `exclusion-clause` below hides the Recipes filed under given Scopes, and
+  `db.recipe/list-recipes` does not run it for a visitor at all — because a caller
+  who can watch rows vanish can test which published Recipes carry a Scope, which
+  is the very thing not sending the key withholds. Absent values and an untestable
+  presence are two halves of one refusal, and this is the half the tags
+  deliberately do not have.
+
   **One query per listing, not one per row.** `scopes-by-recipe` fetches every
   association for the whole page in one statement and `attach` puts them on the
   rows in Clojure — tracker's `associate-categories-with-tasks` shape, and the
@@ -300,3 +308,47 @@
   [ds user-id recipe]
   (when recipe
     (first (attach ds user-id [recipe]))))
+
+(defn exclusion-clause
+  "A `:where` clause hiding every Recipe filed under one of `scope-ids`, or nil
+  when the caller named none. The one thing this namespace does that *narrows* a
+  listing rather than attaching to it.
+
+  **`NOT EXISTS`, correlated on `recipe-id-column`, and not a second join.** The
+  caller passes that column qualified, for the reason
+  `db.proposal/pending-exists-clause` takes the same argument: the listing already
+  left-joins `recipe_history` under a `GROUP BY` to aggregate the provenance
+  split, and another multi-row join would multiply those counts. It has to be a
+  clause and not a filter over the rows for a second reason — the shelf is ranked
+  and sliced by the query, so rows taken away afterwards would leave a short page
+  that nothing can top up.
+
+  **A Recipe filed under no Scope at all is never excluded.** It falls out of `NOT
+  EXISTS` on its own, but it is the case a reader asks about: the rule is 'carries
+  none of these', not 'is filed under something else'.
+
+  **An id from somebody else's shelf excludes nothing, silently** — no error and
+  no 404. The subquery joins through `scopes` and narrows on its `user_id`, which
+  is where migration 007 put the ownership question and where every other read
+  here asks it, so an unowned id simply matches no association. That is
+  `set-recipe-scopes!`'s rule read backwards: ids the caller does not own drop out,
+  and the caller is never told whether they exist.
+
+  Several ids are **one** clause with an `IN` rather than one clause each, which is
+  the same thing said shorter: a Recipe survives only if it carries none of them.
+  Tracker's `build-exclusion-clauses` emits one clause per category type and ANDs
+  them; cookbook has one kind of category, so that collapses to this.
+
+  It takes a `user-id` and never an audience, exactly as `attach` does and for the
+  same reason: there is no value of this argument that means 'a visitor'. Who may
+  narrow by Scopes at all is `db.recipe/list-recipes`' decision, made from the
+  audience, and this cannot be handed a caller it should have refused."
+  [user-id recipe-id-column scope-ids]
+  (when (seq scope-ids)
+    [:not [:exists {:select [[[:inline 1]]]
+                    :from [:recipe_scopes]
+                    :join [:scopes [:= :scopes.id :recipe_scopes.scope_id]]
+                    :where [:and
+                            [:= :recipe_scopes.recipe_id recipe-id-column]
+                            [:in :recipe_scopes.scope_id (vec scope-ids)]
+                            (db/user-id-where-clause :scopes.user_id user-id)]}]]))
