@@ -558,10 +558,13 @@
   second reading of the flag could come to disagree with the first, and this is a
   question with one answer.
 
-  Which also settles the third case without a decision of its own: a caller that
-  said nothing about itself leaves `source-of` nil, and writes no event. Unknown
-  provenance is not machine provenance — 004 and 005 both hold that — and an inbox
-  is the wrong place to guess."
+  Which means a caller that says nothing about itself **does** write an event, because
+  since migration 010 `source-of` answers `'machine'` for it. There is no third case
+  left to settle here: `source-of` argues why silence is the agent's label rather than
+  the owner's, and this function inherits that answer instead of taking a second view
+  of it. Nothing reaches it over HTTP anyway — every handler passes `:human?` from the
+  token — so what this covers is internal callers and tests, and a caller that wants
+  the owner's label has to say so, in the inbox exactly as in the column."
   [opts]
   (= "machine" (source-of opts)))
 
