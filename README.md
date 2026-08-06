@@ -188,7 +188,9 @@ was looked for.
 **Every change an agent makes to a Recipe appears in a queue, oldest first, and he
 answers each one — marking it seen if it already happened, approving or dismissing it
 if the agent is asking.** That is the page the ✉ button in the top bar opens, and the
-count on it is how many are waiting.
+count on it is how many are waiting. A Recipe with a proposal against it also says so
+on its own card, so the shelf shows what the queue is about — but only the queue can
+answer it, since only there is the agent's text shown against the Recipe's.
 
 His words: *every recipe change appears there, in order of a queue, that is, newer
 appended items go bottomwards … so i can go through the things topmost first (oldest
@@ -249,7 +251,17 @@ And **what a visitor sees is the last approved version, always** — see *Edits 
 approving*. An agent's proposal is not a version and no read consults one, so a published
 Recipe with an unapproved rewrite waiting on it hands a visitor the approved text and no
 part of the proposal, at any `?detail`. That is the guarantee the whole approval design
-rests on now that publishing is allowed while a proposal pends.
+rests on now that publishing is allowed while a proposal pends. They are not told a
+proposal exists either: `pending` is absent from their rows, like the tags.
+
+**How the owner files his shelf is not theirs at any `?detail`** — *to logged in users
+only, no matter what*. A visitor's rows carry no `scopes` key at all, and
+`?exclude-scopes` is **ignored for them entirely** rather than applied to their published
+rows. That second half is what makes the first hold: a caller who could watch rows vanish
+on request could binary-search which published Recipes carry a given Scope, one id at a
+time. It is also where the Scopes are a stronger boundary than the tags — a tag's
+*presence* is testable through `?search=` even though its value is never sent, while
+nothing searches the Scopes and nothing narrows by them for an anonymous caller.
 
 ## Recipes
 
@@ -268,7 +280,20 @@ edit that changes something archives the outgoing state and bumps the version.
 
 A Recipe is private when created and stays that way until the owner publishes
 it from its card, behind a confirmation because the step is one way. A published
-card wears a badge and loses its Publish button.
+card wears a badge and loses its Publish button. A card also wears a `proposal`
+badge while an agent is waiting for approval on it — see *Edits that need
+approving* — and that one is a badge and not a control: the deciding happens in
+the inbox, against the agent's text.
+
+The shelf narrows three ways at once, all of them the endpoint's own clauses
+rather than anything the browser filters: the search box, the human-edited
+checkbox, and **shift+click on a Scope badge, which hides the Recipes filed under
+that Scope**. That last one is tracker's gesture, chosen so the two apps answer to
+the same finger, and it only ever hides — a plain click still expands the card.
+Several Scopes can be hidden at once; each one is listed as a chip above the shelf
+with an × that brings it back, which is the only way back, since an excluded
+Scope's badges leave along with the Recipes carrying them. Nothing is remembered
+across a reload.
 
 All three fields are meant to be markdown, with clojure code blocks highlighted
 in the body. **That is not built yet**: it needs `marked`, `highlight.js` and
@@ -329,9 +354,14 @@ are the interface, not decoration.
   across whitespace-separated terms: `ab cd` finds `abc cde` but not `ad cd`, and
   `cd` does not find `abcd`. A word is a run of letters and digits, so `heating`
   finds `Re-heating`. `%` and `_` are ordinary characters. `?human=true` narrows to
-  the Recipes a human has edited. **Lean**: no `description` key at all. Each row
-  carries `machine_versions` / `ui_versions`, `view_count`, and `pending` — whether
-  a proposal is waiting on it.
+  the Recipes a human has edited. `?exclude-scopes=3,7` **hides** the Recipes filed
+  under those Scope ids — the only *negative* filter here, and there is deliberately
+  no positive one; several ids take more away, a Recipe filed under no Scope at all
+  is never hidden by it, and an id you do not own hides nothing rather than erroring.
+  All three narrowings compose, being clauses on one query. **An anonymous caller's
+  `?exclude-scopes` is ignored entirely** — see *What a visitor sees*. **Lean**: no
+  `description` key at all. Each row carries `machine_versions` / `ui_versions`,
+  `view_count`, and `pending` — whether a proposal is waiting on it.
 - `GET /api/recipes/:id` — one recipe, lean the same way.
 - **`?detail=full`** on either of those adds the description. That is the only
   way to get a body, and it is meant to be asked for one recipe at a time.
