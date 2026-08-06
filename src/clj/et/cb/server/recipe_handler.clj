@@ -219,7 +219,12 @@
   A create from a caller without a machine token sets `has_human_edit` on the new
   row; a machine's create leaves it at 0. The same fact labels the version being
   created: `source` is `ui` or `machine` accordingly. Neither is writable from the
-  body — both are taken from the token, like the owner the row is filed under."
+  body — both are taken from the token, like the owner the row is filed under.
+
+  **A machine's create is announced in the owner's inbox** (GET /api/inbox) as a
+  `created` entry, so writing here is not writing unobserved: he goes through what
+  his agents wrote oldest-first. His own creates make no entry — the inbox is the
+  record of what the agents did, not a change log."
   [req]
   (let [user-id (common/get-user-id req)
         {:keys [title] :as body} (:body req)]
@@ -277,7 +282,13 @@
   displaces keeps the label it was saved under: the outgoing one goes into history
   with its own `source`, not with this save's, so an agent's edit never
   retroactively relabels what the owner wrote. A no-op save leaves `source` alone
-  as well, for the same reason it leaves the version alone."
+  as well, for the same reason it leaves the version alone.
+
+  **A machine's save that makes a version is announced in the owner's inbox** (GET
+  /api/inbox) as a `modified` entry naming the new version. The three cases above
+  are exactly the split: a no-op makes no entry because it makes no version, and a
+  filing-only save makes none because filing is not content. His own saves make
+  none at all — the inbox is the record of what the agents did."
   [req]
   (let [ds (common/ensure-ds)
         user-id (common/get-user-id req)
@@ -309,11 +320,18 @@
 
 (defn delete-recipe-handler
   "DELETE /api/recipes/:id — remove a recipe together with its whole version
-  history. 404 when the id matches nothing you own."
+  history. 404 when the id matches nothing you own.
+
+  **A machine's delete leaves an entry in the owner's inbox** (see GET /api/inbox)
+  saying which Recipe went and at which version; his own delete leaves none, like
+  every other write of his. The Recipe's *events* are the one thing a delete does
+  not take with it — an event is the record that something happened, and it did —
+  so an agent cannot create a Recipe and delete it again to leave no trace."
   [req]
   (let [user-id (common/get-user-id req)
         id (common/recipe-id req)
-        result (when id (db.recipe/delete-recipe (common/ensure-ds) user-id id))]
+        result (when id (db.recipe/delete-recipe (common/ensure-ds) user-id id
+                                                 {:human? (human-write? req)}))]
     (if (:success result)
       {:status 200 :body result}
       {:status 404 :body {:error "Recipe not found"}})))

@@ -1,0 +1,81 @@
+{:up ["CREATE TABLE recipe_events (
+         id           INTEGER PRIMARY KEY AUTOINCREMENT,
+         user_id      INTEGER REFERENCES users(id),
+         recipe_id    INTEGER NOT NULL,
+         recipe_title TEXT NOT NULL,
+         kind         TEXT NOT NULL CHECK (kind IN ('created','modified','deleted','proposed')),
+         version      INTEGER,
+         proposal_id  INTEGER,
+         created_at   DATETIME DEFAULT (datetime('now')),
+         seen         INTEGER NOT NULL DEFAULT 0 CHECK (seen IN (0,1))
+       )"
+      "CREATE INDEX idx_recipe_events_user_seen ON recipe_events (user_id, seen, id)"]
+ ;; The owner's **inbox**: one row per change **an agent** made to a Recipe, in the
+ ;; order the changes happened, unseen until he says otherwise. `et.cb.db.event`
+ ;; owns the table and `et.cb.server.inbox-handler` serves it.
+ ;;
+ ;; **It is not a change log.** He was asked whether his own UI edits belong in it
+ ;; and said no: this is the record of what the agents did to his shelf while he
+ ;; was not looking, which is also what makes going through it oldest-first worth
+ ;; doing. So a row exists here exactly when the write it records was stamped
+ ;; `source = 'machine'` — the same fact, off the same token claim, and not a
+ ;; second guess about who was calling.
+ ;;
+ ;; **A table and not a derivation, which is the other decision here.** The queue
+ ;; could look derivable from `recipe_history` plus a seen-marker, and it is not: a
+ ;; history row's `created_at` takes sqlite's `datetime('now')` at the moment
+ ;; `archive!` inserts it, which is when the *next* save displaced that version —
+ ;; `ui.views.diff/when-label` spells this out where a reader meets it. So nothing
+ ;; in the schema before 009 could answer "when was v2 written", and a queue
+ ;; ordered on that column would have been ordered on when each version *stopped*
+ ;; being current: silently wrong rather than visibly broken. An event is recorded
+ ;; as the thing happens, which is also the honest home for that missing timestamp.
+ ;;
+ ;; **The queue is `id` ascending, not `created_at` ascending.** `created_at` is
+ ;; second-resolution here as everywhere in this schema, and two events landing in
+ ;; one second is the normal case rather than a corner — a create plus the
+ ;; proposal an agent files a moment later. `id` is the append order, and the
+ ;; append order is what was asked for: newer items go bottomwards. It is the
+ ;; house rule the shelf's own ranking already follows: a view's ordering gets a
+ ;; column of its own rather than borrowing another view's.
+ ;;
+ ;; **No `source` column, because every event here is a machine's.** An event's
+ ;; source has exactly one possible value, and a column that can only ever hold one
+ ;; answer answers nothing — the argument migration 007 already made about
+ ;; `category_type`, and the one 010 makes again about `recipe_proposals`. Do not
+ ;; add one "for symmetry" with `recipes.source`: that column exists because a
+ ;; version really can have come from three places (see 005), and this cannot.
+ ;;
+ ;; **`proposal_id` and the `'proposed'` kind are declared here although nothing
+ ;; writes either until 010.** Widening a SQLite `CHECK` means rebuilding the
+ ;; table; a nullable integer column costs nothing at all. So this is declared for
+ ;; the whole design it belongs to rather than for half of it, and 010 stays a
+ ;; pure addition — the alternative would have been a table rebuild to add one
+ ;; word to a constraint.
+ ;;
+ ;; **`recipe_title` is a snapshot, and `recipe_id` is deliberately not a foreign
+ ;; key with a cascade.** Events outlive their Recipe: `db.recipe/delete-recipe`
+ ;; deletes a Recipe's history and its Scope associations — those are parts of a
+ ;; Recipe — and leaves its events alone, because an event is the record that
+ ;; something happened and the something did happen. Deleting them would let an
+ ;; agent create a Recipe and delete it again and erase the inbox's record of
+ ;; both, which is a hole in the one thing the inbox promises. The title snapshot
+ ;; is what keeps such an orphaned event readable. `recipes` is `INTEGER PRIMARY
+ ;; KEY AUTOINCREMENT`, which in SQLite never reuses an id, so a dangling
+ ;; `recipe_id` can never come to name a different Recipe.
+ ;;
+ ;; **`seen` is a bare 0/1 flag**, following tracker's `messages.done` — the same
+ ;; concept in the same suite. No `seen_at`: the queue is ordered by `id`, nothing
+ ;; would read such a stamp, and a column nothing reads is one that goes
+ ;; unmaintained. The `CHECK` is what keeps it a flag rather than a small integer
+ ;; somebody starts counting with.
+ ;;
+ ;; `user_id` is nullable for the reason every other table's is: dev's owner has
+ ;; no `users` row, and `db/user-id-where-clause` reads a missing id as
+ ;; `user_id IS NULL`, which is a real owner in this schema. Every read of this
+ ;; table goes through that function and never through `= user-id`.
+ ;;
+ ;; The index is `(user_id, seen, id)`, which is exactly the one query this table
+ ;; exists for: one owner's unseen events in append order.
+ :down ["DROP INDEX IF EXISTS idx_recipe_events_user_seen"
+        "DROP TABLE IF EXISTS recipe_events"]}

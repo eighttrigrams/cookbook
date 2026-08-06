@@ -61,6 +61,27 @@
         db/jdbc-opts)
       :n))
 
+(defn event-rows
+  "Every row of `recipe_events` in append order, or only the ones naming one
+  Recipe. Straight at the table for the reason `history-row-count` is: an event
+  outlives its Recipe, so 'the inbox stopped showing it' and 'the row is gone' are
+  two different facts and only a read of the table can tell them apart.
+
+  `SELECT *`, deliberately, unlike every projection in `src`: a test asserting that
+  the inbox is empty after one of the owner's own writes must not be able to pass
+  because it named the wrong columns.
+
+  Ordered by `id` here as everywhere: the stamp is second-resolution, so a test
+  that ordered on it would be asserting against a tie."
+  ([] (event-rows nil))
+  ([recipe-id]
+   (jdbc/execute! (db/get-conn *ds*)
+     (sql/format {:select [:*]
+                  :from [:recipe_events]
+                  :where (if recipe-id [:= :recipe_id recipe-id] [:inline true])
+                  :order-by [[:id :asc]]})
+     db/jdbc-opts)))
+
 (defn insert-scope-row!
   "An association written straight at the join table, bypassing
   `db.scope/set-recipe-scopes!` and the ownership intersection it does.

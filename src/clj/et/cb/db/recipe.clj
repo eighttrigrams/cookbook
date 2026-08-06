@@ -98,12 +98,29 @@
   and it is deliberately written from the handler rather than from `get-recipe` —
   see `record-view!`, which argues both, and migration 008, which says what the
   0 on an existing row means. Together with `version` it is what orders the
-  shelf: `list-recipes` ranks by a weighted sum of the two."
+  shelf: `list-recipes` ranks by a weighted sum of the two.
+
+  **Events** are the owner's inbox, and they are the one thing here that is
+  neither a column on the row nor a version of it: `et.cb.db.event` owns them and
+  this namespace only ever appends to them. One event per version **an agent
+  writes** — `created` for v1, `modified` for each new one, `deleted` for the
+  version a Recipe died on — written **inside the same transaction** as the write
+  it records, because an event for a save that then rolled back would be worse than
+  no inbox.
+
+  Two things decide whether there is an event, and both are facts this namespace
+  already holds. **Is the write an agent's** — `machine-write?`, which is
+  `source-of` asked again rather than a second reading of `:human?`, so an event
+  exists exactly when the version it is about is stamped `machine`. And **is there
+  a new version** — so the no-op branch returns before writing one, the filing
+  branch writes none because a tag is not content, and `publish-recipe` writes none
+  because it makes no version. The argument for each of those is over there."
   (:require [clojure.string :as str]
             [next.jdbc :as jdbc]
             [honey.sql :as sql]
             [taoensso.telemere :as tel]
             [et.cb.db :as db]
+            [et.cb.db.event :as db.event]
             [et.cb.db.scope :as db.scope]))
 
 (def visitor-audience
@@ -449,6 +466,25 @@
   (when (contains? opts :human?)
     (if (:human? opts) "ui" "machine")))
 
+(defn- machine-write?
+  "Whether this write is an agent's, which is the one thing that puts an event in
+  the owner's inbox — he was asked and said *no my own ui edits should not land in
+  the inbox*, so the queue is the record of what the agents did and not a change
+  log.
+
+  **Asked of `source-of` rather than of `(:human? opts)` directly**, so the fact an
+  event is written on is the *same expression* the version's label is written from:
+  an event exists exactly when the version it is about is stamped `'machine'`. A
+  second reading of the flag could come to disagree with the first, and this is a
+  question with one answer.
+
+  Which also settles the third case without a decision of its own: a caller that
+  said nothing about itself leaves `source-of` nil, and writes no event. Unknown
+  provenance is not machine provenance — 004 and 005 both hold that — and an inbox
+  is the wrong place to guess."
+  [opts]
+  (= "machine" (source-of opts)))
+
 (defn create-recipe
   "A new recipe: version 1, no history rows, and private — `published` is left
   at its column default, because publishing is its own deliberate act.
@@ -473,7 +509,12 @@
   row. An absent key means no Scopes, which is the only thing it can mean for a
   row that did not exist a statement ago. The returned Recipe carries `:scopes`
   either way: a write is never anonymous, so there is nobody here to withhold it
-  from."
+  from.
+
+  **A machine's create appends a `created` event** to the owner's inbox, in this
+  same transaction — the create is the version, so there is one event and it is
+  this one. His own create appends nothing: the inbox is what the agents did, and he
+  does not need to be told about the Recipe he is looking at having written."
   ([ds user-id fields] (create-recipe ds user-id fields {}))
   ([ds user-id {:keys [title useful_when description tags scope_ids]} opts]
    (jdbc/with-transaction [tx (db/get-conn ds)]
@@ -492,6 +533,8 @@
                     db/jdbc-opts)]
        (when (seq scope_ids)
          (db.scope/set-recipe-scopes! tx user-id (:id result) scope_ids))
+       (when (machine-write? opts)
+         (db.event/record! tx user-id "created" result))
        (tel/log! {:level :info :data {:id (:id result) :user-id user-id :human? (boolean human?)
                                       :source (source-of opts)}}
                  "Recipe created")
@@ -599,7 +642,14 @@
   `'machine'` on that same statement, which is what keeps the bit and the labels
   from ever disagreeing. Unlike the bit, `source` is per-version and so it is
   written rather than latched — the outgoing version keeps the label it was saved
-  under, because `archive!` carried it into history one statement earlier."
+  under, because `archive!` carried it into history one statement earlier.
+
+  **A `modified` event goes to the inbox from the content branch and from nowhere
+  else**, in this same transaction, carrying the new version's number — and only
+  when the save is an agent's, which is `machine-write?`. So the inbox needs no
+  decision of its own here: the no-op branch returns before the event, the filing
+  branch writes none — a tag or a Scope is not the text he wrote — and his own
+  saves write none because they are not what the queue is for."
   ([ds user-id id fields expected-modified-at]
    (update-recipe ds user-id id fields expected-modified-at {}))
   ([ds user-id id fields expected-modified-at {:keys [human?] :as opts}]
@@ -649,6 +699,8 @@
                                                :where [:= :id id]
                                                :returning (select-columns false user-id)})
                                   db/jdbc-opts)]
+                     (when (machine-write? opts)
+                       (db.event/record! tx user-id "modified" result))
                      (tel/log! {:level :info :data {:id id :user-id user-id
                                                     :version (:version result)
                                                     :human? (boolean human?)
@@ -680,6 +732,10 @@
   still — publishing is not a version at all, so there is no version of it whose
   provenance could be recorded, and touching the row's label would be relabelling
   somebody else's work.
+
+  It writes **no inbox event**, and twice over: it makes no version, and a machine
+  cannot publish at all (`wrap-machine-recipe-rules`), so there is no reachable
+  caller here whose act the inbox is for.
 
   nil when the id matches nothing the user owns."
   [ds user-id id]
@@ -714,19 +770,41 @@
   gone from every listing and the orphans are only reachable by joining a table
   that no longer has the row. They would come back as somebody else's badge the
   day AUTOINCREMENT reuses the id. `deleting-a-recipe-takes-its-associations-with-it`
-  reads the join table after the delete rather than trusting the parent's absence."
-  [ds user-id id]
-  (jdbc/with-transaction [tx (db/get-conn ds)]
-    (let [own [:and [:= :id id] (db/user-id-where-clause user-id)]]
-      (when (jdbc/execute-one! tx
-              (sql/format {:select [:id] :from [:recipes] :where own})
-              db/jdbc-opts)
-        (jdbc/execute-one! tx (sql/format {:delete-from :recipe_history
-                                           :where [:= :recipe_id id]}))
-        (db.scope/delete-recipe-scopes! tx id)
-        (jdbc/execute-one! tx (sql/format {:delete-from :recipes :where own}))
-        (tel/log! {:level :info :data {:id id :user-id user-id}} "Recipe deleted")
-        {:success true}))))
+  reads the join table after the delete rather than trusting the parent's absence.
+
+  **`recipe_events` is deliberately not in that list.** A history row and a Scope
+  association are parts of a Recipe and go with it; an event is the record that
+  something happened to it, and the something did happen. Without that, an agent
+  could create a Recipe and delete it again and the inbox — whose one promise is
+  that changes show up there — would record the create and then erase it. What
+  keeps an orphaned event readable is `recipe_title`, the snapshot migration 009
+  takes for exactly this.
+
+  **An agent's delete writes one last event, `deleted`**, carrying the version the
+  Recipe died on; the owner's own delete writes none, like every other write of his.
+  Which is why this takes `opts` at all — `:human?`, the same flag the create and
+  the save take, and the reason it is here rather than derived is that there is
+  nothing left afterwards to derive it from.
+
+  The row is read for its title and its version rather than only for its id, which
+  is what that event is made of — so the read has to happen before the delete, and
+  it is the same read that decides whether there was anything to delete."
+  ([ds user-id id] (delete-recipe ds user-id id {}))
+  ([ds user-id id opts]
+   (jdbc/with-transaction [tx (db/get-conn ds)]
+     (let [own [:and [:= :id id] (db/user-id-where-clause user-id)]]
+       (when-let [current (jdbc/execute-one! tx
+                            (sql/format {:select [:id :title :version]
+                                         :from [:recipes] :where own})
+                            db/jdbc-opts)]
+         (jdbc/execute-one! tx (sql/format {:delete-from :recipe_history
+                                            :where [:= :recipe_id id]}))
+         (db.scope/delete-recipe-scopes! tx id)
+         (jdbc/execute-one! tx (sql/format {:delete-from :recipes :where own}))
+         (when (machine-write? opts)
+           (db.event/record! tx user-id "deleted" current))
+         (tel/log! {:level :info :data {:id id :user-id user-id}} "Recipe deleted")
+         {:success true})))))
 
 (defn list-versions
   "Every state of a recipe, newest first. The current row is included as version
