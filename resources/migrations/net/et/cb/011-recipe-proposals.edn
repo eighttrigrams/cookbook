@@ -71,5 +71,22 @@
  ;; `recipe_events`, which is left behind on purpose: an event is a record that
  ;; something happened, while a proposal is a question waiting for an answer, and a
  ;; question about a Recipe that no longer exists cannot be answered.
+ ;;
+ ;; **Before you roll this back: `recipe_events.proposal_id` points here, and it
+ ;; survives the rollback while this table's AUTOINCREMENT counter does not.** The
+ ;; `:down` drops the table, which takes its `sqlite_sequence` row with it, so a
+ ;; re-`:up` starts issuing ids at 1 again — while every `proposed` event still names
+ ;; the ids it was written with. The next proposal filed is then proposal 1, an old
+ ;; entry already names proposal 1, and `db.proposal/by-event` joins the two: pressing
+ ;; Approve on that entry resolves a proposal it has nothing to do with, and nothing
+ ;; looks wrong.
+ ;;
+ ;; This is 010's argument met one table along — an id that is never reused is what
+ ;; lets an unenforced pointer be trusted — with the difference that 010 could carry
+ ;; the mark across its rebuild, and a `:down` that drops the table cannot: the rows
+ ;; the ids belonged to are gone by design, which is what a rollback of a
+ ;; `CREATE TABLE` *is*. So this is not a bug to fix here but a hazard to know about
+ ;; before rolling back a database that has events in it: either clear the `proposed`
+ ;; events with it, or put `sqlite_sequence` back by hand the way 010 does.
  :down ["DROP INDEX IF EXISTS idx_recipe_proposals_one_pending"
         "DROP TABLE IF EXISTS recipe_proposals"]}
