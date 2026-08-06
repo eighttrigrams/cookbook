@@ -66,6 +66,14 @@
   a `deleted` entry outlives the Recipe it is about, and so do the entries before
   it. There is nothing to fetch for such an entry, which is why the title is on it.
 
+  **`recipe_exists` says which case an entry is in**, 1 or 0. It is not derivable
+  by the caller and it is not the same question as `kind`: after an agent creates a
+  Recipe and deletes it again, the `created` entry above the `deleted` one names a
+  Recipe that is equally gone, and it can still be unseen after the `deleted` one
+  has been acknowledged. So this is the flag to read before following an entry to
+  GET /api/recipes/:id or /versions — those answer 404 for a Recipe that is gone,
+  and this is how to know that without asking.
+
   **Ordered by the event id and never by `created_at`**: the stamp is
   second-resolution and two entries in one second is the normal case, so the
   append order is served from the column that *is* the append order.

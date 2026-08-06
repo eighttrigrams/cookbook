@@ -108,6 +108,35 @@
       (is (every? #(= "Doomed" (:recipe_title %)) (inbox)))
       (is (= 404 (:status (GET-json (str "/api/recipes/" id))))))))
 
+(deftest every-entry-says-whether-its-recipe-is-still-there
+  ;; Not the same question as `kind`, which is the point: after a create and a
+  ;; delete, the `created` entry names a Recipe that is just as gone as the
+  ;; `deleted` one does — and it can still be unseen after the `deleted` one has
+  ;; been acknowledged, which is exactly when a page would offer a link into a 404.
+  (let [alive (:id (machine-create! "Still here"))
+        doomed (:id (machine-create! "Gone by the end"))]
+    (is (every? #(= 1 (:recipe_exists %)) (inbox)) "both are there to begin with")
+
+    (is (= 200 (:status (machine :delete (str "/api/recipes/" doomed)))))
+    (let [by-recipe (group-by :recipe_id (inbox))]
+      (is (= [1] (distinct (map :recipe_exists (get by-recipe alive))))
+          "the surviving Recipe's entry still says so")
+      (is (= [0 0] (mapv :recipe_exists (get by-recipe doomed)))
+          "and *both* of the dead Recipe's entries say it is gone — the `created`
+           one as well as the `deleted` one, which is the half a client cannot
+           work out for itself")
+      (testing "and the flag is the truth: those ids really are 404s now"
+        (is (= 404 (:status (GET-json (str "/api/recipes/" doomed)))))
+        (is (= 200 (:status (GET-json (str "/api/recipes/" alive)))))))
+
+    (testing "acknowledging the `deleted` entry leaves the dead `created` one
+              behind, still flagged — the case the flag exists for"
+      (let [dead-delete (first (filter #(= "deleted" (:kind %)) (inbox)))]
+        (is (= 200 (:status (h/API :post (str "/api/inbox/" (:id dead-delete) "/seen") {}))))
+        (let [left (first (filter #(= doomed (:recipe_id %)) (inbox)))]
+          (is (= "created" (:kind left)))
+          (is (= 0 (:recipe_exists left))))))))
+
 ;; ---------------------------------------------------------------------------
 ;; the order
 

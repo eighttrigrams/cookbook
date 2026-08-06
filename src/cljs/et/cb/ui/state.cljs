@@ -37,7 +37,8 @@
            :search ""
            :human-only? false    ;; show only what a human has edited here
            :recipes-request 0    ;; only the newest listing request may land
-           :page :shelf          ;; which page is on: :shelf, :settings or :scopes — see below
+           :page :shelf          ;; which page is on: :shelf, :settings, :scopes or :inbox
+           :inbox []             ;; the owner's unseen changes his agents made, oldest first
            :machine-user nil     ;; {:exists :username :password_set_at} — never a password
            :scopes []            ;; the owner's Scopes — [{:id :title :description :recipe_count}]
            :editing-scope nil    ;; id of the Scope being edited in place
@@ -66,15 +67,17 @@
 
 (declare fetch-machine-user)
 (declare fetch-scopes)
+(declare fetch-inbox)
 
 (defn go-to-page
-  "Show one page: `:shelf`, `:settings` or `:scopes`.
+  "Show one page: `:shelf`, `:settings`, `:scopes` or `:inbox`.
 
-  **One value and not three booleans, so 'both pages are open' is a state that
+  **One value and not four booleans, so 'both pages are open' is a state that
   cannot be reached** rather than one that has to be defended wherever the state
   is read. It used to be `:settings-open?` and `:scopes-open?`, each flipped by
   its own toggle, and the two panels stacked over the shelf when both were on.
-  Whoever adds a fourth page inherits the invariant instead of the bug.
+  The Inbox is the fourth page and it inherited the invariant instead of the bug,
+  which is what this shape is for.
 
   Arriving re-reads what the page draws rather than trusting what was fetched
   before — an agent may have added a Scope through the API, and the machine
@@ -90,6 +93,9 @@
   (case page
     :settings (fetch-machine-user)
     :scopes (fetch-scopes)
+    ;; More than freshness here: the queue is the *only* place an agent's write
+    ;; shows up, and it may have arrived while he was reading the shelf.
+    :inbox (fetch-inbox)
     nil))
 
 (defn- toggle-page
@@ -102,6 +108,8 @@
 (defn toggle-settings [] (toggle-page :settings))
 
 (defn toggle-scopes [] (toggle-page :scopes))
+
+(defn toggle-inbox [] (toggle-page :inbox))
 
 ;; ---------------------------------------------------------------------------
 ;; auth
@@ -122,10 +130,16 @@
   waiting for the Scopes page to be opened, because the compose form's picker
   needs them before anybody has opened anything — and they are only fetched for a
   signed-in caller, since the endpoint answers 403 to anybody else and a 403 in
-  the console reads as a bug."
+  the console reads as a bug.
+
+  The inbox comes along for a different reason: its count is on a button in the
+  top bar, which is visible from the shelf, so the number has to be there before
+  anybody opens the page it belongs to. Same 403, same gate."
   []
   (fetch-recipes)
-  (when (:logged-in? @*app-state) (fetch-scopes)))
+  (when (:logged-in? @*app-state)
+    (fetch-scopes)
+    (fetch-inbox)))
 
 (defn fetch-auth-required
   "Reading published Recipes is public, so the page renders either way.
@@ -177,6 +191,11 @@
          :recipes [] :details {} :open #{} :editing nil :publishing nil :deleting nil
          :versions {} :versions-request {} :diffing nil
          :page :shelf
+         ;; and the inbox with them, for the strongest version of the same
+         ;; reason: the server sends this queue to nobody but the owner — a
+         ;; machine token is refused it — so a copy left here would be the one
+         ;; place a signed-out page still said what his agents had been writing
+         :inbox []
          ;; the machine user's state is the owner's business too, and the panel
          ;; must not stay open over a signed-out shelf
          :machine-user nil
@@ -205,6 +224,34 @@
       (swap! *app-state assoc :machine-user m :error nil)
       (when on-success (on-success)))
     (err-handler "Could not set the machine user's password")))
+
+;; ---------------------------------------------------------------------------
+;; the inbox
+;;
+;; The owner's queue of what his agents did to his shelf — oldest unseen first,
+;; and his own edits are deliberately not in it. Owner-only on the server (a
+;; machine token gets a 403, and so does a signed-out caller), so everything here
+;; is only ever called while signed in, and `logout` drops the list rather than
+;; hiding it.
+;;
+;; There is no unseen-count endpoint: the number on the top bar's button is the
+;; length of this list, so the badge and the page can never disagree about what is
+;; waiting.
+
+(defn fetch-inbox []
+  (api/fetch-json "/api/inbox" (auth-headers)
+    (fn [entries] (swap! *app-state assoc :inbox (vec entries)))))
+
+(defn unseen-count [] (count (:inbox @*app-state)))
+
+(defn mark-seen
+  "Acknowledge one entry, by its **event** id. The list is refetched rather than
+  the entry removed here: the server decides what is in the queue, and something
+  may have arrived since — which is the whole reason the queue exists."
+  [event-id]
+  (api/post-json (str "/api/inbox/" event-id "/seen") {} (auth-headers)
+    (fn [_] (fetch-inbox))
+    (err-handler "Could not mark that as seen")))
 
 ;; ---------------------------------------------------------------------------
 ;; Scopes
@@ -345,14 +392,23 @@
   that lands. The counter is per id rather than global so that a request for one
   recipe cannot invalidate another's, and it is only ever incremented — never
   cleared alongside the cache — because a reset would let two live requests share
-  a number."
-  [id]
-  (let [request (-> (swap! *app-state update-in [:versions-request id] (fnil inc 0))
-                    (get-in [:versions-request id]))]
-    (api/fetch-json (str "/api/recipes/" id "/versions") (auth-headers)
-      (fn [{:keys [versions]}]
-        (when (= request (get-in @*app-state [:versions-request id]))
-          (swap! *app-state assoc-in [:versions id] (vec versions)))))))
+  a number.
+
+  `on-landed` is given the versions that just landed, and it is called from inside
+  the same numbering guard — so a caller that wants to do something with the list
+  cannot act on a response that was already stale. `start-diff-at-version` is the
+  one caller: it has a version number and needs an index, which only the list can
+  give it."
+  ([id] (fetch-versions id nil))
+  ([id on-landed]
+   (let [request (-> (swap! *app-state update-in [:versions-request id] (fnil inc 0))
+                     (get-in [:versions-request id]))]
+     (api/fetch-json (str "/api/recipes/" id "/versions") (auth-headers)
+       (fn [{:keys [versions]}]
+         (when (= request (get-in @*app-state [:versions-request id]))
+           (let [versions (vec versions)]
+             (swap! *app-state assoc-in [:versions id] versions)
+             (when on-landed (on-landed versions)))))))))
 
 (defn- forget-versions!
   "Anything that makes a new version makes the cached list short by one, and a
@@ -374,6 +430,45 @@
   (swap! *app-state assoc :diffing id :diff-version-idx 0)
   (when-not (get-in @*app-state [:versions id])
     (fetch-versions id)))
+
+(defn- step-that-produced
+  "Which step of the version list *produced* version `v`, as an index into it.
+
+  The list is newest-first and the step at index *i* shows entry *i+1* → entry
+  *i* — so the step that produced version V is the index V sits at, and no
+  arithmetic on the version number would do: the numbers are contiguous today, but
+  an index computed as `total - v` would be a second way of answering a question the
+  list already answers, and would go wrong the day a version is missing from it.
+
+  0 when the version is not in the list at all, which is the newest step — the
+  same place `start-diff` opens. That is the honest fallback for an entry whose
+  version has since been ... nothing, today; it cannot happen, because versions are
+  never removed. It is here so that a stale queue entry opens the viewer rather
+  than a blank one."
+  [entries v]
+  (or (some (fn [[i entry]] (when (= v (:version entry)) i))
+            (map-indexed vector entries))
+      0))
+
+(defn start-diff-at-version
+  "Open the version viewer on the step that produced `version`, rather than on the
+  newest one.
+
+  This is what an inbox entry needs: it names one version, and the reader wants to
+  see what *that* save changed — landing on the newest step would show them the
+  wrong change and give no sign of it. The index cannot be worked out until the
+  list has arrived, so on a cache miss it is set from inside `fetch-versions`'
+  own numbering guard, and only if the viewer is still open on this recipe: a
+  reader who closed it or moved on must not have the step yanked under them by a
+  response from before."
+  [id version]
+  (swap! *app-state assoc :diffing id :diff-version-idx 0)
+  (if-let [entries (get-in @*app-state [:versions id])]
+    (swap! *app-state assoc :diff-version-idx (step-that-produced entries version))
+    (fetch-versions id
+      (fn [entries]
+        (when (= id (:diffing @*app-state))
+          (swap! *app-state assoc :diff-version-idx (step-that-produced entries version)))))))
 
 (defn stop-diff
   "`:diff-unified?` deliberately survives this: which of the two layouts a reader
@@ -416,6 +511,12 @@
       (fetch-recipes)
       ;; the counts on the Scopes page moved
       (fetch-scopes)
+      ;; And the inbox, after this and after every other write below. **Not
+      ;; because his own write made an entry** — it cannot, that is the rule the
+      ;; queue is built on — but because his agents' writes land while he is
+      ;; sitting on the shelf, and this is the moment the client is talking to the
+      ;; server anyway. Without it the count on the top bar is as old as the page.
+      (fetch-inbox)
       (when on-success (on-success)))
     (err-handler "Could not add that recipe")))
 
@@ -435,6 +536,7 @@
         (fetch-recipes)
         ;; a save may have refiled the Recipe, so the per-Scope counts moved
         (fetch-scopes)
+        (fetch-inbox)
         (when on-success (on-success)))
       (err-handler "Could not save"))))
 
@@ -451,6 +553,7 @@
       (fn [recipe]
         (cache-detail! recipe)
         (fetch-recipes)
+        (fetch-inbox)
         (done))
       (fn [resp]
         (done)
@@ -479,6 +582,9 @@
         (fetch-recipes)
         ;; its associations went with it server-side, so the counts moved here too
         (fetch-scopes)
+        ;; the queue keeps every entry about a deleted Recipe — an event is the
+        ;; record that something happened — so this is a refresh and not a cleanup
+        (fetch-inbox)
         (done))
       (fn [resp]
         (done)

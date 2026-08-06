@@ -211,3 +211,36 @@
     (save! a {:description "body v2"} {:human? false})
     (is (= ["created" "modified"] (kinds-of a)))
     (is (= ["created"] (kinds-of b)))))
+
+;; ---------------------------------------------------------------------------
+;; reading the queue
+
+(deftest every-entry-says-whether-its-recipe-is-still-there
+  (let [alive (:id (machine-create! "Still here"))
+        doomed (:id (machine-create! "Gone by the end"))]
+    (is (= [1 1] (mapv :recipe_exists (db.event/list-unseen h/*ds* h/*user-id*))))
+    (db.recipe/delete-recipe h/*ds* h/*user-id* doomed {:human? false})
+    (let [by-recipe (group-by :recipe_id (db.event/list-unseen h/*ds* h/*user-id*))]
+      (is (= [1] (mapv :recipe_exists (get by-recipe alive))))
+      (is (= [0 0] (mapv :recipe_exists (get by-recipe doomed)))
+          "both of the dead Recipe's entries, not only the `deleted` one"))))
+
+(deftest the-recipe-exists-flag-is-right-for-the-nil-owner-too
+  ;; **The case that broke, and the reason this test is separate from the one
+  ;; above.** Dev's owner has no `users` row, so his Recipes and his events both
+  ;; carry `user_id NULL` — and the subquery correlates the two columns, where
+  ;; `NULL = NULL` is NULL rather than true. Written with `=` it answered 'this
+  ;; Recipe is gone' for every event on his own machine, and the page silently
+  ;; stopped linking anything. Every fixture in this suite owns its rows under a
+  ;; real id, so nothing else here can catch it.
+  (let [{:keys [id]} (db.recipe/create-recipe h/*ds* nil {:title "The dev owner's"}
+                                             {:human? false})]
+    (is (= [1] (mapv :recipe_exists (db.event/list-unseen h/*ds* nil)))
+        "his Recipe exists, and the flag has to say so")
+    (db.recipe/delete-recipe h/*ds* nil id {:human? false})
+    (is (= [0 0] (mapv :recipe_exists (db.event/list-unseen h/*ds* nil)))
+        "and when it is really gone, so must the flag")
+    (testing "and his queue is his: the other owner's events are not in it"
+      (machine-create! "Somebody else's")
+      (is (= 2 (count (db.event/list-unseen h/*ds* nil))))
+      (is (= 1 (count (db.event/list-unseen h/*ds* h/*user-id*)))))))

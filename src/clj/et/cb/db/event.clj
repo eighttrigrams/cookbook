@@ -78,6 +78,43 @@
   0 there would be reading a constant."
   [:id :recipe_id :recipe_title :kind :version :proposal_id :created_at])
 
+(def ^:private recipe-still-there
+  "Whether the Recipe an event names is still on the shelf, as an `EXISTS`
+  subquery — 1 or 0.
+
+  **Not derivable by the reader, and it is the one thing an entry cannot say for
+  itself.** A `deleted` entry obviously names a Recipe that is gone; what is easy
+  to miss is that the `created` and `modified` entries *above* it name the same
+  Recipe and are just as dead, and one of them can still be sitting unseen in the
+  queue after the `deleted` one has been acknowledged. A client cannot work this
+  out either: the shelf it holds may be narrowed by a search, so 'not in the
+  listing' does not mean 'not there'.
+
+  An `EXISTS` and not a `LEFT JOIN`, the same call the listing's `pending` makes:
+  this query has no `GROUP BY` today, but a join would put one row per match in
+  front of anybody who later adds one.
+
+  Narrowed on the owner as well as the id. Strictly the id alone would do —
+  AUTOINCREMENT never reuses one, so a recipe id in this table can never come to
+  name somebody else's row — but every other read in this app answers ownership
+  from the row that owns it, and a reader should not have to reconstruct that
+  argument to trust the query.
+
+  **The owner clause is `IS` and not `=`, and that is not a stylistic choice.**
+  Both `user_id` columns are nullable because dev's owner has no `users` row, and
+  in SQL `NULL = NULL` is NULL rather than true — so `=` here answered *false for
+  every event the dev owner has*, which is every event on his own machine. It said
+  each Recipe was gone and quietly took the link off every row of the page. This is
+  `db/user-id-where-clause`'s rule met one step further along: that function exists
+  because a nil owner needs `IS NULL` instead of `= NULL`, and a column-to-column
+  comparison needs SQLite's `IS` for exactly the same reason. It cannot be routed
+  through that function, which compares a column against a *value*."
+  [[:exists {:select [[[:inline 1]]]
+             :from [:recipes]
+             :where [:and [:= :recipes.id :recipe_events.recipe_id]
+                     [:is :recipes.user_id :recipe_events.user_id]]}]
+   :recipe_exists])
+
 (defn list-unseen
   "The owner's unseen events, **oldest first** — the queue as he asked for it: he
   works down from the top and the newest arrivals are at the bottom.
@@ -87,11 +124,14 @@
   later — would be a tie the database could break either way, and the append order
   is the one fact being served. Migration 009 makes the argument in full.
 
+  Every entry also carries `recipe_exists` — see `recipe-still-there`, which is the
+  question a page cannot answer for itself and has to be told.
+
   Narrowed through `db/user-id-where-clause`, like every other read in this app:
   dev's owner has no `users` row, and a `= user-id` would answer nothing for him."
   [ds user-id]
   (jdbc/execute! (db/get-conn ds)
-    (sql/format {:select queue-columns
+    (sql/format {:select (conj queue-columns recipe-still-there)
                  :from [:recipe_events]
                  :where [:and [:= :seen [:inline 0]] (db/user-id-where-clause user-id)]
                  :order-by [[:id :asc]]})

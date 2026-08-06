@@ -2,6 +2,7 @@
   (:require [reagent.dom.client :as rdomc]
             [reagent.core :as r]
             [et.cb.ui.state :as state]
+            [et.cb.ui.views.inbox :as inbox]
             [et.cb.ui.views.recipes :as recipes]
             [et.cb.ui.views.scopes :as scopes]
             [et.cb.ui.views.settings :as settings]))
@@ -31,6 +32,24 @@
       [:span.brand-mark "▤"]
       [:span.brand-name "Cookbook"]]
      [:div.top-bar-right
+      ;; The Inbox. Owner-only like the other two, and it is the one of the three
+      ;; that carries a number: how many of his agents' changes are waiting. The
+      ;; count is the length of the list the page itself draws — there is no
+      ;; endpoint for it — so the badge and the page cannot come to disagree about
+      ;; what is unseen. Shown at 0 as well, because a button that appeared only
+      ;; when there was work would leave him with no way to look at an empty queue
+      ;; and confirm that it is empty.
+      (when logged-in?
+        (let [n (state/unseen-count)]
+          [:button.settings-toggle.inbox-toggle
+           {:on-click state/toggle-inbox
+            :class (when (= :inbox page) "active")
+            :title (if (zero? n)
+                     "Inbox — nothing your agents did is waiting"
+                     (str "Inbox — " n (if (= 1 n) " change" " changes")
+                          " your agents made, unseen"))}
+           "✉"
+           (when (pos? n) [:span.inbox-count n])]))
       ;; The Scopes page. Owner-only, and gated the same way the Settings page is
       ;; — this shell has no router, so which page is on is one value in the atom
       ;; and these two buttons move between them. The gate is `logged-in?` and not
@@ -62,14 +81,15 @@
                {:on-click #(swap! state/*app-state assoc :show-login? true)} "Sign in"])]]))
 
 (defn- page-body
-  "Exactly one of the three, chosen by `:page` — the shelf is not a backdrop the
-  other two are laid over. It used to be: both panels rendered `(when open?)` and
+  "Exactly one of the four, chosen by `:page` — the shelf is not a backdrop the
+  others are laid over. It used to be: both panels rendered `(when open?)` and
   the shelf rendered unconditionally underneath, so opening Settings gave you the
   settings *and* the search box, the compose form and every card below it.
 
   **A caller who is not signed in gets the shelf whatever `:page` says.** The
-  Settings and Scopes pages are reached by buttons only the owner has, so a
-  visitor left on one would be looking at a blank page with no way off it.
+  Settings, Scopes and Inbox pages are reached by buttons only the owner has, so a
+  visitor left on one would be looking at a blank page with no way off it — and in
+  the Inbox's case at a page whose one request the server answers with a 403.
   `logout` already puts `:page` back to `:shelf`; this is the second half of that
   guarantee, and the one that does not depend on every future writer of the state
   remembering it."
@@ -77,6 +97,7 @@
   (case (if logged-in? page :shelf)
     :scopes [scopes/scopes-page]
     :settings [settings/machine-user-block]
+    :inbox [inbox/inbox-page]
     [:div.main-layout
      [recipes/recipes-tab]]))
 
