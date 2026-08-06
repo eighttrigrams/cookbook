@@ -84,30 +84,60 @@
       (is (false? (machine-only? id))
           "which is what the gate reads: 3 of 4 are machine, so it is not theirs"))))
 
-(deftest the-gate-is-not-has-human-edit
-  ;; `has_human_edit` and the gate agree today, because migration 010 brought the bit
-  ;; up wherever a version reads `ui`. They are still different questions, and the
-  ;; test that keeps them from being collapsed is this one: approving an agent's
-  ;; proposal writes a `machine` version and leaves the bit alone, so a Recipe can
-  ;; carry the bit while its newest version is an agent's — and the gate has to stay
-  ;; closed for it.
-  (let [{:keys [id]} (create! "His, then approved agent text" true)]
+(deftest the-gate-reads-the-versions-and-not-the-bit
+  ;; **The claim the order makes and this test could not keep.** It said the gate must
+  ;; not be `has_human_edit = 0`, because that bit read 0 for every Recipe he typed by
+  ;; hand before migration 004 — so keying on it would let an agent overwrite exactly
+  ;; the text this feature protects.
+  ;;
+  ;; A mutation run then showed the first version of this test green against a gate
+  ;; that *did* read the bit. It had to be: since 010 the two agree on every row a
+  ;; running app can produce — the bit is true exactly when some version reads `ui` —
+  ;; so nothing reachable through the API distinguishes them, and a test that only used
+  ;; the API was asserting its own name rather than a behaviour.
+  ;;
+  ;; So this manufactures the one state that does distinguish them, the pre-004 shape:
+  ;; a `ui` version with the bit at 0. A gate reading the bit calls that Recipe the
+  ;; agents' and hands it over; a gate reading the versions does not.
+  (let [{:keys [id]} (create! "Typed by hand before anybody was counting" true)]
     (is (= 1 (:has_human_edit (db.recipe/get-recipe h/*ds* h/*user-id* id))))
-    (is (false? (machine-only? id)))
-    (let [proposal (db.proposal/propose! h/*ds* h/*user-id* id 1
-                                         {:title "His, then approved agent text"
-                                          :useful_when "when testing"
-                                          :description "the agent's body"})]
-      (db.recipe/approve-proposal! h/*ds* h/*user-id*
-                                   (db.proposal/by-event h/*ds* h/*user-id*
-                                                         (:id (first (events-of id))))))
-    (let [recipe (db.recipe/get-recipe h/*ds* h/*user-id* id)]
-      (is (= 2 (:version recipe)))
-      (is (= "machine" (:source recipe)) "the approved version is the agent's text")
-      (is (= 1 (:has_human_edit recipe))
-          "the bit is untouched — approving text is not writing it")
-      (is (false? (machine-only? id))
-          "and the gate is still closed, so the next agent edit still has to ask"))))
+    (h/clear-human-edit-bit! id)
+    (is (= 0 (:has_human_edit (db.recipe/get-recipe h/*ds* h/*user-id* id)))
+        "the bit is now 0 while the version still reads `ui` — the state 004 left and
+         010 repaired, and the one a gate on the bit gets wrong")
+    (is (= "ui" (:source (db.recipe/get-recipe h/*ds* h/*user-id* id))))
+    (is (false? (machine-only? id))
+        "**and the gate still refuses**, because it counts versions rather than
+         reading the bit. This is the assertion the whole warning was about.")
+    (testing "the counts it reads say the same thing out loud"
+      (is (= {:version 1 :machine_versions 0 :ui_versions 1}
+             (select-keys (db.recipe/version-split h/*ds* h/*user-id* id)
+                          [:version :machine_versions :ui_versions]))))))
+
+(deftest approving-does-not-set-the-bit
+  ;; `publish-recipe`'s argument, met by a second write path: putting your name to
+  ;; text an agent wrote is not writing it.
+  ;;
+  ;; **The fixture is the point.** Asserting this on a Recipe whose bit is already 1
+  ;; proves nothing — setting it to 1 again is invisible, which is what a mutation run
+  ;; showed. So the proposal here is filed against an **all-machine** Recipe, whose bit
+  ;; is 0: the db layer will propose against anything, and only the HTTP write path
+  ;; consults the gate. If approving ever starts setting the bit, this goes red.
+  (let [{:keys [id]} (create! "The agents', throughout" false)]
+    (is (= 0 (:has_human_edit (db.recipe/get-recipe h/*ds* h/*user-id* id))))
+    (db.proposal/propose! h/*ds* h/*user-id* id 1
+                          {:title "Rewritten by an agent" :description "the agent's body"})
+    (let [entry (first (filter #(= "proposed" (:kind %)) (events-of id)))
+          result (db.recipe/approve-proposal!
+                   h/*ds* h/*user-id* (db.proposal/by-event h/*ds* h/*user-id* (:id entry)))]
+      (is (= 2 (:version result)) "the text landed")
+      (is (= "machine" (:source result)))
+      (is (= 0 (:has_human_edit result))
+          "and the bit is still 0: he approved an agent's text, he did not write it")
+      (is (= 0 (:has_human_edit (db.recipe/get-recipe h/*ds* h/*user-id* id))))
+      (testing "so a Recipe that was the agents' before an approval is still theirs
+                after one — approving does not take a Recipe away from them"
+        (is (true? (machine-only? id)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; content-would-change?

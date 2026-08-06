@@ -82,6 +82,23 @@
                   :order-by [[:id :asc]]})
      db/jdbc-opts)))
 
+(defn clear-human-edit-bit!
+  "Put `has_human_edit` back to 0 on a Recipe that has a `ui` version — the shape
+  every Recipe he typed by hand had before migration 004, and one no write can produce
+  any more: the bit is only ever set, and 010 brought it up wherever a version reads
+  `ui`.
+
+  Reaches past the writers for the reason `clear-source!` did, and it is the only way
+  to ask the one question that matters here: **does the approval gate read the
+  versions or the bit?** Those two agree on every row a running app can make, so a
+  test that did not manufacture this state could not tell a gate reading
+  `machine_versions = version` from one reading `has_human_edit = 0` — which is
+  precisely the mistake the order warned against, and precisely what a mutation run
+  found this file unable to catch."
+  [recipe-id]
+  (jdbc/execute-one! (db/get-conn *ds*)
+    (sql/format {:update :recipes :set {:has_human_edit 0} :where [:= :id recipe-id]})))
+
 (defn in-transaction
   "Run `f` with a transaction on the fixture's datasource, for the handful of db
   functions that take a `tx` rather than a `ds` — the ones that are deliberately only

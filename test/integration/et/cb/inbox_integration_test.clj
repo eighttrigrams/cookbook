@@ -149,29 +149,43 @@
 ;; ---------------------------------------------------------------------------
 ;; the order
 
-(deftest the-queue-is-append-order-and-survives-two-entries-in-one-second
-  ;; `created_at` is second-resolution, so a queue ordered on it would be ordered
-  ;; on a tie — and two entries in one second is the normal case here, not a
-  ;; corner. This writes several in one go and then makes the tie explicit by
-  ;; stamping every row with the same second.
+(deftest the-queue-is-append-order-and-not-timestamp-order
+  ;; `created_at` is second-resolution, so a queue ordered on it would be ordered on
+  ;; a tie — and two entries in one second is the normal case here, not a corner.
+  ;;
+  ;; **The first version of this test stamped every row with the same second and
+  ;; asserted the order held.** A mutation run showed it green against a `list-unseen`
+  ;; that ordered by `created_at`: with every stamp equal, SQLite returns the rows in
+  ;; rowid order anyway, so the two orderings were indistinguishable and the test
+  ;; proved nothing about which column was used. So it now makes the stamps
+  ;; **disagree** with the append order — the last entry gets the oldest timestamp —
+  ;; and only an ordering on `id` gives the right answer.
   (let [a (:id (machine-create! "First"))
         b (:id (machine-create! "Second"))]
     (machine :put (str "/api/recipes/" a) {:description "body v2"})
     (machine :put (str "/api/recipes/" b) {:description "body v2"})
-    (jdbc/execute-one! (db/get-conn h/*ds*)
-      (sql/format {:update :recipe_events :set {:created_at "2026-01-01 00:00:00"}}))
-    (let [entries (inbox)]
-      (is (= 4 (count entries)))
-      (is (apply < (map :id entries)) "ascending by id, which is the append order")
-      (is (= [["First" "created"] ["Second" "created"]
-              ["First" "modified"] ["Second" "modified"]]
-             (mapv (juxt :recipe_title :kind) entries))
-          "so the oldest change is at the top and the newest at the bottom, with
-           every row sharing one timestamp — which is exactly the case an ordering
-           on `created_at` gets wrong")
-      (is (= 1 (count (set (map :created_at entries))))
-          "and the timestamps really are all the same, or the assertion above
-           proves nothing"))))
+    (let [ids (mapv :id (inbox))]
+      (is (= 4 (count ids)))
+      ;; The newest entry gets 2020; the rest share 2026. Ordering on the stamp would
+      ;; put the newest first and the other three in a tie behind it.
+      (jdbc/execute-one! (db/get-conn h/*ds*)
+        (sql/format {:update :recipe_events :set {:created_at "2026-01-01 00:00:00"}}))
+      (jdbc/execute-one! (db/get-conn h/*ds*)
+        (sql/format {:update :recipe_events :set {:created_at "2020-01-01 00:00:00"}
+                     :where [:= :id (last ids)]}))
+      (let [entries (inbox)]
+        (is (= ids (mapv :id entries))
+            "the queue is still the append order, though the timestamps now say
+             otherwise — which is the whole claim")
+        (is (= [["First" "created"] ["Second" "created"]
+                ["First" "modified"] ["Second" "modified"]]
+               (mapv (juxt :recipe_title :kind) entries)))
+        (is (= "2020-01-01 00:00:00" (:created_at (last entries)))
+            "and the last entry really does carry the oldest stamp, or the assertion
+             above is back to proving nothing")
+        (is (= 2 (count (set (map :created_at entries))))
+            "with the other three tied on one second, which is the case that made the
+             old version of this test vacuous")))))
 
 ;; ---------------------------------------------------------------------------
 ;; marking one seen
