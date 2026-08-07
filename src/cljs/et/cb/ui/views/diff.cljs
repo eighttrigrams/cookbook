@@ -1,7 +1,24 @@
 (ns et.cb.ui.views.diff
-  "The version viewer: one step of a Recipe's history at a time, the older
-  description on the left of a codemirror merge view and the newer on the right,
-  read-only — or, where there is no older, that one version on its own.
+  "The viewer: two texts side by side on a surface of their own, read-only.
+
+  **One surface, two readings.** A step of a Recipe's history — the older
+  description on the left of a codemirror merge view and the newer on the right, or,
+  where there is no older, that one version on its own. Or a **proposal**: what the
+  Recipe says now against what an agent wants to make of it, with the two answers in
+  the header.
+
+  The second reading used to be an inline pane under its queue row, and he said what
+  was wrong with it: *proposals, just like the other changes, should be shown on a
+  different page (note the difference in treatment)*. A row whose comparison lives
+  inside the list is a row that shoulders every entry after it off the screen, and it
+  crops the very thing it exists to show — the panes were capped at 320px, so a
+  change beginning in the second paragraph of a long body was past the fold on a
+  page whose whole job was to show it.
+
+  So both readings are drawn by `shell` and neither draws its own overlay. That is
+  the load-bearing part: a second surface that merely *resembled* this one is how the
+  two would drift, and the words are the only thing that differs between them —
+  headings, a label, and which buttons are in the header.
 
   Modelled on rhizome's `ui.main.diff`, which this follows down to the ✕ / ← / →
   header and the Split/Unified toggle. Three places it deliberately does **not**:
@@ -43,6 +60,7 @@
   The overlay is full-screen and is rendered outside the cards, for the reason
   the modals are — see the comment at the bottom of `et.cb.ui.views.recipes`."
   (:require [clojure.string :as str]
+            [reagent.core :as r]
             [et.cb.ui.provenance :as provenance]
             [et.cb.ui.state :as state]
             ["@codemirror/merge" :refer [MergeView unifiedMergeView]]
@@ -200,8 +218,8 @@
 
 (defn- as-side
   "One entry of a version list, with the two labels this comparison wants on it. The
-  version viewer's headings; the Inbox supplies its own, because a proposal is not a
-  version and calling it one would be the wrong word in the one place a reader is
+  history reading's headings; `proposal-sides` supplies its own, because a proposal is
+  not a version and calling it one would be the wrong word in the one place a reader is
   deciding whether to accept it."
   [entry]
   (assoc entry :heading (version-label entry) :sub (when-label entry)))
@@ -223,17 +241,22 @@
 
 ;; ---------------------------------------------------------------------------
 
-(defn pane
+(defn- pane
   "The comparison itself: the two metadata columns, the note about an unchanged body,
-  and the merge view under them. Everything the version viewer draws below its header.
+  and the merge view under them. Everything the viewer draws below its header, in
+  either reading.
 
-  **Exposed so the Inbox can show a proposal without a second diff being written.**
   The two sides are maps of `{:heading :sub :title :useful_when :description}` —
   `left` is the older or current text, `right` the newer or proposed one, which is the
-  order both readings of this component want.
+  order both readings want.
+
+  It used to be public, so that the Inbox could show a proposal without a second diff
+  being written. That was half a solution: the panes were shared and the surface
+  around them was not, which is how the two came to be *pages* rather than one. Both
+  readings are in here now, so this is private again.
 
   `key?` is not a parameter: the caller keys this on everything it was built from, the
-  way `component` does, because nothing here reconfigures a live editor."
+  way both readings do, because nothing here reconfigures a live editor."
   [left right unified? dark?]
   [:<>
    [:div.diff-meta
@@ -263,15 +286,143 @@
    ^{:key (str (boolean dark?) "-" (hash (:description entry)))}
    [version-editor (:description entry) dark?]])
 
-(defn component
-  "Rendered only when `:diffing` names a recipe. `:diff-version-idx` steps the
-  list, which arrives newest-first: index 0 is the step into today's text, so ←
-  walks backwards in time and → forwards, as in rhizome."
-  []
-  (let [{:keys [diffing diff-version-idx diff-unified? dark-mode recipes versions]}
+;; ---------------------------------------------------------------------------
+;; a proposal
+;;
+;; The other thing two texts can be here: not two versions of a Recipe, but the
+;; Recipe as it reads now against the version an agent wants to write. Both texts
+;; arrive on the inbox entry — see `db.proposal/attach-to-events` — so this reading
+;; fetches nothing and opens on the click.
+
+(defn- staleness-note
+  "Said in words, before the click, when the proposal was written against an older
+  version than the Recipe now has.
+
+  **The one thing about approving that cannot be left to be discovered afterwards.**
+  The diff below it is against the Recipe as it reads *now*, so approving really does
+  replace his newer text with the agent's — `base_version` is not a guard, and the
+  API will not refuse it. That is his call to make, which is exactly why it has to be
+  visible while he makes it."
+  [{:keys [base_version recipe_version]}]
+  (when (and base_version recipe_version (< base_version recipe_version))
+    [:p.proposal-note
+     (str "Proposed against version " base_version ", and this Recipe is on version "
+          recipe_version " — you have saved it since. The comparison below is against "
+          "your current text, so approving replaces it with the agent's.")]))
+
+(defn- published-note
+  "Said in words, before the click, when the Recipe is published.
+
+  An agent may propose against a published Recipe — the owner's call, *its up to the
+  human to approve or not* — so this button is the only thing standing between an
+  agent's wording and text that is already public and that he has put his name to.
+  There is no unpublish. That is a decision worth making deliberately rather than
+  discovering afterwards, which is the same argument `staleness-note` makes about a
+  base version, one door along.
+
+  What it does **not** say, because it is not true: nothing about a visitor's view
+  changes while this sits here. They are served the last approved version and never the
+  proposal, published or not."
+  [{:keys [recipe_published]}]
+  (when (= 1 recipe_published)
+    [:p.proposal-note
+     "This Recipe is published — it is public, and publishing put your name to it.
+      Approving replaces that public text with the agent's wording, and there is no
+      unpublish. Until you do, a reader still sees the version you approved."]))
+
+(defn- proposal-sides
+  "The two columns of a proposal reading, current on the left and proposed on the
+  right — which is the order both readings of `pane` want: what there is, then what
+  it would become.
+
+  `side` takes its two labels rather than deriving them precisely so this can say
+  what it is. A proposal is not a version, and `as-side`'s `Version 4 · machine`
+  would be the wrong word in the one place a reader is deciding whether to let it
+  become one."
+  [proposal]
+  [{:heading "This Recipe now"
+    :sub (str "Version " (:recipe_version proposal))
+    :title (:current_title proposal)
+    :useful_when (:current_useful_when proposal)
+    :description (:current_description proposal)}
+   {:heading "Proposed by an agent"
+    :sub (str "Against version " (:base_version proposal)
+              (when (:modified_at proposal)
+                (str " · last revised " (:modified_at proposal))))
+    :title (:title proposal)
+    :useful_when (:useful_when proposal)
+    :description (:description proposal)}])
+
+(defn- proposal-actions
+  "The two answers, in the header of the surface he read them on.
+
+  **They are here as well as on the queue row, and both are wanted.** The row's job
+  is triage — a proposal he already recognises should not cost a round trip through a
+  page to accept — and this one's is deciding having read, which is a decision that
+  must not send him somewhere else to make. `state/resolve-proposal` is where the two
+  entry points become one resolution: it closes this viewer whichever button was
+  pressed, so an answered proposal is never left on screen.
+
+  Approve goes dead on the first click, like every confirm button in this app and for
+  the same reason: only the response closes this out, so two quick clicks would send
+  two POSTs and the second would 409 over a decision that in fact went through.
+  Dismiss opens the confirmation instead, because the agent's text is not served
+  anywhere afterwards — the same modal the row opens, which is why it renders above
+  this surface rather than under it."
+  [_entry]
+  (let [sending? (r/atom false)]
+    (fn [{:keys [id]}]
+      [:<>
+       [:button.proposal-approve
+        {:disabled @sending?
+         :on-click #(do (reset! sending? true) (state/approve-proposal id nil))}
+        (if @sending? "Approving…" "Approve")]
+       [:button.secondary.danger.proposal-dismiss
+        {:on-click #(state/start-dismissing-proposal id)} "Dismiss"]])))
+
+;; ---------------------------------------------------------------------------
+
+(defn- shell
+  "The surface: the overlay, the page, the header, and whatever the reading puts
+  under it.
+
+  **There is one of these and there are two readings**, which is the whole shape of
+  this namespace. The chrome, the ✕, the Split/Unified toggle and the dark-mode
+  wiring are written once, so a proposal cannot come to be read on a page that merely
+  looks like the version viewer. What a reading supplies is words — a `heading`, the
+  `subject` it is about, a `label` — and, in the two places where the readings really
+  do differ, hiccup: `nav` for the ← → a history can be stepped through, and
+  `actions` for the buttons a proposal can be answered with. A reading that has
+  neither passes nil, and nothing is rendered where they would be.
+
+  `toggle-disabled?` rather than a toggle each: there is no merge view to lay out
+  either way on a Recipe's first version, and that is the only case."
+  [{:keys [heading subject label label-title nav unified? toggle-disabled? actions]} body]
+  [:div.diff-overlay
+   [:div.diff-page
+    [:div.diff-header
+     [:button.diff-close {:on-click state/stop-diff :title "Close"} "✕"]
+     [:h2 heading]
+     [:span.diff-recipe-title subject]
+     nav
+     [:span.diff-version-label {:title label-title} label]
+     [:button.diff-mode-toggle
+      ;; Dead where there is no merge view to lay out either way, rather than
+      ;; live and inert: the ← and → next to it go grey for the same reason.
+      {:on-click state/toggle-diff-unified :disabled toggle-disabled?}
+      (if unified? "Split" "Unified")]
+     actions]
+    body]])
+
+(defn- version-reading
+  "A step of one Recipe's history. `:diff-version-idx` steps the list, which arrives
+  newest-first: index 0 is the step into today's text, so ← walks backwards in time
+  and → forwards, as in rhizome."
+  [recipe-id]
+  (let [{:keys [diff-version-idx diff-unified? dark-mode recipes versions]}
         @state/*app-state
-        recipe (first (filter #(= diffing (:id %)) recipes))
-        entries (get versions diffing)
+        recipe (first (filter #(= recipe-id (:id %)) recipes))
+        entries (get versions recipe-id)
         total (count entries)
         ;; Two adjacent versions make one step, so N versions are N-1 steps —
         ;; and a single version is step 0 with nothing older, which is the
@@ -280,52 +431,89 @@
         idx (max 0 (min (or diff-version-idx 0) max-idx))
         newer (nth entries idx nil)
         older (nth entries (inc idx) nil)]
-    [:div.diff-overlay
-     [:div.diff-page
-      [:div.diff-header
-       [:button.diff-close {:on-click state/stop-diff :title "Close"} "✕"]
-       [:h2 "Versions"]
-       [:span.diff-recipe-title
-        (str (:title recipe)
-             (when (pos? total)
-               (str " · " total (if (= 1 total) " version" " versions"))))]
-       [:button.diff-step
-        {:on-click #(state/step-diff 1)
-         :disabled (>= idx max-idx)
-         :title "Older"} "←"]
-       [:button.diff-step
-        {:on-click #(state/step-diff -1)
-         :disabled (<= idx 0)
-         :title "Newer"} "→"]
-       [:span.diff-version-label
-        {:title (str "Where each version came from — " provenance/explanation)}
-        (step-label older newer (zero? idx))]
-       [:button.diff-mode-toggle
-        ;; Dead where there is no merge view to lay out either way, rather than
-        ;; live and inert: the ← and → next to it go grey for the same reason.
-        {:on-click state/toggle-diff-unified
-         :disabled (nil? older)}
-        (if diff-unified? "Split" "Unified")]]
-      (cond
-        (nil? entries)
-        [:p.diff-loading "Loading…"]
+    [shell
+     {:heading "Versions"
+      :subject (str (:title recipe)
+                    (when (pos? total)
+                      (str " · " total (if (= 1 total) " version" " versions"))))
+      :nav [:<>
+            [:button.diff-step
+             {:on-click #(state/step-diff 1)
+              :disabled (>= idx max-idx)
+              :title "Older"} "←"]
+            [:button.diff-step
+             {:on-click #(state/step-diff -1)
+              :disabled (<= idx 0)
+              :title "Newer"} "→"]]
+      :label (step-label older newer (zero? idx))
+      :label-title (str "Where each version came from — " provenance/explanation)
+      :unified? diff-unified?
+      :toggle-disabled? (nil? older)}
+     (cond
+       (nil? entries)
+       [:p.diff-loading "Loading…"]
 
-        (nil? older)
-        ;; **A Recipe on its first version, and only that.** The comment here used
-        ;; to name a second case — the oldest step of a Recipe that has more — and
-        ;; `max-idx` in the `let` above rules it out: with `total` ≥ 2 the last step
-        ;; is `total - 2`, whose older side is the last entry in the list, and ← is
-        ;; disabled there. So the oldest version of a Recipe that has a history is
-        ;; read as the left-hand side of a diff, and never through here.
-        ;;
-        ;; `newer` cannot be nil beside a non-nil `entries`: `/versions` on a Recipe
-        ;; that exists always carries at least its current row, and on one that does
-        ;; not it 404s, which lands no handler at all and leaves `entries` nil under
-        ;; the branch above.
-        ^{:key (str diffing "-" idx)}
-        [version-pane (as-side newer) dark-mode]
+       (nil? older)
+       ;; **A Recipe on its first version, and only that.** The comment here used
+       ;; to name a second case — the oldest step of a Recipe that has more — and
+       ;; `max-idx` in the `let` above rules it out: with `total` ≥ 2 the last step
+       ;; is `total - 2`, whose older side is the last entry in the list, and ← is
+       ;; disabled there. So the oldest version of a Recipe that has a history is
+       ;; read as the left-hand side of a diff, and never through here.
+       ;;
+       ;; `newer` cannot be nil beside a non-nil `entries`: `/versions` on a Recipe
+       ;; that exists always carries at least its current row, and on one that does
+       ;; not it 404s, which lands no handler at all and leaves `entries` nil under
+       ;; the branch above.
+       ^{:key (str recipe-id "-" idx)}
+       [version-pane (as-side newer) dark-mode]
 
-        :else
-        ;; The same pane the Inbox shows a proposal in — one layout, two readings.
-        ^{:key (str diffing "-" idx)}
-        [pane (as-side older) (as-side newer) diff-unified? dark-mode])]]))
+       :else
+       ^{:key (str recipe-id "-" idx)}
+       [pane (as-side older) (as-side newer) diff-unified? dark-mode])]))
+
+(defn- proposal-reading
+  "A proposal against the Recipe it is about, on the same surface.
+
+  The two notes come first and both can be on at once: a proposal against older text
+  on a Recipe that is also published is two things he needs to know, not a choice
+  between them. There is no third, deleted case to be exclusive with them — a
+  `proposed` entry always has its Recipe, because deleting one resolves the proposal
+  and takes the entry out of the queue in the same transaction.
+
+  **Nothing here is capped in height.** That is the point of the move: this reading
+  used to be a 320px pane inside a queue row, and a change beginning in the second
+  paragraph of a 2550-character body was below the fold of the thing meant to show
+  it."
+  [{:keys [id recipe_title proposal]}]
+  (let [{:keys [diff-unified? dark-mode]} @state/*app-state
+        [current proposed] (proposal-sides proposal)]
+    [shell
+     {:heading "Proposal"
+      :subject recipe_title
+      :label (str "Version " (:recipe_version proposal) " → proposed")
+      :label-title "The Recipe's current version, and the rewrite waiting on it —
+                    which is not a version until you approve it"
+      :unified? diff-unified?
+      :actions [proposal-actions {:id id}]}
+     [:<>
+      [published-note proposal]
+      [staleness-note proposal]
+      ^{:key (str "proposal-" id)}
+      [pane current proposed diff-unified? dark-mode]]]))
+
+(defn component
+  "Rendered only when `:diffing` names a recipe; `:diffing-proposal` says which of
+  the two readings that is.
+
+  A proposal is looked up in the queue it was opened from rather than held anywhere
+  of its own, so there is one copy of it and the page cannot come to disagree with
+  the list behind it. Finding none renders nothing, which is honest and is also
+  unreachable: `resolve-proposal` closes this on his answer and `fetch-inbox` closes
+  it when an entry leaves the queue by any other route."
+  []
+  (let [{:keys [diffing diffing-proposal inbox]} @state/*app-state]
+    (if diffing-proposal
+      (when-let [entry (first (filter #(= diffing-proposal (:id %)) inbox))]
+        [proposal-reading entry])
+      [version-reading diffing])))

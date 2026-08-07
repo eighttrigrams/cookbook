@@ -956,29 +956,23 @@ html.dark-mode .inbox-kind.kind-proposed { background: rgba(245, 158, 11, 0.18);
   text-align: center;
 }
 
-/* A `proposed` entry is a question rather than a notification, so it is a block
-   rather than a row: the row on top, the comparison under it. The comparison is the
-   version viewer's own pane, so it inherits `.diff-meta` and `.diff-editor` from
-   above — what is added here is the frame that groups the two, and a cap on the
-   editor's height, because a queue of proposals must stay scannable. */
-.inbox-item {
-  padding: 4px 0 12px;
-  border-bottom: 1px solid var(--glass-border);
-}
-.inbox-item:last-child { border-bottom: none; }
-.inbox-item .inbox-row { border-bottom: none; }
-.inbox-review {
-  padding: 4px 0 0;
-}
-/* Denser than the full-screen viewer's, which has a page to itself. */
-.inbox-review .diff-meta { margin-bottom: 8px; }
-.inbox-review .diff-editor .cm-editor { max-height: 320px; }
-.inbox-review .diff-note { margin-bottom: 8px; }
+/* A `proposed` entry used to be a block rather than a row — the row on top and its
+   comparison under it, in a pane capped at 320px so that a queue of them stayed
+   scannable. Both halves of that were the complaint: the block pushed the entries
+   after it off the screen, and the cap hid the very change it was there to show. The
+   comparison is read in the viewer now, on a page with no cap on it, so `.inbox-item`
+   and `.inbox-review` are gone and every entry is an `.inbox-row` again.
 
-/* The thing that must be read before Approve is clicked: the proposal was written
-   against an older version, so approving replaces his newer text. Coloured like the
-   destructive confirmations rather than like a hint. */
-.inbox-stale {
+   The two things that came with it — the warnings and the Approve button — are below,
+   named for the proposal rather than for the queue: both are drawn on the row *and*
+   in the viewer's header, and a class saying `inbox` in a `.diff-header` would be a
+   lie about where the thing lives. */
+
+/* What must be read before Approve is clicked: the proposal was written against an
+   older version, so approving replaces his newer text — or the Recipe is published,
+   so it replaces text he has put his name to. Coloured like the destructive
+   confirmations rather than like a hint. */
+.proposal-note {
   margin: 0 0 10px;
   padding: 9px 12px;
   max-width: 80ch;
@@ -989,10 +983,10 @@ html.dark-mode .inbox-kind.kind-proposed { background: rgba(245, 158, 11, 0.18);
   line-height: 1.5;
 }
 
-/* Approve carries the accent, because it is the one button on this page that writes
-   a version. Dismiss borrows `.danger` from the delete buttons, for the same reason
-   they have it: what it removes does not come back. */
-.inbox-approve {
+/* Approve carries the accent, because it is the one button in either place that
+   writes a version. Dismiss borrows `.danger` from the delete buttons, for the same
+   reason they have it: what it removes does not come back. */
+.proposal-approve {
   padding: 5px 11px;
   font-size: 0.85em;
   background: var(--accent);
@@ -1002,5 +996,24 @@ html.dark-mode .inbox-kind.kind-proposed { background: rgba(245, 158, 11, 0.18);
   font-weight: 600;
   cursor: pointer;
 }
-.inbox-approve:hover:not(:disabled) { background: var(--accent-hover); transform: none; }
-.inbox-approve:disabled { opacity: 0.6; cursor: default; }
+.proposal-approve:hover:not(:disabled) { background: var(--accent-hover); transform: none; }
+.proposal-approve:disabled { opacity: 0.6; cursor: default; }
+
+/* In the viewer's header the same two buttons have to win against `.diff-header
+   button`, which strips every button up there back to an outline so that five of them
+   in a row do not read as five things demanding to be pressed. These two *are* the
+   things demanding to be pressed — they are the reason the page was opened — so they
+   keep the colours they wear on the row, at the header's height. */
+.diff-header .proposal-approve {
+  height: 34px;
+  background: var(--accent);
+  color: var(--opaque-bg);
+  border: none;
+  font-size: 0.9em;
+}
+.diff-header .proposal-approve:hover:not(:disabled) {
+  background: var(--accent-hover);
+  color: var(--opaque-bg);
+}
+.diff-header .proposal-dismiss { color: #ff3b30; border-color: #ff3b30; }
+.diff-header .proposal-dismiss:hover { background: rgba(255, 59, 48, 0.1); color: #ff3b30; }

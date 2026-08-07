@@ -19,22 +19,30 @@
   `state/go-to-page`, where being *one value* is what makes 'this page and the
   shelf are both up' unreachable rather than merely avoided.
 
-  Each row is the kind, the Recipe's title, when it happened, and one button —
-  Seen. For a `created` or `modified` entry the **title is the way through to the
-  version viewer, positioned at that version**. The two kinds raise different
-  questions there and the viewer answers both: a `modified` row asks what that save
-  changed, and a `created` row asks what the thing says, since he has never seen it
-  — *i have no chance to see the contents of a new thing*. So the words on the way
-  through say which, rather than promising a change to a reader whose Recipe has no
-  version behind it. A `deleted` entry's title is plain text, because there is
+  **Every entry is a row, and the row is one line.** The kind, the Recipe's title,
+  when it happened, and the buttons that answer it. The title is the way through to
+  the viewer, which is where a change is read — and that is the same sentence for
+  every kind, which it was not: a `proposed` entry used to carry its whole two-pane
+  comparison inside the list. He said what was wrong with that in one line —
+  *proposals, just like the other changes, should be shown on a different page (note
+  the difference in treatment)* — and it is visible in one screen: four entries, one
+  of them two thirds of the page, and every entry after it pushed off the bottom of a
+  queue whose whole purpose is to be worked through top to bottom.
+
+  The kinds raise different questions on the way through and the viewer answers all
+  of them: a `modified` row asks what that save changed, a `created` row asks what
+  the thing says, since he has never seen it — *i have no chance to see the contents
+  of a new thing* — and a `proposed` row asks what an agent wants to make of a Recipe
+  he has already written. So the words on the way through say which. A `deleted`
+  entry's title is plain text, and so is one whose Recipe has since gone: there is
   nothing left to open.
 
-  **A `proposed` entry is a different kind of thing and looks like one.** It is a
-  question rather than a notification, so it has no Seen button — the API refuses to
-  acknowledge one — and instead of a link it carries the comparison itself: the
-  Recipe's current text on the left, the agent's proposal on the right, in the version
-  viewer's own pane. Its two buttons are the two answers, Approve and Dismiss, and
-  Dismiss asks first because the agent's text is gone afterwards.
+  **A `proposed` entry is still not a notification**, and the buttons are where that
+  shows. It has no Seen button — the API refuses to acknowledge a question — and
+  carries the two answers instead, Approve and Dismiss, with Dismiss asking first
+  because the agent's text is gone afterwards. The same two are in the viewer's
+  header, because a page you read a decision on that then sends you elsewhere to make
+  it is a worse version of what he was complaining about.
 
   The title on a row is a snapshot taken when the change happened, not a lookup —
   so a row about a Recipe that has since been renamed still says what it said then,
@@ -73,7 +81,7 @@
    "proposed" "An agent proposes to rewrite this Recipe, and is waiting for you"})
 
 (defn- openable?
-  "Whether this row's change can be looked at in the version viewer.
+  "Whether this row's change can be looked at in the viewer.
 
   Two conditions, and the second is the one that is easy to miss. A `deleted` entry
   cannot be opened — the Recipe and its whole history are gone, so there is no
@@ -84,11 +92,13 @@
   `recipe_exists` because this client cannot: its copy of the shelf may be narrowed
   by a search, so 'not in the listing' does not mean 'not there'.
 
-  `proposed` is excluded because it gets a pane of its own rather than the version
-  viewer — the version it proposes does not exist yet, so there is nothing in the
-  history to step to."
+  **`proposed` is in here now**, and it passes the second condition free: deleting a
+  Recipe resolves its pending proposal and takes the entry out of the queue in the
+  same transaction, so every `proposed` entry that is in the list at all has its
+  Recipe. It is asked anyway rather than assumed, because the flag is what this
+  question is, and one kind exempting itself from it is how the next kind would."
   [{:keys [kind recipe_exists]}]
-  (and (contains? #{"created" "modified"} kind)
+  (and (contains? #{"created" "modified" "proposed"} kind)
        (= 1 recipe_exists)))
 
 (def ^:private scope-hint
@@ -112,9 +122,10 @@
   off the line, which a sixth column would have done by taking the room out of the
   title or moving the buttons from row to row.
 
-  `title-el` is passed in rather than built here because the two callers differ on it
-  and only on it: a `created` or `modified` row's title opens the version viewer, a
-  `proposed` row's is plain text, and so is one whose Recipe is gone.
+  `title-el` is passed in rather than built here because the badges are the same on
+  every row and the title is not: what it opens depends on the kind, and on a row
+  whose Recipe is gone it opens nothing. `title-element` answers that; this places
+  it.
 
   **No `logged-in?` gate on the badges, unlike the shelf's cards, and that is
   considered rather than forgotten.** The gate there is cosmetic anyway — a visitor's
@@ -128,161 +139,83 @@
    (when (seq scopes)
      [scope-badges/badges scopes {:class "inbox-scopes" :hint scope-hint}])])
 
+(defn- title-element
+  "The row's title, and what clicking it opens.
+
+  **The same viewer for all three openable kinds, and three different questions.**
+  `openable?` admits exactly `created`, `modified` and `proposed`, so the `case` needs
+  no default — a fourth kind would have to get past it first. A `created` row
+  promising to show what a save *changed* was promising the one thing a first version
+  cannot have, which is why these are three sentences and not one."
+  [{:keys [id kind recipe_id recipe_title version] :as entry}]
+  (if (openable? entry)
+    [:button.inbox-title-link
+     {:title (case kind
+               "created" "Read what the agent wrote"
+               "modified" "See what this save changed"
+               "proposed" "Read what the agent proposes, against this Recipe's text")
+      :on-click (if (= "proposed" kind)
+                  ;; By the **event** id, which is what the two answers are keyed by,
+                  ;; and the recipe id, which is what the viewer is open on. The
+                  ;; version on a `proposed` row is the one it was written against,
+                  ;; not a step in the history — so there is nothing here to step to.
+                  #(state/start-proposal-diff id recipe_id)
+                  #(state/start-diff-at-version recipe_id version))}
+     recipe_title]
+    ;; Plain text, and told why: a title that simply stopped being clickable
+    ;; would read as the row being broken.
+    [:span.inbox-title
+     {:title (if (= "deleted" kind)
+               "This Recipe is gone, so there is nothing left to open"
+               "This Recipe has since been deleted, so there is nothing left
+                to open")}
+     recipe_title]))
+
 (defn- row
-  "One entry. The seen button goes dead on the first click, the way the confirm
-  buttons in the modals do and for the same reason: only the response closes this
-  out — the list is refetched rather than the row spliced away, because the server
-  decides what is in the queue — which leaves the button live for the whole round
-  trip unless something takes it out. Two quick clicks would send two POSTs, and
-  the second one is an idempotent 200 that nonetheless refetches over the first."
+  "One entry, on one line, whichever kind it is.
+
+  **One component for all four kinds**, where there used to be two. The kinds differ
+  in what the title opens and in which buttons answer them, and in nothing else — so
+  a second component was two copies of a row that had to be kept in step by hand, and
+  was not: the Scope badges had to be added to both, one at a time. A queue whose
+  rows are the same shape is also the thing he asked for here, and a row that is a
+  row on every kind is what makes that true structurally rather than by care.
+
+  The button goes dead on the first click — Seen and Approve alike — the way the
+  confirm buttons in the modals do and for the same reason: only the response closes
+  this out, because the list is refetched rather than the row spliced away (the server
+  decides what is in the queue), which leaves the button live for the whole round trip
+  unless something takes it out. Two quick clicks on Seen would send two POSTs, the
+  second an idempotent 200 that nonetheless refetches over the first; two on Approve
+  would put a 409 over a decision that in fact went through.
+
+  Dismiss opens a confirmation instead, the way Delete and Publish do, because the
+  agent's text is not served anywhere afterwards and nothing brings it back. A
+  `proposed` row has **no Seen button**, deliberately: a proposal is not something to
+  acknowledge, and the API refuses to acknowledge one."
   [_entry]
   (let [sending? (r/atom false)]
-    (fn [{:keys [id kind recipe_id recipe_title version created_at scopes] :as entry}]
+    (fn [{:keys [id kind version created_at scopes] :as entry}]
       [:div.inbox-row
        [:span.inbox-kind {:class (str "kind-" kind) :title (get kind-titles kind)}
         (get kind-labels kind kind)]
-       [subject
-        (if (openable? entry)
-          [:button.inbox-title-link
-           ;; The same viewer, two different questions — and `openable?` admits
-           ;; exactly these two kinds, so the `if` is a complete answer. A `created`
-           ;; row promising to show what a save *changed* was promising the one
-           ;; thing a first version cannot have.
-           {:title (if (= "created" kind)
-                     "Read what the agent wrote"
-                     "See what this save changed")
-            :on-click #(state/start-diff-at-version recipe_id version)}
-           recipe_title]
-          ;; Plain text, and told why: a title that simply stopped being clickable
-          ;; would read as the row being broken.
-          [:span.inbox-title
-           {:title (if (= "deleted" kind)
-                     "This Recipe is gone, so there is nothing left to open"
-                     "This Recipe has since been deleted, so there is nothing left
-                      to open")}
-           recipe_title])
-        scopes]
+       [subject (title-element entry) scopes]
        (when version
          [:span.inbox-version {:title (get kind-titles kind)} (str "v" version)])
        [:span.inbox-when created_at]
        [:span.inbox-row-actions
-        [:button.secondary.inbox-seen
-         {:disabled @sending?
-          :on-click #(do (reset! sending? true) (state/mark-seen id))}
-         (if @sending? "…" "Seen")]]])))
-
-(defn- staleness-note
-  "Said in words, before the click, when the proposal was written against an older
-  version than the Recipe now has.
-
-  **The one thing about approving that cannot be left to be discovered afterwards.**
-  The diff beside it is against the Recipe as it reads *now*, so approving really does
-  replace his newer text with the agent's — `base_version` is not a guard, and the
-  API will not refuse it. That is his call to make, which is exactly why it has to be
-  visible while he makes it."
-  [{:keys [base_version recipe_version]}]
-  (when (and base_version recipe_version (< base_version recipe_version))
-    [:p.inbox-stale
-     (str "Proposed against version " base_version ", and this Recipe is on version "
-          recipe_version " — you have saved it since. The comparison below is against "
-          "your current text, so approving replaces it with the agent's.")]))
-
-(defn- published-note
-  "Said in words, before the click, when the Recipe is published.
-
-  An agent may propose against a published Recipe — the owner's call, *its up to the
-  human to approve or not* — so this button is the only thing standing between an
-  agent's wording and text that is already public and that he has put his name to.
-  There is no unpublish. That is a decision worth making deliberately rather than
-  discovering afterwards, which is the same argument `staleness-note` makes about a
-  base version, one door along.
-
-  What it does **not** say, because it is not true: nothing about a visitor's view
-  changes while this sits here. They are served the last approved version and never the
-  proposal, published or not."
-  [{:keys [recipe_published]}]
-  (when (= 1 recipe_published)
-    [:p.inbox-stale
-     "This Recipe is published — it is public, and publishing put your name to it.
-      Approving replaces that public text with the agent's wording, and there is no
-      unpublish. Until you do, a reader still sees the version you approved."]))
-
-(defn- proposal-review
-  "A proposal, shown against the Recipe's **current** text: current on the left,
-  proposed on the right.
-
-  It reuses the version viewer's own pane (`diff/pane`) rather than growing a second
-  diff — the thing being read is the same thing, two texts and what differs between
-  them, and the words above each column are all that changes. The Split/Unified toggle
-  the viewer has is deliberately not repeated here; it reads `:diff-unified?` from the
-  same place, so whichever layout he prefers is the one he gets in both.
-
-  Both texts arrive on the entry itself. Nothing here fetches the Recipe, which is not
-  an optimisation: `?detail=full` counts a consumption and ranks the shelf, so a page
-  that fetched it would reorder his Cookbook every time he reviewed a queue."
-  [{:keys [proposal]}]
-  (let [{:keys [dark-mode diff-unified?]} @state/*app-state
-        current {:heading "This Recipe now"
-                 :sub (str "Version " (:recipe_version proposal))
-                 :title (:current_title proposal)
-                 :useful_when (:current_useful_when proposal)
-                 :description (:current_description proposal)}
-        proposed {:heading "Proposed by an agent"
-                  :sub (str "Against version " (:base_version proposal)
-                            (when (:modified_at proposal)
-                              (str " · last revised " (:modified_at proposal))))
-                  :title (:title proposal)
-                  :useful_when (:useful_when proposal)
-                  :description (:description proposal)}]
-    [:div.inbox-review
-     ;; Both notes, and both can be on at once: a proposal against older text on a
-     ;; Recipe that is also published is two things he needs to know, not a choice
-     ;; between them.
-     ;;
-     ;; There is no third, deleted case to be exclusive with them. A `proposed` entry
-     ;; always has its Recipe — deleting one resolves the proposal and takes the entry
-     ;; out of the queue in the same transaction — so this pane never has to explain a
-     ;; missing left-hand side, and a note that said it did was describing a state the
-     ;; server cannot send.
-     [published-note proposal]
-     [staleness-note proposal]
-     ;; Keyed on the texts and the theme, like the viewer's own call site: nothing
-     ;; mutates a live merge view, it is replaced.
-     ^{:key (str (:base_version proposal) "-" (boolean diff-unified?) "-"
-                 (boolean dark-mode))}
-     [diff/pane current proposed diff-unified? dark-mode]]))
-
-(defn- proposal-row
-  "One `proposed` entry: the badge, the title, what it is against, and the two
-  answers — Approve and Dismiss. **No Seen button**, deliberately: a proposal is not
-  something to acknowledge, and the API refuses to acknowledge one.
-
-  Approve fires on the first click and goes dead; Dismiss opens a confirmation, the
-  way Delete and Publish do, because the agent's text is not served anywhere
-  afterwards and nothing brings it back."
-  [_entry]
-  (let [sending? (r/atom false)]
-    (fn [{:keys [id kind recipe_title version created_at proposal scopes] :as entry}]
-      [:div.inbox-item
-       [:div.inbox-row
-        [:span.inbox-kind {:class (str "kind-" kind) :title (get kind-titles kind)}
-         (get kind-labels kind kind)]
-        ;; The badges are on this kind of row too, and it is the kind that wants them
-        ;; most: a question about a Recipe he has to answer, where knowing what area it
-        ;; is in is half of deciding how carefully to read the diff below.
-        [subject [:span.inbox-title recipe_title] scopes]
-        (when version
-          [:span.inbox-version {:title (get kind-titles kind)} (str "v" version)])
-        [:span.inbox-when created_at]
-        [:span.inbox-row-actions
-         [:button.inbox-approve
-          {:disabled @sending?
-           :on-click #(do (reset! sending? true) (state/approve-proposal id nil))}
-          (if @sending? "Approving…" "Approve")]
-         [:button.secondary.danger
-          {:on-click #(state/start-dismissing-proposal id)} "Dismiss"]]]
-       (when proposal
-         [proposal-review entry])])))
+        (if (= "proposed" kind)
+          [:<>
+           [:button.proposal-approve
+            {:disabled @sending?
+             :on-click #(do (reset! sending? true) (state/approve-proposal id nil))}
+            (if @sending? "Approving…" "Approve")]
+           [:button.secondary.danger.proposal-dismiss
+            {:on-click #(state/start-dismissing-proposal id)} "Dismiss"]]
+          [:button.secondary.inbox-seen
+           {:disabled @sending?
+            :on-click #(do (reset! sending? true) (state/mark-seen id))}
+           (if @sending? "…" "Seen")])]])))
 
 (defn- dismiss-modal
   "Asks before dismissing, and the question is what is lost. The Recipe is not
@@ -314,56 +247,59 @@
   (let [{:keys [inbox]} @state/*app-state]
     [:div.inbox
      [:h2 "Inbox"]
-     ;; **Two kinds of row, so two sentences.** This paragraph told him to mark every
-     ;; entry seen and to click every title, which was true of the queue before
-     ;; proposals were in it and is true of neither on a `proposed` row: it has no Seen
-     ;; button, because the API refuses to acknowledge a question, and its title is not
-     ;; a link, because the version it proposes does not exist yet.
+     ;; **One sentence about the titles, because there is now one behaviour.** This
+     ;; paragraph used to describe the `proposed` kind as the exception that showed its
+     ;; change in the list and had no title to click; both halves of that are gone, and
+     ;; what is left of the distinction is which buttons answer a row.
      ;;
-     ;; And the first of those two sentences said the title showed what the save
-     ;; changed, which a `created` row has never been able to do: a first version has
-     ;; nothing behind it, and what it opens is that version itself. So the sentence
-     ;; names both kinds rather than describing one of them twice.
+     ;; It also once said the title showed what the save changed, which a `created` row
+     ;; has never been able to do: a first version has nothing behind it, and what it
+     ;; opens is that version itself. So the kinds are named rather than one of them
+     ;; described three times.
      [:p.settings-note
       "Everything your agents did to a Recipe, oldest first. "
       [:strong "Your own edits are not in here"]
       " — this is the record of what the agents did, not a change log."]
      [:p.settings-note
+      "Click a Recipe's title to open it: what an agent's save changed on a "
+      [:strong "modified"]
+      " entry, on a "
+      [:strong "created"]
+      " one the Recipe it wrote, which has nothing behind it to compare against yet,
+       and on a "
+      [:strong "proposed"]
+      " one what the agent wants to make of it, beside the text you have now."]
+     [:p.settings-note
       "Most entries are something that already happened: mark it "
       [:em "Seen"]
-      " and it leaves the queue, and click the Recipe's title to open it — what an
-       agent's save changed on a "
-      [:strong "modified"]
-      " entry, and on a "
-      [:strong "created"]
-      " one the Recipe it wrote, which has nothing behind it to compare against yet.
-       A "
+      " and it leaves the queue. A "
       [:strong "proposed"]
       " entry is a question instead — an agent wants to rewrite the Recipe and is
-       waiting for you — so it shows you the change beside the current text and asks
-       you to "
+       waiting for you — so it asks you to "
       [:em "Approve"]
       " or "
       [:em "Dismiss"]
-      " it. Either way the entry disappears and the rest keep their order."]
+      " it, here on the row or on the page it opens. Either way the entry disappears
+       and the rest keep their order."]
      (if (empty? inbox)
        [:div.inbox-empty "Nothing your agents did is waiting."]
        [:div.inbox-list
-        ;; The key goes on each branch's vector rather than on the `if`: metadata on
-        ;; an `if` form is metadata on the form, which the reader drops before reagent
-        ;; sees it — the trap `views/scopes.cljs` documents.
         (for [entry inbox]
-          (if (= "proposed" (:kind entry))
-            ^{:key (:id entry)} [proposal-row entry]
-            ^{:key (:id entry)} [row entry]))])]))
+          ^{:key (:id entry)} [row entry])])]))
 
 (defn inbox-page
-  "The panel and the version viewer, as **siblings**.
+  "The panel and the viewer, as **siblings**.
 
   The viewer has to be reachable from here at all — it used to be rendered only
   from the shelf, and this page is not the shelf: `page-body` renders exactly one
   page, so a row that opened `:diffing` while the shelf was not mounted would have
-  set the state and shown nothing.
+  set the state and shown nothing. That goes double now: this is the only page from
+  which a proposal can be opened at all.
+
+  The confirmation is a sibling of both, and it is above them: Dismiss is a button on
+  the row *and* in the viewer's header, so the modal has to be able to land over a
+  surface that is itself full-screen. `.modal-backdrop` outranks `.diff-overlay` in
+  the stylesheet, which is where that is argued.
 
   And it renders outside `.inbox` rather than inside it, for the reason the Recipe
   modals render outside the cards: this block has a `backdrop-filter`, which would
