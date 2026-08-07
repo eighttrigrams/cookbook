@@ -584,11 +584,19 @@
 (defn toggle-excluded-scope
   "Hide the Recipes filed under this Scope, or stop hiding them.
 
-  A toggle rather than an add, even though the badge that calls it disappears
-  along with the Recipes carrying it — the chips strip is where the second click
-  lives, and it calls `clear-excluded-scope`. This stays a toggle because a Recipe
-  filed under *two* Scopes keeps its other badges when one of them is excluded, so
-  the same badge can genuinely be shift+clicked twice."
+  A toggle rather than an add — but **not** because a badge can be shift+clicked
+  twice once the shelf has settled. It cannot: a Recipe carrying an excluded Scope
+  is hidden badge and all, so every Recipe still on the shelf carries none of the
+  excluded ones and no visible badge can name one. Filing a Recipe under a second
+  Scope does not rescue its badges either; the Recipe goes with the first. That is
+  exactly why `excluded-scopes-strip` is where the second click lives, calling
+  `clear-excluded-scope`, and why that strip is not optional.
+
+  What the `disj` branch is for is the window *before the refetch lands*: the rows
+  on screen are still the unnarrowed ones, so the badge just clicked is still
+  under the cursor. Toggling there lets a doubled click undo itself, where an add
+  would swallow the second one and leave the Scope hidden with the only way back
+  now in the strip."
   [id]
   (swap! *app-state update :excluded-scopes
          (fn [s] (if (contains? s id) (disj s id) (conj s id))))
