@@ -58,7 +58,10 @@
   merge view, and the one that already goes through the full markdown parser.
 
   The overlay is full-screen and is rendered outside the cards, for the reason
-  the modals are — see the comment at the bottom of `et.cb.ui.views.recipes`."
+  the modals are — see the comment at the bottom of `et.cb.ui.views.recipes`. Being
+  full-screen is a claim about the **mouse** only, so what is behind it is `inert`
+  while it is up: see `inert-behind!`, which is the whole of why this surface is a
+  dialog rather than a panel that happens to cover everything."
   (:require [clojure.string :as str]
             [reagent.core :as r]
             [et.cb.ui.provenance :as provenance]
@@ -381,6 +384,80 @@
         {:on-click #(state/start-dismissing-proposal id)} "Dismiss"]])))
 
 ;; ---------------------------------------------------------------------------
+;; the surface, and what it has to take out of the tab order
+
+(def ^:private inert-attr
+  "Our own mark on what this surface made inert, so that releasing clears exactly
+  that set and nothing a future overlay may have inerted for its own reasons."
+  "data-inert-behind-viewer")
+
+(defn- inert-behind!
+  "Everything this surface is drawn over, taken out of the tab order.
+
+  `position: fixed; inset: 0` stops the **mouse** and says nothing at all to the
+  keyboard. Every button under here kept its tab stop, its focus ring and its Enter,
+  and the DOM order puts the page before the overlay — so one Tab after opening a
+  proposal to read it landed on the *row's* Approve, painted over by this surface with
+  the ring invisible, one Enter from writing an agent's wording into a Recipe. Approve
+  is the one write in this app with nothing in front of it, and `Versions` from a shelf
+  card had the same hole with Delete as the next stop.
+
+  **`inert` on what is behind, rather than a Tab handler on what is in front.** With
+  the rest of the page inert the only focusable controls in the document are this
+  surface's own, so wrapping round at the last one is the browser's job and there is no
+  key handler of ours to have a hole in — the same argument `open-viewer!` makes about
+  one `assoc` instead of two. It also takes those controls out of the accessibility
+  tree, which `aria-modal` beside it only claims.
+
+  Walks up to `body` and inerts the siblings at each level, because the overlay is
+  rendered as a sibling of the page it covers (`inbox-page`, `recipes-tab`) and there
+  is no one container holding everything else.
+
+  **`.modal-backdrop` is skipped**, and that is the stylesheet's z-index argument in
+  focus terms: the dismiss confirmation is opened from this surface's own header and
+  renders at 30 over this 25, so it is not behind anything and must keep its buttons."
+  [overlay-el]
+  (loop [el overlay-el]
+    (when-let [parent (.-parentElement el)]
+      (doseq [sib (array-seq (.-children parent))]
+        (when (and (not (identical? sib el))
+                   (not (.-inert sib))
+                   (not (.matches sib ".modal-backdrop")))
+          (set! (.-inert sib) true)
+          (.setAttribute sib inert-attr "")))
+      (when-not (identical? parent (.-body js/document))
+        (recur parent)))))
+
+(defn- release-behind! []
+  (doseq [el (array-seq (.querySelectorAll js/document (str "[" inert-attr "]")))]
+    (set! (.-inert el) false)
+    (.removeAttribute el inert-attr)))
+
+(defn- surface-ref
+  "Mount and unmount of the trap, as one closure per `shell` so that React calls it
+  on attach and detach and not on every render — a `:ref` rebuilt each render is
+  detached and reattached each time, which here would re-take focus while the reader
+  is tabbing through the header.
+
+  Focus goes to `.diff-page` and not to a button: the ✕ and Approve are both one
+  Enter from doing something, and a reader who has just opened a page to read it has
+  read nothing yet. It has `tabindex=\"-1\"` for that and for nothing else, so the
+  first Tab is the ✕.
+
+  The opener is read **before** anything is inerted, because inerting an ancestor of
+  the focused element blurs it, and restored on the way out only if it is still in the
+  document — the row a proposal was opened from is gone once it has been answered."
+  [*opener]
+  (fn [el]
+    (if el
+      (do (reset! *opener (.-activeElement js/document))
+          (inert-behind! el)
+          (some-> (.querySelector el ".diff-page") (.focus)))
+      (let [opener @*opener]
+        (release-behind!)
+        (reset! *opener nil)
+        (when (and opener (.-isConnected opener))
+          (.focus opener))))))
 
 (defn- shell
   "The surface: the overlay, the page, the header, and whatever the reading puts
@@ -396,23 +473,35 @@
   neither passes nil, and nothing is rendered where they would be.
 
   `toggle-disabled?` rather than a toggle each: there is no merge view to lay out
-  either way on a Recipe's first version, and that is the only case."
-  [{:keys [heading subject label label-title nav unified? toggle-disabled? actions]} body]
-  [:div.diff-overlay
-   [:div.diff-page
-    [:div.diff-header
-     [:button.diff-close {:on-click state/stop-diff :title "Close"} "✕"]
-     [:h2 heading]
-     [:span.diff-recipe-title subject]
-     nav
-     [:span.diff-version-label {:title label-title} label]
-     [:button.diff-mode-toggle
-      ;; Dead where there is no merge view to lay out either way, rather than
-      ;; live and inert: the ← and → next to it go grey for the same reason.
-      {:on-click state/toggle-diff-unified :disabled toggle-disabled?}
-      (if unified? "Split" "Unified")]
-     actions]
-    body]])
+  either way on a Recipe's first version, and that is the only case.
+
+  **A dialog and not a panel**, which is three attributes and the `:ref` above:
+  `role`, `aria-modal` and a name for assistive technology, and `inert` on everything
+  behind so that the keyboard cannot leave a surface the mouse cannot. Form-2 for the
+  one reason — the ref closure has to outlive a render."
+  [_opts _body]
+  (let [ref (surface-ref (atom nil))]
+    (fn [{:keys [heading subject label label-title nav unified? toggle-disabled? actions]} body]
+      [:div.diff-overlay
+       {:ref ref
+        :role "dialog"
+        :aria-modal true
+        :aria-label (str heading (when (seq (str subject)) (str " — " subject)))}
+       [:div.diff-page {:tab-index -1}
+        [:div.diff-header
+         [:button.diff-close {:on-click state/stop-diff :title "Close"} "✕"]
+         [:h2 heading]
+         [:span.diff-recipe-title subject]
+         nav
+         [:span.diff-version-label {:title label-title} label]
+         [:button.diff-mode-toggle
+          ;; Dead where there is no merge view to lay out either way, rather than
+          ;; live and doing nothing: the ← and → next to it go grey for the same
+          ;; reason.
+          {:on-click state/toggle-diff-unified :disabled toggle-disabled?}
+          (if unified? "Split" "Unified")]
+         actions]
+        body]])))
 
 (defn- version-reading
   "A step of one Recipe's history. `:diff-version-idx` steps the list, which arrives

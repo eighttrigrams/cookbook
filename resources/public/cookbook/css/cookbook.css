@@ -656,6 +656,12 @@ html.dark-mode .pending-badge { background: rgba(245, 158, 11, 0.18); }
    because the dismiss confirmation is now opened from this surface's own header
    and has to land on top of it. That ordering is argued where the modal is.
 
+   **None of that is what keeps the keyboard out.** Stacking is paint order and has
+   no opinion about the tab order: at any z-index every button under this surface
+   keeps its tab stop and its Enter, invisibly. What answers that is `inert` on
+   everything behind, set by `views.diff/inert-behind!` — the two are not
+   alternatives, and reaching for a third z-index would be fixing the wrong thing.
+
    The page's own gradient rather than a wash, because this replaces the page
    instead of veiling it: the shelf underneath is not something the reader is
    comparing against, and a translucent full-screen panel over a list of cards is
@@ -676,6 +682,11 @@ html.dark-mode .pending-badge { background: rgba(245, 158, 11, 0.18); }
   margin: 0 auto;
   padding: 24px;
 }
+/* It takes focus when the surface opens — `tabindex="-1"`, set in `shell` — because
+   the alternative is landing on the ✕ or on Approve, and a reader who has just opened
+   a page to read it has read nothing yet. No ring for that: the ring belongs to the
+   control the first Tab reaches, not to the page it is on. */
+.diff-page:focus { outline: none; }
 .diff-header {
   display: flex;
   align-items: center;
