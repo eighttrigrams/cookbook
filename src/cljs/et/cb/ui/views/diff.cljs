@@ -102,8 +102,8 @@
                      :parent el})))
 
 (defn- mount-version!
-  "One version on its own, in the same read-only editor the two sides of a diff
-  are. A third mount rather than one of the two above given something to stand in
+  "One version on its own, in the same read-only editor each side of a merge view
+  is. A third mount rather than one of the two above handed something to stand in
   for the missing side — see the ns docstring for why neither stand-in is honest."
   [el doc dark?]
   (EditorView. #js {:doc doc
@@ -313,10 +313,10 @@
         (nil? older)
         ;; **A Recipe on its first version, and only that.** The comment here used
         ;; to name a second case — the oldest step of a Recipe that has more — and
-        ;; the arithmetic three lines up rules it out: with `total` ≥ 2 the last
-        ;; step is `total - 2`, whose older side is the last entry in the list, and
-        ;; ← is disabled there. So the oldest version of a Recipe with a history is
-        ;; read as the left-hand side of a diff and this branch is never how.
+        ;; `max-idx` in the `let` above rules it out: with `total` ≥ 2 the last step
+        ;; is `total - 2`, whose older side is the last entry in the list, and ← is
+        ;; disabled there. So the oldest version of a Recipe that has a history is
+        ;; read as the left-hand side of a diff, and never through here.
         ;;
         ;; `newer` cannot be nil beside a non-nil `entries`: `/versions` on a Recipe
         ;; that exists always carries at least its current row, and on one that does
