@@ -162,6 +162,25 @@
   blocking the agent that filed it with nothing left in the queue to resolve it
   through. So a `proposed` entry has exactly two exits and this is not one of them.
 
+  **The entry it answers with is the queue row without `scopes`, and with `seen`.**
+  The two shapes have always differed by `seen` — the listing leaves it off because
+  every row there is unseen, while here it is the fact being reported (see
+  `db.event/queue-columns`) — and they now differ by `scopes` as well: GET
+  /api/inbox attaches the Recipe's Scopes to every row it serves and this route does
+  not, so there is **no `scopes` key at all** in this body rather than an empty one.
+  Read it that way: absent here means *not fetched*, and it is not the empty vector
+  the listing gives an unfiled or a deleted Recipe. Absent and empty are load-bearing
+  elsewhere in this codebase — `db.scope/attach` spends a paragraph on the difference,
+  because on the shelf it is the whole privacy boundary — so a third state that is
+  neither has to be written down where a caller meets it.
+
+  It is left off rather than attached, and that is a decision and not an oversight:
+  the page refetches the list after acknowledging rather than splicing this body into
+  the row (the server decides what is in the queue), so a second grouping query here
+  would be a round trip whose result nothing reads. A caller that wants the filing of
+  the Recipe an acknowledged entry named asks GET /api/recipes/:id for it, which is
+  the live answer anyway.
+
   200 with the acknowledged entry, 400 for a `proposed` one, 404 when the id
   matches no entry of yours, 403 for a machine token or a caller with no
   credentials."
