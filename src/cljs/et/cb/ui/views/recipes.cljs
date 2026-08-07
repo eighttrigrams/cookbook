@@ -588,17 +588,25 @@
   until it is next saved from here. A reader who is told that will not read it as
   a broken filter.
 
-  **The Scope exclusion sits below the search and above the human filter, and that
-  order is what keeps the other two sentences true.** 'Nothing here has been edited
-  in this UI yet' is a claim about the shelf, and with Recipes hidden it can be
-  false — something may well have been edited here and be filed under a hidden
-  Scope. The exclusion's own sentence is deliberately about the *result* and not
-  about what is inside those Scopes, so the search still outranking it says nothing
-  untrue either."
+  **The Scope exclusion outranks both of the others, because its sentence is the
+  only one that stays true in company.** 'Nothing left once those Scopes are
+  hidden' is about the *result* — with those Scopes hidden, nothing is left — and
+  that holds however many other narrowings are taking rows away alongside it. The
+  other two are claims a hidden Recipe can falsify: 'Nothing here has been edited
+  in this UI yet' when something has been and is filed under a hidden Scope, and
+  'Nothing matches.' when a Recipe does match the search and is absent only
+  because its Scope is hidden.
+
+  **That last one is a correction, not a precaution.** The exclusion used to sit
+  below the search, on the argument that a sentence about the result could not
+  make the search's untrue — and then searching `sourdough` with Baking hidden
+  said 'Nothing matches.' while *Sourdough starter* matched it. The rule that
+  survives the case is the one above: rank by which sentence can be said in
+  company, not by which narrowing feels the more specific."
   [search human-only? excluded-scopes]
   (cond
-    (seq search)          "Nothing matches."
     (seq excluded-scopes) "Nothing left once those Scopes are hidden."
+    (seq search)          "Nothing matches."
     human-only?           "Nothing here has been edited in this UI yet."
     :else                 "No recipes yet."))
 
