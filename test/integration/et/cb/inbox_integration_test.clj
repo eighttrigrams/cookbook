@@ -157,24 +157,43 @@
 (deftest an-entry-says-what-its-recipe-is-filed-under
   ;; The page he triages on is the one that did not say what area a Recipe is about,
   ;; and a title is not enough to decide that with a queue of nine.
+  ;;
+  ;; **The ids are misaligned on purpose**, the way `two-events-naming-one-recipe-
+  ;; both-get-its-scopes` does at the db layer. `attach` defaults to a row's `:id`,
+  ;; and an entry's `:id` is the *event's*: with one event per Recipe the two columns
+  ;; count 1, 2, 3 alongside each other and keying on the wrong one answers right by
+  ;; coincidence — which is how this test passed against that mutation while the db
+  ;; layer caught it. So Sourdough gets a second event before the next Recipe is
+  ;; written, and a differently-filed Recipe stands beside it: keying on `:id` then
+  ;; hands Sourdough's `modified` entry the *other* Recipe's Scope.
   (let [bread (scope! "Bread")
         ops (scope! "Ops")
+        cellar (scope! "Cellar")
         {:keys [id]} (machine-create! "Sourdough")
         _ (machine :put (str "/api/recipes/" id) {:scope_ids [ops bread]})
-        unfiled (:id (machine-create! "Filed under nothing"))]
-    (let [by-recipe (into {} (map (juxt :recipe_id identity)) (inbox))]
-      (is (= ["Bread" "Ops"] (scopes-on (get by-recipe id)))
-          "both, in title order — the order the shelf's badges and the Scopes page use")
-      (is (= [bread ops] (mapv :id (:scopes (get by-recipe id))))
+        _ (machine :put (str "/api/recipes/" id) {:description "body v2"})
+        other (:id (machine-create! "Restarting a stuck box"))
+        _ (machine :put (str "/api/recipes/" other) {:scope_ids [cellar]})
+        unfiled (:id (machine-create! "Filed under nothing"))
+        entries (inbox)]
+    (is (= [id id other unfiled] (mapv :recipe_id entries))
+        "two entries about Sourdough, then one each about the other two")
+    (is (not= (mapv :id entries) (mapv :recipe_id entries))
+        "the event ids and the recipe ids disagree, or this test proves nothing about
+         which of the two the Scopes were grouped by")
+    (is (= [["Bread" "Ops"] ["Bread" "Ops"] ["Cellar"] []] (mapv scopes-on entries))
+        "each entry gets its own Recipe's filing — both of the two naming Sourdough,
+         in title order, which is the order the shelf's badges and the Scopes page use")
+    (let [entry (first entries)]
+      (is (= [bread ops] (mapv :id (:scopes entry)))
           "each with its own id, which is what a badge is keyed on")
-      (is (= ["Bread things" "Ops things"]
-             (mapv :description (:scopes (get by-recipe id))))
-          "and its description, which is the badge's tooltip")
-      (testing "and an unfiled Recipe's entry carries an empty array rather than no
-                key at all: this route is the owner's alone, so unlike the shelf there
-                is no withholding for an absent key to mean"
-        (is (= [] (:scopes (get by-recipe unfiled))))
-        (is (true? (contains? (get by-recipe unfiled) :scopes)))))))
+      (is (= ["Bread things" "Ops things"] (mapv :description (:scopes entry)))
+          "and its description, which is the badge's tooltip"))
+    (testing "and an unfiled Recipe's entry carries an empty array rather than no
+              key at all: this route is the owner's alone, so unlike the shelf there
+              is no withholding for an absent key to mean"
+      (is (= [] (:scopes (last entries))))
+      (is (true? (contains? (last entries) :scopes))))))
 
 (deftest the-badges-on-an-entry-are-current-while-its-title-is-a-snapshot
   ;; The asymmetry, over HTTP. Refiling a Recipe changes the badges on entries already
