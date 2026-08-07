@@ -37,8 +37,13 @@ async () => {
     .map(e => e.className).filter(s => typeof s === 'string' && s.startsWith('diff')))].sort();
   const idOf = t => { const e = stateInbox().find(x => (x.recipe_title || '').includes(t));
                       return e && e.id; };
+  // A missing root throws rather than falling back to `document`. It fell back once
+  // and M4 showed what that costs: with CHECK-1 already resolved, `rowFor('CHECK-1')`
+  // was undefined, the click landed on some *other* row's Dismiss, and check 6 went
+  // green on a confirmation about a different proposal.
   const clickIn = (root, sel) => {
-    const el = (root || document).querySelector(sel);
+    if (!root) throw new Error('nothing to click in, for: ' + sel);
+    const el = root.querySelector(sel);
     if (!el) throw new Error('nothing to click: ' + sel);
     el.click();
     return el;
@@ -162,7 +167,7 @@ async () => {
                          .map(b => ({text: b.textContent, inert: !!b.closest('[inert]')}))}};
   });
   await step('cancel the confirmation', () =>
-    [...document.querySelectorAll('.modal-actions button')].find(b => b.textContent === 'Cancel').click());
+    clickIn(document.querySelector('.modal-actions'), 'button.secondary'));
   await until(() => !modal());
 
   // 5. one presentation — the proposal overlay and the version overlay are the same
@@ -200,7 +205,7 @@ async () => {
     pass: !!modal() && modal().textContent.includes('Dismiss this proposal?') && !overlay(),
     evidence: {modalShown: !!modal(), viewerOpen: !!overlay()}}));
   await step('cancel the confirmation', () =>
-    [...document.querySelectorAll('.modal-actions button')].find(b => b.textContent === 'Cancel').click());
+    clickIn(document.querySelector('.modal-actions'), 'button.secondary'));
   await until(() => !modal());
 
   // 7. approve from the viewer resolves the entry AND closes the viewer
@@ -245,20 +250,26 @@ async () => {
                        rowApproveReachableByHand: reachable}};
   });
 
-  // 9. dismiss from the viewer, confirmed: resolves and closes
+  // 9. dismiss from the viewer, confirmed: resolves and closes.
+  //    **It asserts that it was asked**, and not only that the entry went. M4 — the
+  //    viewer's Dismiss calling `dismiss-proposal` straight — left this green: the
+  //    entry did leave and the viewer did close, which is all it used to look at, so
+  //    a check whose name says "confirmed" was passing against no confirmation.
+  let askedFirst = null;
   await step('open CHECK-3 and dismiss it for real', async () => {
     clickIn(rowFor('CHECK-3'), '.inbox-title-link');
     await until(() => overlay() && document.querySelector('.diff-editor .cm-editor'));
     clickIn(document, '.diff-header .proposal-dismiss');
-    await until(() => modal());
-    [...document.querySelectorAll('.modal-actions button')].find(b => b.textContent === 'Dismiss').click();
+    askedFirst = !!(await until(() => modal()));
+    clickIn(document.querySelector('.modal-actions'), 'button.danger');
   });
   await until(() => !rowFor('CHECK-3'));
   await wait(400);
   await check('9 dismiss from the viewer, confirmed, resolves and closes it', () => ({
-    pass: !overlay() && !modal() && !rowFor('CHECK-3') && diffingProposal() === null,
-    evidence: {viewerOpen: !!overlay(), modalOpen: !!modal(),
-               entryStillInQueue: !!rowFor('CHECK-3'),
+    pass: askedFirst === true && !overlay() && !modal() && !rowFor('CHECK-3')
+          && diffingProposal() === null,
+    evidence: {confirmationAppeared: askedFirst, viewerOpen: !!overlay(),
+               modalOpen: !!modal(), entryStillInQueue: !!rowFor('CHECK-3'),
                diffingProposal: diffingProposal()}}));
 
   // 10. **the ordering, and not the end state.** The check the last pass needed and
