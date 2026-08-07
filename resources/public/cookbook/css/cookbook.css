@@ -722,6 +722,10 @@ html.dark-mode .pending-badge { background: rgba(245, 158, 11, 0.18); }
   gap: 12px;
   margin-bottom: 12px;
 }
+/* A Recipe on its first version has one side and no comparison, so the strip is
+   one column wide. Left at two, the empty half reads as a column that failed to
+   load — which is the same mistake as the empty pane below it. */
+.diff-meta.single { grid-template-columns: 1fr; }
 .diff-meta-side {
   display: flex;
   flex-direction: column;

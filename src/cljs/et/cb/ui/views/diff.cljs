@@ -1,10 +1,10 @@
 (ns et.cb.ui.views.diff
   "The version viewer: one step of a Recipe's history at a time, the older
   description on the left of a codemirror merge view and the newer on the right,
-  read-only.
+  read-only — or, where there is no older, that one version on its own.
 
   Modelled on rhizome's `ui.main.diff`, which this follows down to the ✕ / ← / →
-  header and the Split/Unified toggle. Two places it deliberately does **not**:
+  header and the Split/Unified toggle. Three places it deliberately does **not**:
 
   **Every version is a step.** Rhizome collapses runs of versions whose text is
   identical, because there a run of them means a pure title change with nothing to
@@ -15,6 +15,20 @@
   title-only or useful-when-only save), so both sides' `title` and `useful_when`
   are on show above the pane, and a note says when the body is what did not
   change. An empty diff pane on its own reads as broken.
+
+  **A first version is shown, not described.** Rhizome answers a version with
+  nothing behind it with `[:p \"No previous version to compare against.\"]`, and
+  this said the same sentence until it was read by somebody who had come for the
+  text: a Recipe an agent has just written is on v1, so a `created` row in the
+  Inbox opened the viewer onto that sentence and nothing else — *i have no chance
+  to see the contents of a new thing*. The sentence was true and it was the whole
+  page. So the nothing-older case renders the version instead: the same metadata
+  strip with nothing marked, and the body in a plain read-only `EditorView`. Not a
+  merge view handed a stand-in for the side that does not exist — the same document
+  twice draws two panes with nothing marked, which is the failure the paragraph
+  above is about, and an empty `original` marks every line as an insertion, which
+  says this version replaced something. It is that paragraph's argument reaching
+  the one case it had not.
 
   **The source suffix is always there.** Rhizome appends ` · source` only when
   there is one; here there always is one — since migration 010 a version is `ui` or
@@ -87,6 +101,15 @@
                      :b #js {:doc newer :extensions (into-array (base-extensions dark?))}
                      :parent el})))
 
+(defn- mount-version!
+  "One version on its own, in the same read-only editor the two sides of a diff
+  are. A third mount rather than one of the two above given something to stand in
+  for the missing side — see the ns docstring for why neither stand-in is honest."
+  [el doc dark?]
+  (EditorView. #js {:doc doc
+                    :extensions (into-array (base-extensions dark?))
+                    :parent el}))
+
 (defn- diff-editor
   "Mounts on attach and destroys on detach. Nothing mutates a live view: the call
   site keys this on everything it was built from, so a step, a mode flip or a
@@ -98,6 +121,19 @@
        {:ref (fn [el]
                (if el
                  (reset! *view (mount-diff! el (or older "") (or newer "") unified? dark?))
+                 (when-let [view @*view] (.destroy view) (reset! *view nil))))}])))
+
+(defn- version-editor
+  "`diff-editor`'s contract with one document instead of two: mounted on attach,
+  destroyed on detach, never reconfigured, and keyed at the call site on the text
+  and the theme it was built from."
+  [_doc _dark?]
+  (let [*view (atom nil)]
+    (fn [doc dark?]
+      [:div.diff-editor
+       {:ref (fn [el]
+               (if el
+                 (reset! *view (mount-version! el (or doc "") dark?))
                  (when-let [view @*view] (.destroy view) (reset! *view nil))))}])))
 
 ;; ---------------------------------------------------------------------------
@@ -208,6 +244,25 @@
                                                                  (:description right)]))}
    [diff-editor (:description left) (:description right) unified? dark?]])
 
+(defn- version-pane
+  "One version, with nothing behind it to compare against: the metadata strip and
+  the body, in the same two pieces `pane` is made of.
+
+  `side` marks the fields that differ from the far column, and here there is no far
+  column. It is handed the entry as its own `other`, which marks nothing — the
+  truth, since nothing differs. nil there would mark every field, which reads as
+  each one having replaced something.
+
+  Keyed on the theme like `pane`'s editor and for the same reason: the palette is
+  sampled out of the live stylesheet at mount, so a theme flip has to build a new
+  view rather than reconfigure the one on screen."
+  [entry dark?]
+  [:<>
+   [:div.diff-meta.single
+    [side entry entry]]
+   ^{:key (str (boolean dark?) "-" (hash (:description entry)))}
+   [version-editor (:description entry) dark?]])
+
 (defn component
   "Rendered only when `:diffing` names a recipe. `:diff-version-idx` steps the
   list, which arrives newest-first: index 0 is the step into today's text, so ←
@@ -256,9 +311,19 @@
         [:p.diff-loading "Loading…"]
 
         (nil? older)
-        ;; Either a Recipe on its first version, or the oldest step of one that
-        ;; has more. Both are the same statement.
-        [:p.diff-note "No previous version to compare against."]
+        ;; **A Recipe on its first version, and only that.** The comment here used
+        ;; to name a second case — the oldest step of a Recipe that has more — and
+        ;; the arithmetic three lines up rules it out: with `total` ≥ 2 the last
+        ;; step is `total - 2`, whose older side is the last entry in the list, and
+        ;; ← is disabled there. So the oldest version of a Recipe with a history is
+        ;; read as the left-hand side of a diff and this branch is never how.
+        ;;
+        ;; `newer` cannot be nil beside a non-nil `entries`: `/versions` on a Recipe
+        ;; that exists always carries at least its current row, and on one that does
+        ;; not it 404s, which lands no handler at all and leaves `entries` nil under
+        ;; the branch above.
+        ^{:key (str diffing "-" idx)}
+        [version-pane (as-side newer) dark-mode]
 
         :else
         ;; The same pane the Inbox shows a proposal in — one layout, two readings.
