@@ -312,6 +312,19 @@ textarea:focus {
   min-width: 0;
   max-width: 200px;
   cursor: help;
+  /* Not selectable, and that is about the gesture rather than about tidiness.
+     Shift+click is the shelf's way of hiding a Scope and it is also the browser's
+     way of extending a selection — the shelf collapses the second one in
+     `exclude-on-shift` (`views/recipes` says why), while the Inbox wears the same
+     pill and deliberately passes no handler, so there was nothing there to collapse
+     it: a shelf-trained reader shift+clicking a queue badge got no filter, which is
+     intended, and a page-wide blue swathe, which is not. Done here rather than with
+     a handler on the Inbox's badge, because having no handler is the thing that
+     surface is being careful about. The cost is on both surfaces: the pill's text
+     can no longer be selected or copied, so a badge clipped at the cap has to be
+     read on the Scopes page or in the editor's picker instead. */
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 /* The latch, at a glance. A published Recipe is public and cannot be taken
