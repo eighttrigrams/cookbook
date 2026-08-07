@@ -410,10 +410,18 @@ html.dark-mode .pending-badge { background: rgba(245, 158, 11, 0.18); }
 /* --------------------------------------------------------------------------
    the edit modal */
 
+/* **Above the version viewer at 30, not under it at 20.** The viewer used to be the
+   higher of the two on the argument that the two are never open at once; now Dismiss
+   is a button in its header, so a confirmation opened from the viewer has to land on
+   top of the surface that opened it. A dialog asking a question nobody can see, over
+   a page that has not changed, reads as a dead button.
+
+   The order is the right way round for the older pairing too: no dialog in this app
+   opens the viewer, so there is no case wanting the opposite. */
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 20;
+  z-index: 30;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -644,9 +652,9 @@ html.dark-mode .pending-badge { background: rgba(245, 158, 11, 0.18); }
 
    Full-screen and fixed to the viewport, and rendered outside the cards for the
    reason the modals are — see the comment at the bottom of `recipes-tab`. It sits
-   above them at 25 rather than beside them at 20; the two are never open at once,
-   but a full-screen surface that could land under a dialog is not worth relying
-   on argument for.
+   at 25: above the cards and their glass, and **below `.modal-backdrop` at 30**,
+   because the dismiss confirmation is now opened from this surface's own header
+   and has to land on top of it. That ordering is argued where the modal is.
 
    The page's own gradient rather than a wash, because this replaces the page
    instead of veiling it: the shelf underneath is not something the reader is
