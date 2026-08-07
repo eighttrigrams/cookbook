@@ -297,11 +297,19 @@
 ;; ---------------------------------------------------------------------------
 ;; what reading it must not touch
 
-(deftest reading-the-inbox-moves-no-view-count-and-no-modified-at
+(deftest reading-the-inbox-and-the-viewer-moves-no-view-count-and-no-modified-at
   ;; Reviewing what an agent wrote is not consuming a Recipe. `view_count` ranks the
   ;; shelf, so an inbox that counted reads would quietly reorder his Cookbook every
   ;; time he went through the queue; and `modified_at` is the optimistic-concurrency
   ;; guard, so moving it would 409 a save he had in flight.
+  ;;
+  ;; **The version viewer is in here too, because a row's title is how he gets to
+  ;; it** — and since the viewer started rendering a lone version, a `created` row
+  ;; is a reason to open it rather than a dead end. The alternative that was
+  ;; rejected for the same rows, sending them to the shelf with the card expanded,
+  ;; fetches `?detail=full` and *does* count: it is one route along from the one
+  ;; asserted here, so what keeps triage out of the ranking is which of the two the
+  ;; title opens.
   ;;
   ;; **The queue has to hold a `proposed` entry for this to be capable of failing**,
   ;; and the first version of this test did not put one there. A `proposed` entry is
@@ -328,6 +336,16 @@
           "and the proposal really did come back with its text, which is the read
            that could have gone through the counting endpoint")
       (dotimes [_ 3] (inbox))
+      ;; Then the viewer, opened on the Recipe the queue points at. The assertion
+      ;; that the body really came back is the same guard as the one above about the
+      ;; proposal: a viewer reimplemented through `?detail=full` would serve the
+      ;; reader the same text, and only the count would tell the difference.
+      (let [{:keys [status body]} (GET-json (str "/api/recipes/" id "/versions"))]
+        (is (= 200 status))
+        (is (some? (:description (first (:versions body))))
+            "the version list carries the text, so this is the read that could have
+             been made through the endpoint that counts"))
+      (dotimes [_ 3] (GET-json (str "/api/recipes/" id "/versions")))
       (h/API :post (str "/api/inbox/" (:id (first (filter #(= "created" (:kind %)) entries)))
                         "/seen")
              {})
