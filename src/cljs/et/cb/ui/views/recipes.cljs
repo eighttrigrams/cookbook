@@ -555,8 +555,12 @@
     (when (seq excluded-scopes)
       [:div.excluded-scopes
        [:span.excluded-scopes-label
-        {:title "These Scopes' Recipes are hidden — the server leaves them out of
-                 the listing, so the shelf below is short by however many carry one"}
+        ;; Assembled with `str` rather than written across two source lines: a
+        ;; string literal that wraps keeps the newline *and* the indent, and a
+        ;; tooltip is the one place that shows up verbatim.
+        {:title (str "These Scopes' Recipes are hidden — the server leaves them "
+                     "out of the listing, so the shelf below is short by however "
+                     "many carry one")}
         "Hiding"]
        ;; By title, like every other list of Scopes in this app — the badges on a
        ;; card and the Scopes page both read that way. The id breaks a tie between
