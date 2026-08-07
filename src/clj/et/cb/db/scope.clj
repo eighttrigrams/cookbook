@@ -308,12 +308,18 @@
   row that names it. `two-events-naming-one-recipe-both-get-its-scopes` is what says
   so out loud, because it is the case a test would otherwise not think to build.
 
-  **Only ever called for a caller who may see them**; `db.recipe` decides that
-  from the audience and does not run this at all for a visitor, so a visitor's row
-  has no `scopes` key rather than an empty vector. Nothing in here re-checks it,
-  deliberately — two places answering one question is how they come to disagree —
-  which is why this takes a `user-id` and not an audience: there is no audience
-  value it could be given that means 'a visitor'.
+  **Only ever called for a caller who may see them, and there are now two callers
+  deciding that** — so the sentence has to name both rather than the one it was
+  written for. The shelf: `db.recipe/with-scopes` decides from the audience and does
+  not run this at all for a visitor, so a visitor's row has no `scopes` key rather
+  than an empty vector. The inbox: `db.event/list-unseen`, whose only caller is
+  `server.inbox-handler/list-inbox-handler` behind `common/owner-caller?`, so a
+  visitor and a machine token are both refused the page before this could run, and
+  the `user-id` it hands over is the owner's own.
+
+  Nothing in here re-checks it, deliberately — two places answering one question is
+  how they come to disagree — which is why this takes a `user-id` and not an
+  audience: there is no audience value it could be given that means 'a visitor'.
 
   `:recipe_id` is stripped off the attached maps: it is the key the grouping was
   done by, not part of what a Scope is."
