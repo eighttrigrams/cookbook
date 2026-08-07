@@ -262,23 +262,23 @@
 (declare stop-diff)
 
 (defn fetch-inbox
-  "The queue, and — if the viewer is open on a proposal that is no longer in it —
-  the viewer closed.
+  "The queue.
 
-  That second half is not the same guard as the one in `resolve-proposal`, which
-  closes on *his* answer. This one covers every other way an entry can leave the
-  queue while he is reading it: a second client answering it, an agent deleting the
-  Recipe, a session resumed against a queue that has moved on. The proposal's text
-  arrives on the entry, so a viewer left open on an entry that is gone would be
-  drawing a comparison out of nothing."
+  This used to close the viewer as well, when its proposal was no longer in the list
+  that had just landed — a second guard beside `resolve-proposal`'s, for every other
+  way an entry could leave the queue while he was reading it. **It could not fire and
+  it is gone.** All eight call sites are gestures the viewer covers, and the one that
+  is not — `resolve-proposal`'s own refetch — closes the viewer *synchronously first*,
+  so `:diffing-proposal` was already nil by the time the response landed. Nothing
+  polls, there is no websocket and nothing refetches on focus, so no other route
+  reaches this while the viewer is up. Removing it left the check suite 10/10, which
+  is the measurement that says nothing was covering it either.
+
+  What holds the property the guard was written for is `views.diff/component`'s
+  lookup, and the argument is written down there."
   []
   (api/fetch-json "/api/inbox" (auth-headers)
-    (fn [entries]
-      (let [entries (vec entries)]
-        (swap! *app-state assoc :inbox entries)
-        (when-let [event-id (:diffing-proposal @*app-state)]
-          (when-not (some #(= event-id (:id %)) entries)
-            (stop-diff)))))))
+    (fn [entries] (swap! *app-state assoc :inbox (vec entries)))))
 
 (defn unseen-count [] (count (:inbox @*app-state)))
 

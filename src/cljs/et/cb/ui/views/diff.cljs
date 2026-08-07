@@ -597,9 +597,19 @@
 
   A proposal is looked up in the queue it was opened from rather than held anywhere
   of its own, so there is one copy of it and the page cannot come to disagree with
-  the list behind it. Finding none renders nothing, which is honest and is also
-  unreachable: `resolve-proposal` closes this on his answer and `fetch-inbox` closes
-  it when an entry leaves the queue by any other route."
+  the list behind it.
+
+  **Finding none renders nothing, and this `when-let` is what holds the invariant.**
+  Not a guard in the state: `resolve-proposal` closes this on his answer, which is what
+  keeps the *atom* honest — both entry points to a resolution pass through it, so an
+  answered proposal is never left named there — and `fetch-inbox` used to carry a
+  second guard for an entry leaving the queue some other way, which could not fire and
+  has been removed. If one ever did, what keeps this from drawing a comparison out of
+  nothing is the lookup here. That is measurable rather than argued: with both guards
+  taken out, the state still said a proposal was open and the overlay was **gone from
+  the DOM**, because there was no entry to find. Unreachable states being structural
+  rather than defended is what `open-viewer!` is about, and this is the render-time
+  half of it."
   []
   (let [{:keys [diffing diffing-proposal inbox]} @state/*app-state]
     (if diffing-proposal
