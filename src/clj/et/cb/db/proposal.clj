@@ -278,6 +278,33 @@
   his Cookbook, and reviewing what an agent wrote is not consuming a Recipe.
   `reading-the-inbox-moves-no-view-count-and-no-modified-at` pins that.
 
+  **The text stays on the list even though the queue row no longer draws it**, and
+  that was weighed rather than left. The client used to show the comparison under the
+  row, which is where these six fields were read; it shows it in the version viewer
+  now, so the list carries text that nothing renders until something is clicked. Both
+  answers were honest — leave it, or ship a lean row and fetch on open the way the
+  viewer fetches versions — and the measurements decided it:
+
+  - **A real queue holds one.** Production, 2026-08-07: 33 Recipes, **1** pending
+    proposal. The unique index makes one per Recipe the ceiling, and a proposal is
+    resolved by looking at it.
+  - **Six kilobytes.** His largest Recipe body is 2550 characters, and a `proposed`
+    entry carrying it weighs 5993 bytes against a 228-byte row — 78% of that whole
+    response. Real, and it is six kilobytes.
+  - **Fetching on open is not the symmetry it looks like.** `/versions` already
+    exists; there is no route that serves a proposal's text, and the only one that
+    serves a Recipe's counts a consumption. So the lean row costs a new owner-only
+    endpoint, its entry in `/api/describe`, its own 403/404, and a loading state in a
+    viewer that currently opens instantly.
+  - **And it would put the text in two places.** On the list there is one copy: an
+    agent revising its proposal while he reads it lands with the next `fetch-inbox`
+    and the open viewer follows, because the viewer looks the entry up in the queue
+    rather than holding it. A fetched copy would need invalidating, which is what
+    `forget-versions!` is and why it exists.
+
+  Worth revisiting if a queue routinely holds several pending proposals against long
+  Recipes — the list is refetched after every write, so the cost is per refetch.
+
   One statement for the whole page rather than one per entry, which is
   `db.scope/attach`'s shape and the same reason: a queue of thirteen entries must
   not cost thirteen round trips."

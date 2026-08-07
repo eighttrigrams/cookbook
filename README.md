@@ -233,12 +233,26 @@ acknowledges one — and **refuses a `proposed` entry**, which is answered rathe
 acknowledged. All of it is the owner's alone: a machine token is refused, and so is a
 caller with no credentials.
 
+**Every entry is one row, and the title is the way through to it.** The version
+viewer is where a change is read, on any kind: what a `modified` save changed, what a
+`created` Recipe says, and on a `proposed` entry the agent's text against the
+Recipe's, with Approve and Dismiss in the viewer's header beside the pair on the row.
+A proposal used to be shown inline instead, under its own row — *proposals, just like
+the other changes, should be shown on a different page (note the difference in
+treatment)*. One entry taking two thirds of the page is one entry pushing the rest of
+the queue off the bottom of it, and the inline panes were capped in height, so a
+change beginning in the second paragraph of a long Recipe was below the fold of the
+thing meant to show it. There is **one** overlay: both readings are drawn from the
+same shell, so they cannot drift into two pages that merely resemble each other.
+
 A `proposed` entry is the one that has to say more than what happened, because
 approving it writes. It carries the agent's three fields *and* the Recipe's current
 three, so the comparison is against what the Recipe says now; it says in words when the
 proposal was written against an older version; and it says in words when the Recipe is
 **published**, because approving then replaces text that is already public and signed
-and there is no unpublish. Two notes, and both can be on at once.
+and there is no unpublish. Two notes, and both can be on at once. Those six fields ride
+on the list rather than being fetched when the viewer opens, which is a decision with
+its measurements written down in `db.proposal/attach-to-events`.
 
 Two things the queue is careful about. It is ordered by the event `id` and never by
 `created_at`, which is second-resolution — two entries in one second is the normal
