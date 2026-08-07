@@ -935,6 +935,15 @@ html.dark-mode .inbox-kind.kind-proposed { background: rgba(245, 158, 11, 0.18);
   white-space: nowrap;
   cursor: help;
 }
+/* `v1 → v3` on a `proposed` row whose Recipe has moved on: the badge holds two
+   numbers there, not one, and it is a warning rather than a fact — approving replaces
+   what he saved between them. Coloured like `.proposal-note` and the destructive
+   confirmations, which is what it is one line of. */
+.inbox-version.stale {
+  background: var(--badge-excluded-bg);
+  color: var(--text-primary);
+  font-weight: 600;
+}
 /* The full stamp and not just the day, unlike the cards: on a queue worked through
    oldest-first, the time of day is what tells two of an agent's saves apart. */
 .inbox-when {
@@ -992,6 +1001,21 @@ html.dark-mode .inbox-kind.kind-proposed { background: rgba(245, 158, 11, 0.18);
   color: var(--text-primary);
   font-size: 0.88em;
   line-height: 1.5;
+}
+
+/* The row's word for what the viewer says in a paragraph, and it rides in the actions
+   cell rather than in a column of its own: the point is that it is beside the button it
+   is about. `.inbox-row` is five columns and stays five, for the reason the Scope badges
+   ride inside the title's cell. */
+.proposal-flag {
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: var(--badge-excluded-bg);
+  color: var(--text-primary);
+  font-size: 0.72em;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: help;
 }
 
 /* Approve carries the accent, because it is the one button in either place that

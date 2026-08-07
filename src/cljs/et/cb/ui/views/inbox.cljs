@@ -44,6 +44,13 @@
   header, because a page you read a decision on that then sends you elsewhere to make
   it is a worse version of what he was complaining about.
 
+  **And Approve on the row is dead for the two proposals that have something to say
+  first**: one against a published Recipe, and one written against text he has saved
+  since. Those two are the only things about approving that cannot be discovered
+  afterwards, both are said in paragraphs in the viewer, and a row has no room for a
+  paragraph — so the row says them in a flag and a version badge, and sends the answer
+  to the surface the words are on. See `approve-warnings` and `row`.
+
   The title on a row is a snapshot taken when the change happened, not a lookup —
   so a row about a Recipe that has since been renamed still says what it said then,
   and a row about one that has been deleted still says what it was called. That is
@@ -100,6 +107,26 @@
   [{:keys [kind recipe_exists]}]
   (and (contains? #{"created" "modified" "proposed"} kind)
        (= 1 recipe_exists)))
+
+(defn- approve-warnings
+  "The two things about approving a proposal that must not be left to be discovered
+  afterwards, as flags on the row that carries the button.
+
+  `attach-to-events` puts `recipe_published` and both version numbers on the entry for
+  exactly this — *both numbers are here so a client can say so before the click rather
+  than leaving it to be discovered after* — and `approve-proposal-handler` deliberately
+  refuses to check `base_version` itself, because it is his call and not the API's. So
+  the client's warning is the only gate there is, and until now it was on one of the two
+  Approve buttons: both notes moved into the viewer with the panes, and the row kept the
+  button.
+
+  The words the row can hold are these two flags; the paragraphs stay in the viewer
+  (`diff/published-note`, `diff/staleness-note`), which has the room for them. What ties
+  them to the button is that Approve on a row with either of these is **dead** — see
+  `row`."
+  [{:keys [base_version recipe_version recipe_published]}]
+  {:published? (= 1 recipe_published)
+   :stale? (boolean (and base_version recipe_version (< base_version recipe_version)))})
 
 (def ^:private scope-hint
   "Said on every badge here, because it is the one thing about a row that behaves
@@ -192,30 +219,70 @@
   Dismiss opens a confirmation instead, the way Delete and Publish do, because the
   agent's text is not served anywhere afterwards and nothing brings it back. A
   `proposed` row has **no Seen button**, deliberately: a proposal is not something to
-  acknowledge, and the API refuses to acknowledge one."
+  acknowledge, and the API refuses to acknowledge one.
+
+  **Approve is dead on the row for the two proposals that have something to say
+  first**, and those rows are answered in the viewer, which is where the sentences are.
+  Triage is the row's job and it keeps it for the ordinary case — an agent's rewrite of
+  an unpublished Recipe he has not touched since is a proposal he can accept from the
+  list. But approving a rewrite of *published* text, or over a save of his own, is the
+  one write in this app with no confirmation in front of it, and a button that does that
+  with nothing on screen saying so is not triage. So the gate is structural rather than
+  a note nobody has to read: the button that can be pressed without reading is the
+  button with nothing to read.
+
+  The disabled state is told why in the row's own words — the `published` flag beside
+  it, the version badge showing `v1 → v3` — because a button that simply went grey would
+  read as the row being broken, which is the argument `title-element` makes one function
+  up.
+
+  Five grid cells and it stays five: the flag rides inside the actions cell, next to the
+  button it is about, for the reason the Scope badges ride inside the title's — a sixth
+  column would take its room out of the title or move the buttons from row to row."
   [_entry]
   (let [sending? (r/atom false)]
-    (fn [{:keys [id kind version created_at scopes] :as entry}]
-      [:div.inbox-row
-       [:span.inbox-kind {:class (str "kind-" kind) :title (get kind-titles kind)}
-        (get kind-labels kind kind)]
-       [subject (title-element entry) scopes]
-       (when version
-         [:span.inbox-version {:title (get kind-titles kind)} (str "v" version)])
-       [:span.inbox-when created_at]
-       [:span.inbox-row-actions
-        (if (= "proposed" kind)
-          [:<>
-           [:button.proposal-approve
-            {:disabled @sending?
-             :on-click #(do (reset! sending? true) (state/approve-proposal id nil))}
-            (if @sending? "Approving…" "Approve")]
-           [:button.secondary.danger.proposal-dismiss
-            {:on-click #(state/start-dismissing-proposal id)} "Dismiss"]]
-          [:button.secondary.inbox-seen
-           {:disabled @sending?
-            :on-click #(do (reset! sending? true) (state/mark-seen id))}
-           (if @sending? "…" "Seen")])]])))
+    (fn [{:keys [id kind version created_at scopes proposal] :as entry}]
+      (let [proposed? (= "proposed" kind)
+            {:keys [published? stale?]} (when proposed? (approve-warnings proposal))]
+        [:div.inbox-row
+         [:span.inbox-kind {:class (str "kind-" kind) :title (get kind-titles kind)}
+          (get kind-labels kind kind)]
+         [subject (title-element entry) scopes]
+         ;; **The relationship and not one half of it.** `version` on a `proposed` row
+         ;; is `base_version` — the version the agent wrote against — so a row printing
+         ;; a bare `v1` beside a Recipe that is on v3 was printing a stale number as if
+         ;; it were current, which is worse than printing nothing.
+         (when version
+           (if stale?
+             [:span.inbox-version.stale
+              {:title (str "Proposed against version " version ", and this Recipe is on "
+                           "version " (:recipe_version proposal)
+                           " — you have saved it since. Open it to read what approving "
+                           "would replace.")}
+              (str "v" version " → v" (:recipe_version proposal))]
+             [:span.inbox-version {:title (get kind-titles kind)} (str "v" version)]))
+         [:span.inbox-when created_at]
+         [:span.inbox-row-actions
+          (if proposed?
+            [:<>
+             (when published?
+               [:span.proposal-flag
+                {:title "This Recipe is public and your name is on it. Approving replaces
+                         that public text, and there is no unpublish — so this one is
+                         answered in the viewer, where the whole note is."}
+                "published"])
+             [:button.proposal-approve
+              {:disabled (or @sending? published? stale?)
+               :title (when (or published? stale?)
+                        "Not from the row: open it and read what approving would do.")
+               :on-click #(do (reset! sending? true) (state/approve-proposal id nil))}
+              (if @sending? "Approving…" "Approve")]
+             [:button.secondary.danger.proposal-dismiss
+              {:on-click #(state/start-dismissing-proposal id)} "Dismiss"]]
+            [:button.secondary.inbox-seen
+             {:disabled @sending?
+              :on-click #(do (reset! sending? true) (state/mark-seen id))}
+             (if @sending? "…" "Seen")])]]))))
 
 (defn- dismiss-modal
   "Asks before dismissing, and the question is what is lost. The Recipe is not
@@ -281,6 +348,16 @@
       [:em "Dismiss"]
       " it, here on the row or on the page it opens. Either way the entry disappears
        and the rest keep their order."]
+     ;; Said on the page and not only on the row, because it is the one place where a
+     ;; button is deliberately dead: a reader who finds Approve grey and no sentence
+     ;; anywhere would take it for a bug rather than for the point.
+     [:p.settings-note
+      "Two of them cannot be approved from the row: one against a Recipe that is "
+      [:strong "published"]
+      ", and one written against a version you have "
+      [:strong "saved since"]
+      " — the row flags both, and approving is on the page that says in full what it
+       would replace."]
      (if (empty? inbox)
        [:div.inbox-empty "Nothing your agents did is waiting."]
        [:div.inbox-list
