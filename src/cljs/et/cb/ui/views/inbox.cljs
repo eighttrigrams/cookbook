@@ -21,9 +21,13 @@
 
   Each row is the kind, the Recipe's title, when it happened, and one button —
   Seen. For a `created` or `modified` entry the **title is the way through to the
-  version viewer, positioned at that version**: the question a row raises is 'what
-  did that save change', and the viewer is the thing that answers it. A `deleted`
-  entry's title is plain text, because there is nothing left to open.
+  version viewer, positioned at that version**. The two kinds raise different
+  questions there and the viewer answers both: a `modified` row asks what that save
+  changed, and a `created` row asks what the thing says, since he has never seen it
+  — *i have no chance to see the contents of a new thing*. So the words on the way
+  through say which, rather than promising a change to a reader whose Recipe has no
+  version behind it. A `deleted` entry's title is plain text, because there is
+  nothing left to open.
 
   **A `proposed` entry is a different kind of thing and looks like one.** It is a
   question rather than a notification, so it has no Seen button — the API refuses to
@@ -93,7 +97,13 @@
         (get kind-labels kind kind)]
        (if (openable? entry)
          [:button.inbox-title-link
-          {:title "See what this save changed"
+          ;; The same viewer, two different questions — and `openable?` admits
+          ;; exactly these two kinds, so the `if` is a complete answer. A `created`
+          ;; row promising to show what a save *changed* was promising the one
+          ;; thing a first version cannot have.
+          {:title (if (= "created" kind)
+                    "Read what the agent wrote"
+                    "See what this save changed")
            :on-click #(state/start-diff-at-version recipe_id version)}
           recipe_title]
          ;; Plain text, and told why: a title that simply stopped being clickable
@@ -258,6 +268,11 @@
      ;; proposals were in it and is true of neither on a `proposed` row: it has no Seen
      ;; button, because the API refuses to acknowledge a question, and its title is not
      ;; a link, because the version it proposes does not exist yet.
+     ;;
+     ;; And the first of those two sentences said the title showed what the save
+     ;; changed, which a `created` row has never been able to do: a first version has
+     ;; nothing behind it, and what it opens is that version itself. So the sentence
+     ;; names both kinds rather than describing one of them twice.
      [:p.settings-note
       "Everything your agents did to a Recipe, oldest first. "
       [:strong "Your own edits are not in here"]
@@ -265,8 +280,13 @@
      [:p.settings-note
       "Most entries are something that already happened: mark it "
       [:em "Seen"]
-      " and it leaves the queue, and click the Recipe's title to see what that save
-       changed. A "
+      " and it leaves the queue, and click the Recipe's title to open it — what an
+       agent's save changed on a "
+      [:strong "modified"]
+      " entry, and on a "
+      [:strong "created"]
+      " one the Recipe it wrote, which has nothing behind it to compare against yet.
+       A "
       [:strong "proposed"]
       " entry is a question instead — an agent wants to rewrite the Recipe and is
        waiting for you — so it shows you the change beside the current text and asks
