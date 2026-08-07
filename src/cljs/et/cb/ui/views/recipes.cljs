@@ -547,8 +547,10 @@
   be filled by clicking a badge, a visitor is sent none, and `logout` empties it —
   so signed out there is nothing to draw.
 
-  Both derefs happen before the `for`, for the reason `scope-picker` gives: a deref
-  inside the body of a lazy seq is evaluated after reagent has stopped watching."
+  The deref happens before the `for`, for the reason `scope-picker` gives: a deref
+  inside the body of a lazy seq is evaluated after reagent has stopped watching.
+  One deref here and not that function's two — both keys come out of the same
+  destructuring — but the same care, since the `for` is the same lazy seq."
   []
   (let [{:keys [excluded-scopes scopes]} @state/*app-state
         title-of (into {} (map (juxt :id :title)) scopes)]
