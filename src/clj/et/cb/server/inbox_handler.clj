@@ -59,9 +59,11 @@
   feed: the top is the oldest thing he has not looked at, new arrivals go to the
   bottom, and an entry leaves the list when it is resolved. Each carries `id` (the
   event's own, which is what the other routes here take), `recipe_id`,
-  `recipe_title` as it read at the time, `kind`, `version`, `created_at` and
-  `scopes` — the Scopes the Recipe is filed under, `{id, title, description}` each,
-  in title order and empty for a Recipe filed under none.
+  `recipe_title` as it read at the time, `kind`, `version`, `created_at`,
+  `proposal_id` — the join key behind the `proposal` described below, and null on
+  the three kinds that are notifications rather than questions — and `scopes`, the
+  Scopes the Recipe is filed under, `{id, title, description}` each, in title order
+  and empty for a Recipe filed under none.
 
   **`kind` is one of four.** `created` — an agent wrote a Recipe, at version 1.
   `modified` — an agent's save changed its content, and `version` is the **new**

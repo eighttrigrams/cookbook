@@ -405,7 +405,8 @@ credentials.
 
 - `GET /api/inbox` — the unseen entries, **oldest first**. Each carries its own
   `id` (which the other three take), `recipe_id`, `recipe_title` as it read then,
-  `kind`, `version`, `created_at`, `recipe_exists` and `scopes` — the Scopes the
+  `kind`, `version`, `created_at`, `proposal_id` (the join key behind `proposal`,
+  null unless the entry is one), `recipe_exists` and `scopes` — the Scopes the
   Recipe is filed under *now*, `{id, title, description}` each and empty for one
   filed under none. A `proposed` entry also
   carries `proposal`, with the three proposed fields *and* the three the Recipe
