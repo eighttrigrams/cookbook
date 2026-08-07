@@ -36,7 +36,10 @@
   **One query per listing, not one per row.** `scopes-by-recipe` fetches every
   association for the whole page in one statement and `attach` puts them on the
   rows in Clojure — tracker's `associate-categories-with-tasks` shape, and the
-  reason a shelf of thirteen cards does not cost thirteen round trips.
+  reason a shelf of thirteen cards does not cost thirteen round trips. **Two
+  listings read it that way now**: the shelf, whose rows are Recipes, and the inbox,
+  whose rows are events that merely name one — which is what `attach`'s `id-key` is
+  for and why there is still only one grouping query.
 
   **Nothing enforces the foreign keys** (`PRAGMA foreign_keys` is 0 here), so the
   join rows are deleted by hand at both ends: `delete-scope` below, and
@@ -281,8 +284,29 @@
        (group-by :recipe_id)))
 
 (defn attach
-  "Put `:scopes` on each of `recipes` — a vector of `{:id :title :description}`,
-  empty when a Recipe is filed under none.
+  "Put `:scopes` on each of `rows` — a vector of `{:id :title :description}`, empty
+  when a Recipe is filed under none.
+
+  **`id-key` is which key on a row names the Recipe, and it defaults to `:id`**
+  because a row of the shelf *is* a Recipe. The inbox's rows are not: an event's
+  `:id` is the event's own and its Recipe is `:recipe_id`, so `db.event/list-unseen`
+  passes that. Grouping such a row by `:id` would key the answer off an event id and
+  attach one Recipe's filing to another Recipe's entry — silently, and plausibly,
+  because both are integers and most of them exist.
+
+  It is a parameter rather than something a caller reshapes its rows into, and
+  rather than a second grouping query beside `scopes-by-recipe`. A call site that
+  renamed `:recipe_id` to `:id` on the way in would be claiming an event is a
+  Recipe, and a copied query would be a second answer to 'what is this filed under'
+  — which is the thing this namespace argues against having.
+
+  **The ids may repeat, and nothing here dedupes them.** That is the inbox's normal
+  case rather than a corner: several events can name one Recipe, so a queue of
+  thirteen entries about three Recipes hands over thirteen ids. `IN` is indifferent
+  to a duplicate — it is a set test, and the join still returns each association
+  once — and so is the per-row lookup, which reads the same grouped entry for every
+  row that names it. `two-events-naming-one-recipe-both-get-its-scopes` is what says
+  so out loud, because it is the case a test would otherwise not think to build.
 
   **Only ever called for a caller who may see them**; `db.recipe` decides that
   from the audience and does not run this at all for a visitor, so a visitor's row
@@ -293,14 +317,15 @@
 
   `:recipe_id` is stripped off the attached maps: it is the key the grouping was
   done by, not part of what a Scope is."
-  [ds user-id recipes]
-  (if (empty? recipes)
-    recipes
-    (let [by-recipe (scopes-by-recipe ds user-id (mapv :id recipes))]
-      (mapv (fn [recipe]
-              (assoc recipe :scopes
-                     (mapv #(dissoc % :recipe_id) (get by-recipe (:id recipe) []))))
-            recipes))))
+  ([ds user-id rows] (attach ds user-id rows :id))
+  ([ds user-id rows id-key]
+   (if (empty? rows)
+     rows
+     (let [by-recipe (scopes-by-recipe ds user-id (mapv id-key rows))]
+       (mapv (fn [row]
+               (assoc row :scopes
+                      (mapv #(dissoc % :recipe_id) (get by-recipe (id-key row) []))))
+             rows)))))
 
 (defn attach-one
   "`attach` for a single row, nil-safe so a caller can pass a result that may not

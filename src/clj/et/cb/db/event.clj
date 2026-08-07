@@ -55,7 +55,8 @@
   (:require [next.jdbc :as jdbc]
             [honey.sql :as sql]
             [taoensso.telemere :as tel]
-            [et.cb.db :as db]))
+            [et.cb.db :as db]
+            [et.cb.db.scope :as db.scope]))
 
 (def kinds
   "The four things an agent can do to a Recipe, as migration 009's `CHECK` spells
@@ -127,15 +128,42 @@
   Every entry also carries `recipe_exists` — see `recipe-still-there`, which is the
   question a page cannot answer for itself and has to be told.
 
+  And every entry carries `scopes`, the Scopes its Recipe is filed under: he triages
+  here, and 'what area is this about' is most of deciding whether an entry matters
+  when the title alone is nine lines of agent work. Attached by `db.scope/attach`
+  with **`:recipe_id`** as the id key rather than the row's `:id`, which is the
+  *event's* own — that argument is written down on `attach`, along with why several
+  entries naming one Recipe is fine. One statement for the whole queue, so a page of
+  thirteen entries costs one more round trip and not thirteen.
+
+  **The Scopes are current where `recipe_title` is a snapshot, and the two must not
+  be made to match.** The title is frozen when the change happens (009), so an entry
+  still reads after its Recipe is renamed or deleted; the Scopes are read off the
+  association table now. So a Recipe he refiled shows its new badges beside its old
+  title — which is the right way round, because while triaging he wants to know what
+  the Recipe *is* filed under and not what it was, while the title has to go on
+  naming the thing the entry is actually about. Do not 'fix' either half into the
+  other.
+
+  For a Recipe that is gone the associations went with it — `db.recipe/delete-recipe`
+  deletes them, unlike the events — so `scopes` is the same empty vector an unfiled
+  Recipe gets. That needs no case of its own and no apology on the page either.
+
+  There is no visitor question here, unlike the shelf's `db.recipe/with-scopes`: the
+  inbox is the owner's alone (see `server.inbox-handler`), so there is no caller of
+  this who may not see the filing and therefore no projection to withhold.
+
   Narrowed through `db/user-id-where-clause`, like every other read in this app:
   dev's owner has no `users` row, and a `= user-id` would answer nothing for him."
   [ds user-id]
-  (jdbc/execute! (db/get-conn ds)
-    (sql/format {:select (conj queue-columns recipe-still-there)
-                 :from [:recipe_events]
-                 :where [:and [:= :seen [:inline 0]] (db/user-id-where-clause user-id)]
-                 :order-by [[:id :asc]]})
-    db/jdbc-opts))
+  (db.scope/attach ds user-id
+    (jdbc/execute! (db/get-conn ds)
+      (sql/format {:select (conj queue-columns recipe-still-there)
+                   :from [:recipe_events]
+                   :where [:and [:= :seen [:inline 0]] (db/user-id-where-clause user-id)]
+                   :order-by [[:id :asc]]})
+      db/jdbc-opts)
+    :recipe_id))
 
 (defn get-event
   "One event of this owner's, or nil. Both halves in one clause, so no caller can

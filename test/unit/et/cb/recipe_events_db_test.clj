@@ -8,6 +8,7 @@
   event on the create path. The endpoint rules — who may read the queue, what
   marking one seen refuses — are HTTP facts and live in `inbox-integration-test`."
   (:require [clojure.test :refer [deftest testing is use-fixtures]]
+            [next.jdbc :as jdbc]
             [et.cb.db.event :as db.event]
             [et.cb.db.recipe :as db.recipe]
             [et.cb.db.scope :as db.scope]
@@ -27,6 +28,23 @@
                            opts))
 
 (defn- machine-create! [title] (create! title {:human? false}))
+
+(defn- scope!
+  ([title] (scope! title ""))
+  ([title description]
+   (:id (db.scope/create-scope h/*ds* h/*user-id* {:title title
+                                                   :description description}))))
+
+(defn- machine-create-filed!
+  "An agent's create, filed under Scopes on the way in — which is the only thing the
+  queue's badges are about."
+  [title scope-ids]
+  (db.recipe/create-recipe h/*ds* h/*user-id*
+                           {:title title :useful_when "when testing"
+                            :description "body v1" :scope_ids scope-ids}
+                           {:human? false}))
+
+(defn- scope-titles-on [entry] (mapv :title (:scopes entry)))
 
 (defn- save!
   [id fields opts]
@@ -256,3 +274,126 @@
       (machine-create! "Somebody else's")
       (is (= 2 (count (db.event/list-unseen h/*ds* nil))))
       (is (= 1 (count (db.event/list-unseen h/*ds* h/*user-id*)))))))
+
+;; ---------------------------------------------------------------------------
+;; the Scopes on an entry — what area the change was in, which is most of
+;; deciding whether it matters
+
+(deftest an-entry-carries-the-scopes-its-recipe-is-filed-under
+  (let [bread (scope! "Bread" "Anything with flour in it")
+        ops (scope! "Ops" "Keeping the boxes running")
+        {:keys [id]} (machine-create-filed! "Sourdough" [ops bread])
+        [entry] (db.event/list-unseen h/*ds* h/*user-id*)]
+    (is (= id (:recipe_id entry)))
+    (is (= ["Bread" "Ops"] (scope-titles-on entry))
+        "both of them, in title order — so the badges on a queue row read in the same
+         order as the ones on a card and as the Scopes page's own list")
+    (is (= [bread ops] (mapv :id (:scopes entry)))
+        "with the Scope's own id, which is what a badge is keyed on")
+    (is (= ["Anything with flour in it" "Keeping the boxes running"]
+           (mapv :description (:scopes entry)))
+        "and its description, which is the tooltip and the only place a reader meets
+         it outside the Scopes page")
+    (is (every? #(false? (contains? % :recipe_id)) (:scopes entry))
+        "the grouping key is not part of what a Scope is")))
+
+(deftest an-entry-for-an-unfiled-recipe-carries-an-empty-vector-and-not-a-missing-key
+  ;; Absent and empty are different answers, and on the shelf the difference is the
+  ;; whole privacy boundary — a visitor gets no `scopes` key rather than a claim that
+  ;; the owner filed a Recipe under nothing. **Here there is no visitor**, so the only
+  ;; thing an absent key could mean is that the attach never ran, which is a page
+  ;; drawing no badges for a reason it cannot report. So it has to be there and empty.
+  (let [_ (scope! "Bread")]
+    (machine-create! "Filed under nothing")
+    (let [[entry] (db.event/list-unseen h/*ds* h/*user-id*)]
+      (is (true? (contains? entry :scopes)))
+      (is (= [] (:scopes entry))))))
+
+(deftest two-events-naming-one-recipe-both-get-its-scopes
+  ;; The duplicate-id case: the queue hands `attach` one id per *entry*, so three
+  ;; entries about one Recipe hand over the same id three times. `IN` does not care
+  ;; and neither does the per-row lookup — but nothing else here would build that
+  ;; shape, and it is the inbox's normal case rather than a corner.
+  ;;
+  ;; **It is also where keying on the wrong column shows**, which is why the ids are
+  ;; deliberately misaligned. `attach` defaults to a row's `:id`, and an entry's `:id`
+  ;; is the *event's*: with one Recipe and one event they are both 1 and a wrong key
+  ;; would still answer right by coincidence. The `modified` entry below is event 2 on
+  ;; Recipe 1 while Recipe 2 is a different Recipe filed under a different Scope, so
+  ;; keying on `:id` attaches Ops to a Bread entry — silently, and plausibly.
+  (let [bread (scope! "Bread")
+        ops (scope! "Ops")
+        {sourdough :id} (machine-create-filed! "Sourdough" [bread])]
+    (save! sourdough {:description "body v2"} {:human? false})
+    (let [{other :id} (machine-create-filed! "Restarting a stuck box" [ops])
+          entries (db.event/list-unseen h/*ds* h/*user-id*)]
+      (is (= [sourdough sourdough other] (mapv :recipe_id entries)))
+      (is (not= (mapv :id entries) (mapv :recipe_id entries))
+          "the event ids and the recipe ids disagree, or this test proves nothing
+           about which of the two the Scopes were grouped by")
+      (is (= [["Bread"] ["Bread"] ["Ops"]] (mapv scope-titles-on entries))
+          "each entry gets its own Recipe's filing, including the two that name the
+           same Recipe")
+      (testing "and one more entry about the same Recipe joins them rather than
+                taking a turn"
+        (save! sourdough {:description "body v3"} {:human? false})
+        (is (= [["Bread"] ["Bread"] ["Ops"] ["Bread"]]
+               (mapv scope-titles-on (db.event/list-unseen h/*ds* h/*user-id*))))))))
+
+(deftest an-entry-outlives-its-recipe-with-its-title-and-without-the-badges
+  ;; The row this whole snapshot design exists for. The associations are part of a
+  ;; Recipe and go with it (`delete-recipe`), the events are records of what happened
+  ;; and stay — so the entry keeps the title it was written with and simply has no
+  ;; badges. No case for it anywhere, and nothing to apologise for on the page.
+  (let [bread (scope! "Bread")
+        {:keys [id]} (machine-create-filed! "Doomed" [bread])]
+    (save! id {:description "body v2"} {:human? false})
+    (is (= [["Bread"] ["Bread"]]
+           (mapv scope-titles-on (db.event/list-unseen h/*ds* h/*user-id*)))
+        "filed while it lived")
+    (is (= {:success true} (db.recipe/delete-recipe h/*ds* h/*user-id* id {:human? false})))
+    (let [entries (db.event/list-unseen h/*ds* h/*user-id*)]
+      (is (= ["created" "modified" "deleted"] (mapv :kind entries))
+          "all three entries are still in the queue")
+      (is (= [[] [] []] (mapv :scopes entries))
+          "with no Scopes, because the join rows went with the Recipe")
+      (is (= ["Doomed" "Doomed" "Doomed"] (mapv :recipe_title entries))
+          "and the snapshot title intact, which is all that is left naming it")
+      (is (= [0 0 0] (mapv :recipe_exists entries)))
+      (is (= 0 (h/scope-row-count id nil)) "the associations really are gone"))))
+
+(deftest the-scopes-on-an-entry-are-current-where-its-title-is-a-snapshot
+  ;; The asymmetry, pinned so nobody later makes one half match the other. Refiling a
+  ;; Recipe changes the badges on entries already in the queue and leaves their titles
+  ;; alone — which is the pairing triage wants: what the entry is *about*, and what
+  ;; area the Recipe belongs to *now*.
+  (let [bread (scope! "Bread")
+        ops (scope! "Ops")
+        {:keys [id]} (machine-create-filed! "The old name" [bread])]
+    (db.recipe/update-recipe h/*ds* h/*user-id* id {:title "The new name"
+                                                    :scope_ids [ops]} nil {:human? true})
+    (let [[entry] (db.event/list-unseen h/*ds* h/*user-id*)]
+      (is (= "The old name" (:recipe_title entry))
+          "the title is frozen at the moment the change happened")
+      (is (= ["Ops"] (scope-titles-on entry))
+          "while the badges are where it is filed now — read at query time, not
+           written down when the event was"))))
+
+(deftest the-queue-fetches-the-associations-once-for-the-whole-list
+  ;; The shelf's property, met again: `the-listing-fetches-the-associations-once-for-
+  ;; the-whole-page` in `scope-db-test` is the same assertion about `list-recipes`, and
+  ;; it is the reason `attach` takes a collection at all. A queue he has not emptied in
+  ;; a week must not cost a round trip per entry.
+  (let [bread (scope! "Bread")]
+    (doseq [title ["One" "Two" "Three" "Four"]]
+      (let [{:keys [id]} (machine-create-filed! title [bread])]
+        (save! id {:description "body v2"} {:human? false})))
+    (let [real jdbc/execute!
+          calls (atom 0)
+          entries (with-redefs [jdbc/execute! (fn [& args] (swap! calls inc) (apply real args))]
+                    (db.event/list-unseen h/*ds* h/*user-id*))]
+      (is (= 8 (count entries)) "eight entries about four Recipes")
+      (is (every? #(= ["Bread"] (scope-titles-on %)) entries))
+      (is (= 2 @calls)
+          "two statements — the queue and one for every association on it — and not
+           one per entry, which is what the whole `attach` shape is for"))))

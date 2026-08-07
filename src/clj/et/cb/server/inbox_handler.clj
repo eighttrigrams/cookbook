@@ -59,7 +59,9 @@
   feed: the top is the oldest thing he has not looked at, new arrivals go to the
   bottom, and an entry leaves the list when it is resolved. Each carries `id` (the
   event's own, which is what the other routes here take), `recipe_id`,
-  `recipe_title` as it read at the time, `kind`, `version` and `created_at`.
+  `recipe_title` as it read at the time, `kind`, `version`, `created_at` and
+  `scopes` — the Scopes the Recipe is filed under, `{id, title, description}` each,
+  in title order and empty for a Recipe filed under none.
 
   **`kind` is one of four.** `created` — an agent wrote a Recipe, at version 1.
   `modified` — an agent's save changed its content, and `version` is the **new**
@@ -77,6 +79,15 @@
   Recipe that no longer exists: an event is the record that something happened, so
   a `deleted` entry outlives the Recipe it is about, and so do the entries before
   it. There is nothing to fetch for such an entry, which is why the title is on it.
+
+  **`scopes` is the other way round on purpose: it is current, not a snapshot.** The
+  title says what the Recipe was called when the change happened; the Scopes say
+  where it is filed now, read live at request time. So refiling a Recipe changes the
+  badges on entries that are already in the queue and does not change their titles,
+  and that is the pairing triage wants — what an entry is *about*, and what area it
+  belongs to *now*. For a Recipe that is gone the associations went with it, so
+  `scopes` is empty; it is empty for an unfiled Recipe too, and the two are not worth
+  telling apart.
 
   **`recipe_exists` says which case an entry is in**, 1 or 0. It is not derivable
   by the caller and it is not the same question as `kind`: after an agent creates a
