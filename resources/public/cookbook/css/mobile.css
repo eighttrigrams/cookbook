@@ -23,13 +23,15 @@
   .diff-meta { grid-template-columns: 1fr; }
   /* The queue's five columns will not fit a phone, and the one that must not be
      squeezed is the title. So a row becomes two lines: the badges and the button
-     on one, the title spanning the width above them. */
+     on one, the title spanning the width above them — the whole subject cell, so a
+     Recipe's Scope badges wrap under its title up there rather than crowding the
+     line the button is on. */
   .inbox-row {
     grid-template-columns: auto auto 1fr auto;
     grid-template-areas: "title title title title" "kind version when seen";
     gap: 6px 10px;
   }
-  .inbox-title, .inbox-title-link { grid-area: title; }
+  .inbox-subject { grid-area: title; }
   .inbox-kind { grid-area: kind; }
   .inbox-version { grid-area: version; }
   .inbox-when { grid-area: when; }

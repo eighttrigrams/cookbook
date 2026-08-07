@@ -215,6 +215,17 @@ publishing makes none. `deleted` is the one kind he did not ask for by name — 
 it an agent could create a Recipe and delete it again and the inbox would record the
 create and then erase it.
 
+An entry also wears the **Scope badges** of the Recipe it is about, as a shelf card
+does — *this page doesnt show the scope badges yet … so i dont know for what the
+recipes are* — because a queue is worked through by deciding what to look at, and a
+title alone does not say what area a change was in. Note that the two facts on a row
+behave differently on purpose: `recipe_title` is a snapshot taken when the change
+happened, so an entry still reads after its Recipe is renamed or deleted, while the
+badges are read *now*. A refiled Recipe therefore shows its new Scopes beside its old
+title, which is the pairing triage wants — what the entry is about, and what area it
+belongs to today. A Recipe that is gone lost its associations with it, so those
+entries simply have no badges.
+
 `GET /api/inbox` is the whole read surface; there is no listing of *seen* entries,
 because the queue is what has not been looked at, and no unseen-count endpoint,
 because the count is the length of that list. `POST /api/inbox/:id/seen`
@@ -394,7 +405,9 @@ credentials.
 
 - `GET /api/inbox` — the unseen entries, **oldest first**. Each carries its own
   `id` (which the other three take), `recipe_id`, `recipe_title` as it read then,
-  `kind`, `version`, `created_at` and `recipe_exists`. A `proposed` entry also
+  `kind`, `version`, `created_at`, `recipe_exists` and `scopes` — the Scopes the
+  Recipe is filed under *now*, `{id, title, description}` each and empty for one
+  filed under none. A `proposed` entry also
   carries `proposal`, with the three proposed fields *and* the three the Recipe
   says now, so it can be reviewed as a diff against current.
 - `POST /api/inbox/:id/seen` — acknowledge one. Idempotent. **400 for a

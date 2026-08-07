@@ -39,8 +39,17 @@
   The title on a row is a snapshot taken when the change happened, not a lookup —
   so a row about a Recipe that has since been renamed still says what it said then,
   and a row about one that has been deleted still says what it was called. That is
-  deliberate and it is the only thing that keeps such a row readable."
+  deliberate and it is the only thing that keeps such a row readable.
+
+  **Beside the title, the Scopes the Recipe is filed under**, as the same badges a
+  shelf card wears (`ui.scope-badges`). He asked for them here in as many words —
+  *this page doesnt show the scope badges yet … so i dont know for what the recipes
+  are* — and this is the page where it matters most: a queue of nine is worked through
+  by deciding what to look at, and a title alone does not say what area a change was
+  in. They are **current** where the title is a snapshot, which `subject` explains,
+  and a Recipe that is gone or filed under nothing simply has none."
   (:require [reagent.core :as r]
+            [et.cb.ui.scope-badges :as scope-badges]
             [et.cb.ui.state :as state]
             [et.cb.ui.views.diff :as diff]))
 
@@ -82,6 +91,43 @@
   (and (contains? #{"created" "modified"} kind)
        (= 1 recipe_exists)))
 
+(def ^:private scope-hint
+  "Said on every badge here, because it is the one thing about a row that behaves
+  differently from the title beside it: the badges are read now, the title was written
+  down when the change happened. So a Recipe he has refiled shows its new Scopes next
+  to the name it had then — which is the pairing triage wants, and a puzzle if nothing
+  says so. The shelf's badges need no such sentence: a card is the Recipe as it is.
+
+  Worded without a dash of its own, because it is appended after the description with
+  one: two em-dashes running together read as a stray fragment rather than as a note."
+  "where this Recipe is filed now, while the title is as it read then")
+
+(defn- subject
+  "What the row is about: the title, and the area it belongs to.
+
+  **One grid cell and not two columns**, and that is the layout carrying an argument.
+  A row already holds a kind, a title, a version, a timestamp and up to two buttons;
+  the badges therefore go inside the cell the title already has, where they wrap under
+  it when there are several — so a Recipe filed under three Scopes cannot push Approve
+  off the line, which a sixth column would have done by taking the room out of the
+  title or moving the buttons from row to row.
+
+  `title-el` is passed in rather than built here because the two callers differ on it
+  and only on it: a `created` or `modified` row's title opens the version viewer, a
+  `proposed` row's is plain text, and so is one whose Recipe is gone.
+
+  **No `logged-in?` gate on the badges, unlike the shelf's cards, and that is
+  considered rather than forgotten.** The gate there is cosmetic anyway — a visitor's
+  rows arrive with no `scopes` key at all — but here there is not even a visitor to
+  gate: `/api/inbox` is the owner's alone and answers 403 to a machine token and to an
+  anonymous caller alike, so every row this page can hold was fetched by the one reader
+  who may see the filing."
+  [title-el scopes]
+  [:span.inbox-subject
+   title-el
+   (when (seq scopes)
+     [scope-badges/badges scopes {:class "inbox-scopes" :hint scope-hint}])])
+
 (defn- row
   "One entry. The seen button goes dead on the first click, the way the confirm
   buttons in the modals do and for the same reason: only the response closes this
@@ -91,29 +137,31 @@
   the second one is an idempotent 200 that nonetheless refetches over the first."
   [_entry]
   (let [sending? (r/atom false)]
-    (fn [{:keys [id kind recipe_id recipe_title version created_at] :as entry}]
+    (fn [{:keys [id kind recipe_id recipe_title version created_at scopes] :as entry}]
       [:div.inbox-row
        [:span.inbox-kind {:class (str "kind-" kind) :title (get kind-titles kind)}
         (get kind-labels kind kind)]
-       (if (openable? entry)
-         [:button.inbox-title-link
-          ;; The same viewer, two different questions — and `openable?` admits
-          ;; exactly these two kinds, so the `if` is a complete answer. A `created`
-          ;; row promising to show what a save *changed* was promising the one
-          ;; thing a first version cannot have.
-          {:title (if (= "created" kind)
-                    "Read what the agent wrote"
-                    "See what this save changed")
-           :on-click #(state/start-diff-at-version recipe_id version)}
-          recipe_title]
-         ;; Plain text, and told why: a title that simply stopped being clickable
-         ;; would read as the row being broken.
-         [:span.inbox-title
-          {:title (if (= "deleted" kind)
-                    "This Recipe is gone, so there is nothing left to open"
-                    "This Recipe has since been deleted, so there is nothing left
-                     to open")}
-          recipe_title])
+       [subject
+        (if (openable? entry)
+          [:button.inbox-title-link
+           ;; The same viewer, two different questions — and `openable?` admits
+           ;; exactly these two kinds, so the `if` is a complete answer. A `created`
+           ;; row promising to show what a save *changed* was promising the one
+           ;; thing a first version cannot have.
+           {:title (if (= "created" kind)
+                     "Read what the agent wrote"
+                     "See what this save changed")
+            :on-click #(state/start-diff-at-version recipe_id version)}
+           recipe_title]
+          ;; Plain text, and told why: a title that simply stopped being clickable
+          ;; would read as the row being broken.
+          [:span.inbox-title
+           {:title (if (= "deleted" kind)
+                     "This Recipe is gone, so there is nothing left to open"
+                     "This Recipe has since been deleted, so there is nothing left
+                      to open")}
+           recipe_title])
+        scopes]
        (when version
          [:span.inbox-version {:title (get kind-titles kind)} (str "v" version)])
        [:span.inbox-when created_at]
@@ -214,12 +262,15 @@
   afterwards and nothing brings it back."
   [_entry]
   (let [sending? (r/atom false)]
-    (fn [{:keys [id kind recipe_title version created_at proposal] :as entry}]
+    (fn [{:keys [id kind recipe_title version created_at proposal scopes] :as entry}]
       [:div.inbox-item
        [:div.inbox-row
         [:span.inbox-kind {:class (str "kind-" kind) :title (get kind-titles kind)}
          (get kind-labels kind kind)]
-        [:span.inbox-title recipe_title]
+        ;; The badges are on this kind of row too, and it is the kind that wants them
+        ;; most: a question about a Recipe he has to answer, where knowing what area it
+        ;; is in is half of deciding how carefully to read the diff below.
+        [subject [:span.inbox-title recipe_title] scopes]
         (when version
           [:span.inbox-version {:title (get kind-titles kind)} (str "v" version)])
         [:span.inbox-when created_at]

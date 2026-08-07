@@ -840,6 +840,34 @@ html.dark-mode .pending-badge { background: rgba(245, 158, 11, 0.18); }
 }
 html.dark-mode .inbox-kind.kind-proposed { background: rgba(245, 158, 11, 0.18); }
 
+/* What the row is about, in one cell: the title and the Scope badges. They share a
+   cell rather than taking a column each so that the badges wrap *under* a long title
+   inside the room the title already has — a Recipe filed under three Scopes must not
+   push the Seen or Approve button off the line, which a sixth column would have done
+   by taking the space out of the title instead. `min-width: 0` is what lets the cell
+   shrink at all; without it the flex content's min-content width becomes the floor and
+   a long badge grows the row's `1fr` column. */
+.inbox-subject {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  min-width: 0;
+}
+.inbox-subject .inbox-title, .inbox-subject .inbox-title-link { min-width: 0; }
+
+/* `.card-scopes` for a queue row: the same `.scope-badge` pills from
+   `ui/scope_badges`, a different wrapper, because here they ride inside the title's
+   cell rather than in a card header. Hence no `max-width` — the cap there keeps the
+   filing from eating a card's `h2`, and here the cell they are in is already the
+   flexible column. */
+.inbox-scopes {
+  display: inline-flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
 /* The title is the way through to the version viewer, so it is a button — but it
    has to read as the row's subject and not as a control, which is why it is
    stripped back to text with an underline on hover. A `deleted` row's title is a

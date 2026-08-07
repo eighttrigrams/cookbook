@@ -79,6 +79,7 @@
             [clojure.string :as str]
             [et.cb.ui.markdown :as markdown]
             [et.cb.ui.provenance :as provenance]
+            [et.cb.ui.scope-badges :as scope-badges]
             [et.cb.ui.state :as state]
             [et.cb.ui.views.diff :as diff]))
 
@@ -432,8 +433,13 @@
 
   They belong here rather than under the useful-when line: the header **is** the
   retrieval index — title, useful-when, which version, where its versions came from
-  — and 'which shelf is this on' is that same question. The description rides along
-  as the tooltip, which is the only place a reader meets it outside the Scopes page.
+  — and 'which shelf is this on' is that same question.
+
+  **The pill itself is `ui.scope-badges`' and not this file's**, because the Inbox's
+  rows wear the same one: two badge styles for one concept is how they drift. What
+  stays here is what is the *shelf's* — the header placement, and the shift+click
+  gesture, which is a filter over this listing and would be a filter over a page he
+  was not looking at anywhere else.
 
   **This gate is cosmetic and must not be read as the privacy boundary**, exactly
   as with `card-tags`. The boundary is the server: for a visitor the join is not run
@@ -441,24 +447,11 @@
   would be redundant if the client could be trusted — which is precisely why it is
   not the mechanism. Do not 'simplify' `db.recipe/with-scopes` on the grounds that
   this hides them; deleting this line would show a signed-out reader nothing extra,
-  and deleting the server half would publish the owner's filing.
-
-  The badges are wrapped in an element rather than returned as a bare seq. A
-  component whose return value *is* a seq is handed to React as a fragment whose
-  children are the raw hiccup vectors — and a cljs vector is iterable, so React
-  walks into one and tries to render `:span.scope-badge`, the keyword, as a child.
-  A seq of children inside a hiccup vector is the shape reagent converts, and it is
-  what every other `for` in this file does."
+  and deleting the server half would publish the owner's filing."
   [scopes]
-  [:span.card-scopes
-   (for [{:keys [id title description]} scopes]
-     ^{:key id}
-     [:span.scope-badge {:title (str (if (str/blank? description)
-                                       "A Scope this Recipe is filed under"
-                                       description)
-                                     " — " scope-badge-hint)
-                         :on-click #(exclude-on-shift id %)}
-      title])])
+  [scope-badges/badges scopes {:class "card-scopes"
+                               :hint scope-badge-hint
+                               :on-click exclude-on-shift}])
 
 (defn- card [{:keys [id title useful_when tags scopes version published published_at modified_at
                      view_count pending]
