@@ -31,7 +31,13 @@
            :editing nil          ;; id of the recipe whose Edit modal is open
            :publishing nil       ;; id of the recipe awaiting a publish confirmation
            :deleting nil         ;; id of the recipe awaiting a delete confirmation
-           :diffing nil          ;; id of the recipe whose version viewer is open
+           :diffing nil          ;; id of the recipe whose viewer is open — nil is closed
+           ;; Which of the two readings that viewer is showing: nil for a step of
+           ;; the recipe's history, and otherwise the **event** id of the proposal
+           ;; being read against it. Never set without `:diffing` — both are
+           ;; written by `open-viewer!` and by nothing else, so 'a proposal is open
+           ;; and the viewer is not' is unreachable rather than merely avoided.
+           :diffing-proposal nil
            :diff-version-idx 0   ;; which step of that history is on show
            :diff-unified? false  ;; the merge view's mode — split unless asked otherwise
            :search ""
@@ -197,7 +203,7 @@
   (swap! *app-state assoc
          :logged-in? false :token nil :current-user nil
          :recipes [] :details {} :open #{} :editing nil :publishing nil :deleting nil
-         :versions {} :versions-request {} :diffing nil
+         :versions {} :versions-request {} :diffing nil :diffing-proposal nil
          :page :shelf
          ;; and the inbox with them, for the strongest version of the same
          ;; reason: the server sends this queue to nobody but the owner — a
@@ -253,9 +259,26 @@
 ;; length of this list, so the badge and the page can never disagree about what is
 ;; waiting.
 
-(defn fetch-inbox []
+(declare stop-diff)
+
+(defn fetch-inbox
+  "The queue, and — if the viewer is open on a proposal that is no longer in it —
+  the viewer closed.
+
+  That second half is not the same guard as the one in `resolve-proposal`, which
+  closes on *his* answer. This one covers every other way an entry can leave the
+  queue while he is reading it: a second client answering it, an agent deleting the
+  Recipe, a session resumed against a queue that has moved on. The proposal's text
+  arrives on the entry, so a viewer left open on an entry that is gone would be
+  drawing a comparison out of nothing."
+  []
   (api/fetch-json "/api/inbox" (auth-headers)
-    (fn [entries] (swap! *app-state assoc :inbox (vec entries)))))
+    (fn [entries]
+      (let [entries (vec entries)]
+        (swap! *app-state assoc :inbox entries)
+        (when-let [event-id (:diffing-proposal @*app-state)]
+          (when-not (some #(= event-id (:id %)) entries)
+            (stop-diff)))))))
 
 (defn unseen-count [] (count (:inbox @*app-state)))
 
@@ -279,12 +302,23 @@
   itself. A dismissal changes no Recipe, and refetching anyway costs one request and
   keeps the two paths identical.
 
+  **The viewer closes if it was open on this proposal**, and that is what makes the
+  two entry points one resolution rather than two. There are two buttons for each
+  answer now — one on the queue row, one in the viewer that row opens — and this is
+  the one place both of them pass through, so neither can be the one that forgets.
+  Answered from the viewer there is nothing left to look at; answered from the row
+  with the viewer up, what would be left is a comparison against a proposal that no
+  longer exists.
+
   `on-done` runs on failure too, for the reason it does in `publish-recipe`: it is
   what closes the confirmation, and the error banner renders under the modal's fixed
   overlay — so leaving the dialog open would put the banner's dismiss button out of
-  reach."
+  reach. The viewer closes on failure for exactly that reason as well: it is a fixed
+  full-screen surface over the same banner."
   [event-id action failure on-done]
-  (let [done #(when on-done (on-done))]
+  (let [done #(do (when (= event-id (:diffing-proposal @*app-state))
+                    (stop-diff))
+                  (when on-done (on-done)))]
     (api/post-json (str "/api/inbox/" event-id "/" action) {} (auth-headers)
       (fn [_]
         (fetch-inbox)
@@ -494,13 +528,40 @@
   [id]
   (swap! *app-state update :versions dissoc id))
 
+(defn- open-viewer!
+  "The **only** writer of `:diffing` and `:diffing-proposal`, which is why they are
+  written in one `assoc` and can never come apart. `[nil nil]` is closed.
+
+  One overlay showing one of two comparisons — a step of a recipe's history, or a
+  proposal against that recipe — is the same argument `go-to-page` makes about the
+  pages: the state that must not exist is not defended at each reader, it is
+  unreachable. Two `swap!`s at two call sites would have made 'the viewer is open on
+  a proposal and on a history at once' a thing to be careful about."
+  [recipe-id proposal-event-id]
+  (swap! *app-state assoc
+         :diffing recipe-id
+         :diffing-proposal proposal-event-id
+         :diff-version-idx 0))
+
 (defn start-diff
   "Open the version viewer on a recipe, at the newest step. Fetches only on a
   miss; a save is what drops the cache, so what is kept is what is current."
   [id]
-  (swap! *app-state assoc :diffing id :diff-version-idx 0)
+  (open-viewer! id nil)
   (when-not (get-in @*app-state [:versions id])
     (fetch-versions id)))
+
+(defn start-proposal-diff
+  "Open the viewer on a proposal instead of on a step of the history — the Recipe's
+  current text against what an agent wants to make of it.
+
+  Takes the **event** id, because that is what the queue row has and what the two
+  answers are keyed by, and the recipe id, because that is what the viewer is open
+  *on*. Nothing is fetched: both texts arrive on the inbox entry itself, so this
+  opens without a round trip — see `db.proposal/attach-to-events` for why they are
+  sent with the queue rather than asked for here."
+  [event-id recipe-id]
+  (open-viewer! recipe-id event-id))
 
 (defn- step-that-produced
   "Which step of the version list *produced* version `v`, as an index into it.
@@ -533,7 +594,7 @@
   reader who closed it or moved on must not have the step yanked under them by a
   response from before."
   [id version]
-  (swap! *app-state assoc :diffing id :diff-version-idx 0)
+  (open-viewer! id nil)
   (if-let [entries (get-in @*app-state [:versions id])]
     (swap! *app-state assoc :diff-version-idx (step-that-produced entries version))
     (fetch-versions id
@@ -542,10 +603,12 @@
           (swap! *app-state assoc :diff-version-idx (step-that-produced entries version)))))))
 
 (defn stop-diff
-  "`:diff-unified?` deliberately survives this: which of the two layouts a reader
+  "Close the viewer, whichever of the two it was showing — the ✕ is one button.
+
+  `:diff-unified?` deliberately survives this: which of the two layouts a reader
   can read is about the reader, not about the recipe they closed."
   []
-  (swap! *app-state assoc :diffing nil :diff-version-idx 0))
+  (open-viewer! nil nil))
 
 (defn step-diff
   "+1 goes one version older, -1 one newer. The list is newest-first, so this is
@@ -694,12 +757,16 @@
       (fn [_]
         ;; The whole history went with it server-side, so the cached copy of it
         ;; goes too — and the viewer closes if it was the thing being read,
-        ;; rather than stepping through versions of a recipe that is gone.
+        ;; rather than stepping through versions of a recipe that is gone. Both
+        ;; readings, and the second one needs it as much: deleting a Recipe
+        ;; resolves its pending proposal in the same transaction, so a viewer left
+        ;; open on one would be showing a question that has just stopped existing.
         (swap! *app-state (fn [s] (-> s
                                       (update :details dissoc id)
                                       (update :versions dissoc id)
                                       (update :open disj id)
-                                      (cond-> (= id (:diffing s)) (assoc :diffing nil)))))
+                                      (cond-> (= id (:diffing s))
+                                        (assoc :diffing nil :diffing-proposal nil)))))
         (fetch-recipes)
         ;; its associations went with it server-side, so the counts moved here too
         (fetch-scopes)
