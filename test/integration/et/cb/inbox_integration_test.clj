@@ -147,6 +147,83 @@
           (is (= 0 (:recipe_exists left))))))))
 
 ;; ---------------------------------------------------------------------------
+;; what area the change was in
+
+(defn- scope! [title]
+  (:id (:body (POST-json "/api/scopes" {:title title :description (str title " things")}))))
+
+(defn- scopes-on [entry] (mapv :title (:scopes entry)))
+
+(deftest an-entry-says-what-its-recipe-is-filed-under
+  ;; The page he triages on is the one that did not say what area a Recipe is about,
+  ;; and a title is not enough to decide that with a queue of nine.
+  (let [bread (scope! "Bread")
+        ops (scope! "Ops")
+        {:keys [id]} (machine-create! "Sourdough")
+        _ (machine :put (str "/api/recipes/" id) {:scope_ids [ops bread]})
+        unfiled (:id (machine-create! "Filed under nothing"))]
+    (let [by-recipe (into {} (map (juxt :recipe_id identity)) (inbox))]
+      (is (= ["Bread" "Ops"] (scopes-on (get by-recipe id)))
+          "both, in title order — the order the shelf's badges and the Scopes page use")
+      (is (= [bread ops] (mapv :id (:scopes (get by-recipe id))))
+          "each with its own id, which is what a badge is keyed on")
+      (is (= ["Bread things" "Ops things"]
+             (mapv :description (:scopes (get by-recipe id))))
+          "and its description, which is the badge's tooltip")
+      (testing "and an unfiled Recipe's entry carries an empty array rather than no
+                key at all: this route is the owner's alone, so unlike the shelf there
+                is no withholding for an absent key to mean"
+        (is (= [] (:scopes (get by-recipe unfiled))))
+        (is (true? (contains? (get by-recipe unfiled) :scopes)))))))
+
+(deftest the-badges-on-an-entry-are-current-while-its-title-is-a-snapshot
+  ;; The asymmetry, over HTTP. Refiling a Recipe changes the badges on entries already
+  ;; in the queue and leaves their titles alone — deliberately: while triaging he wants
+  ;; to know what the Recipe *is* filed under, and the title has to go on naming the
+  ;; thing the entry is about.
+  (let [bread (scope! "Bread")
+        ops (scope! "Ops")
+        {:keys [id]} (machine-create! "The old name")]
+    (is (= 200 (:status (PUT-json (str "/api/recipes/" id) {:scope_ids [bread]}))))
+    (is (= ["Bread"] (scopes-on (first (inbox)))))
+    (is (= 200 (:status (PUT-json (str "/api/recipes/" id) {:title "The new name"
+                                                            :scope_ids [ops]}))))
+    (let [entry (first (inbox))]
+      (is (= "The old name" (:recipe_title entry)) "the title is as it read then")
+      (is (= ["Ops"] (scopes-on entry)) "the badges are where it is filed now"))))
+
+(deftest a-dead-recipes-entries-keep-their-title-and-lose-their-badges
+  (let [bread (scope! "Bread")
+        {:keys [id]} (machine-create! "Doomed")]
+    (machine :put (str "/api/recipes/" id) {:scope_ids [bread]})
+    (machine :put (str "/api/recipes/" id) {:description "body v2"})
+    (is (every? #(= ["Bread"] (scopes-on %)) (inbox)) "filed while it lived")
+    (is (= 200 (:status (machine :delete (str "/api/recipes/" id)))))
+    (let [entries (inbox)]
+      (is (= ["created" "modified" "deleted"] (mapv :kind entries)))
+      (is (= [[] [] []] (mapv :scopes entries))
+          "the associations went with the Recipe, so there is simply nothing to draw")
+      (is (every? #(= "Doomed" (:recipe_title %)) entries)
+          "and the snapshot title is what is left naming it"))))
+
+(deftest a-proposed-entry-carries-its-badges-too
+  ;; The composition, which is the half neither `list-unseen` nor
+  ;; `db.proposal/attach-to-events` can be asked about alone: the proposal text is put
+  ;; on the entries the queue already built, so an attach that rebuilt an entry rather
+  ;; than adding to it would drop the filing — and the entry that most wants a badge is
+  ;; the one asking him a question.
+  (let [bread (scope! "Bread")
+        {:keys [id]} (:body (POST-json "/api/recipes" {:title "His own"
+                                                       :description "his body"}))]
+    (is (= 200 (:status (PUT-json (str "/api/recipes/" id) {:scope_ids [bread]}))))
+    (is (= 202 (:status (machine :put (str "/api/recipes/" id)
+                                 {:description "the agent's body"}))))
+    (let [entry (first (inbox))]
+      (is (= "proposed" (:kind entry)))
+      (is (some? (:proposal entry)) "the proposal really is on it")
+      (is (= ["Bread"] (scopes-on entry))))))
+
+;; ---------------------------------------------------------------------------
 ;; the order
 
 (deftest the-queue-is-append-order-and-not-timestamp-order
