@@ -283,27 +283,54 @@
   row, which is where these six fields were read; it shows it in the version viewer
   now, so the list carries text that nothing renders until something is clicked. Both
   answers were honest — leave it, or ship a lean row and fetch on open the way the
-  viewer fetches versions — and the measurements decided it:
+  viewer fetches versions.
 
-  - **A real queue holds one.** Production, 2026-08-07: 33 Recipes, **1** pending
-    proposal. The unique index makes one per Recipe the ceiling, and a proposal is
-    resolved by looking at it.
-  - **Six kilobytes.** His largest Recipe body is 2550 characters, and a `proposed`
-    entry carrying it weighs 5993 bytes against a 228-byte row — 78% of that whole
-    response. Real, and it is six kilobytes.
-  - **Fetching on open is not the symmetry it looks like.** `/versions` already
-    exists; there is no route that serves a proposal's text, and the only one that
-    serves a Recipe's counts a consumption. So the lean row costs a new owner-only
-    endpoint, its entry in `/api/describe`, its own 403/404, and a loading state in a
-    viewer that currently opens instantly.
+  **This paragraph got the size wrong by 2.8× and argued from something false, so both
+  are corrected here and the decision is taken again on what is true.** What it said:
+  his largest body is 2550 characters, a `proposed` entry carrying it weighs 5993
+  bytes, and *the only route that serves a Recipe's text counts a consumption*.
+
+  - **A real queue holds one.** Production, 2026-08-08: 36 Recipes, **1** pending
+    proposal. The partial unique index makes one per Recipe the ceiling, so the ceiling
+    on a whole queue is the number of Recipes.
+  - **Seventeen kilobytes, not six.** His largest body is **7287** characters
+    (Recipe 19), and **18 of the 36** are longer than the 2550 that was written down —
+    2550 is Recipe 7, which was measured because it is the one with the pending
+    proposal, not because it is the largest. Measured rather than extrapolated: that
+    body seeded into dev with a machine proposal of the same order of length on it takes
+    `/api/inbox` from 8562 to 25412 bytes, so the one entry weighs **16850** — 66% of
+    the whole response — against **262** bytes for that same row without its proposal.
+    The entry carries a body twice, `description` and `current_description`, so it
+    scales at about 2× the body and an error in the body compounds.
+  - **Half of what a lean row would fetch is already on a route that costs nothing.**
+    `GET /recipes/:id/versions` serves the current row's all three fields —
+    `db.recipe/list-versions` puts `(content-of current)` at the head of the list — and
+    calls no `record-view!`; only `?detail=full` does. So *the only route that serves a
+    Recipe's text counts a consumption* was false, and it was the clause carrying the
+    argument's weight. What survives is the other half: **nothing serves a proposal's
+    three fields**, so a lean row is still a new owner-only endpoint, its entry in
+    `/api/describe`, its own 403/404, and a loading state in a viewer that opens on the
+    click.
   - **And it would put the text in two places.** On the list there is one copy: an
     agent revising its proposal while he reads it lands with the next `fetch-inbox`
     and the open viewer follows, because the viewer looks the entry up in the queue
     rather than holding it. A fetched copy would need invalidating, which is what
     `forget-versions!` is and why it exists.
+  - **One statement, one moment.** Both texts *and* both version numbers leave here
+    together, so the comparison a reader sees and the warnings printed over it cannot
+    be from two different instants. That is not an argument against a lean row, but it
+    is a constraint on one: whoever builds it must serve all six fields and both
+    versions in a **single** response. Assembling the Recipe's half from `/versions` and
+    the proposal's half from somewhere else would put a skew inside the one screen where
+    approving is decided, and the staleness warning is the thing that skew would lie
+    about.
 
-  Worth revisiting if a queue routinely holds several pending proposals against long
-  Recipes — the list is refetched after every write, so the cost is per refetch.
+  **Still: leave it.** 17 kilobytes on the owner's own private page, at one pending
+  proposal, does not buy a new route, a loading state and an invalidation. The trigger
+  for revisiting is now a number rather than a feeling: the list is refetched after
+  **every** write, so several pending proposals against long Recipes multiply directly —
+  ten of them would be about 170 KB per refetch, and that is where this decision should
+  be made again.
 
   One statement for the whole page rather than one per entry, which is
   `db.scope/attach`'s shape and the same reason: a queue of thirteen entries must

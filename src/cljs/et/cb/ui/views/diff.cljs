@@ -573,7 +573,8 @@
   **Nothing here is capped in height.** That is the point of the move: this reading
   used to be a 320px pane inside a queue row, and a change beginning in the second
   paragraph of a 2550-character body was below the fold of the thing meant to show
-  it."
+  it. 2550 is the Recipe he reported it on, and not his longest — that one is nearly
+  three times as long, which `db.proposal/attach-to-events` now has the number for."
   [{:keys [id recipe_title proposal]}]
   (let [{:keys [diff-unified? dark-mode]} @state/*app-state
         [current proposed] (proposal-sides proposal)]
