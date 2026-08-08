@@ -24,7 +24,7 @@
   the viewer, which is where a change is read — and that is the same sentence for
   every kind, which it was not: a `proposed` entry used to carry its whole two-pane
   comparison inside the list. He said what was wrong with that in one line —
-  *proposals, just like the other changes, should be shown on a different page (note
+  *Proposals, just like the other changes, should be shown on a different page (note
   the difference in treatment)* — and it is visible in one screen: four entries, one
   of them two thirds of the page, and every entry after it pushed off the bottom of a
   queue whose whole purpose is to be worked through top to bottom.

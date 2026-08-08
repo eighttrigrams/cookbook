@@ -8,7 +8,7 @@
   the header.
 
   The second reading used to be an inline pane under its queue row, and he said what
-  was wrong with it: *proposals, just like the other changes, should be shown on a
+  was wrong with it: *Proposals, just like the other changes, should be shown on a
   different page (note the difference in treatment)*. A row whose comparison lives
   inside the list is a row that shoulders every entry after it off the screen, and it
   crops the very thing it exists to show — the panes were capped at 320px, so a
