@@ -444,6 +444,20 @@
 (defroutes app-routes
   api-routes
   (GET "/" [] serve-index)
+  ;; **Every `/recipe/…` is the app, whatever id it names.** This is what makes a
+  ;; Recipe's address survive a reload and a pasted link: the client pushes
+  ;; `/recipe/42` when it opens one, and without a route behind that path the next
+  ;; hard load of it would be the JSON 404 below rather than the page.
+  ;;
+  ;; A wildcard and not `/recipe/:id`, and it deliberately does not look at the id.
+  ;; Which Recipes exist — and which of them *this* caller may see, which is the
+  ;; harder half, since a visitor is served only the published ones — is a question
+  ;; the API answers; answering it here would mean loading a Recipe in order to
+  ;; render a page this route does not render, and handing a browser that asked for
+  ;; a page a JSON error when the answer was no. So `/recipe/999999` and
+  ;; `/recipe/abc` are the index too, and the client's not-found is what a reader
+  ;; gets. Tracker does the same for `/item/*`, for the same reason.
+  (GET "/recipe/*" [] serve-index)
   (GET "/styles.css" [] serve-styles)
   (route/resources "/" {:root "public/cookbook"})
   (route/not-found {:status 404 :body {:error "Not found"}}))
