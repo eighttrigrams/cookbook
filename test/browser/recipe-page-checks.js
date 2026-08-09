@@ -381,10 +381,17 @@
 
       // 8. **the numbers, against the text as it is stored.** Two claims in one: the
       //    rows run 1..n with nothing skipped, and n is the line count the *API*
-      //    numbered its ranges over. The fixture's body ends in a newline on purpose
-      //    — `clojure.string/split-lines` drops that trailing empty line and the
-      //    ranges keep it, so a view built on it draws one row too few, at the end,
-      //    silently. That is what `lastRangeTo` is here to catch.
+      //    numbered its ranges over. `clojure.string/split-lines` drops a trailing
+      //    empty line where the ranges keep it, so a view built on it draws one row
+      //    too few, at the end, silently — `lastRangeTo` is what catches that.
+      //
+      //    **Whether the body ends in a newline is evidence here, not an assertion.**
+      //    The seed builds one that does, because that is what makes this check able
+      //    to catch the `split-lines` bug at all — but the fixture is a Recipe in a
+      //    dev database and somebody editing it by hand is a normal thing to do. A
+      //    check that failed for that would be reporting a bug in the app when the
+      //    only thing that happened is that a human used the app. So it says so in a
+      //    note instead: the run was thinner than intended, and nothing is wrong.
       await check('8 the numbers run 1..n over the body as it is stored', async () => {
         toggle().click();
         await until(() => document.querySelector('.provenance-source'));
@@ -394,9 +401,12 @@
         const lastTo = ranges.length ? ranges[ranges.length - 1].to : null;
         const numbers = lines().map(numberOf);
         const roundTrips = lines().map(textOf).join('\n') === desc;
+        if (!desc.endsWith('\n'))
+          notes.push('8: the body no longer ends in a newline, so this run did not '
+                     + 'exercise the trailing-empty-line case — re-run provenance-seed.py '
+                     + 'for a fixture that does');
         return {pass: expected > 1 && numbers.length === expected && lastTo === expected
-                      && numbers.every((n, i) => n === i + 1)
-                      && roundTrips && desc.endsWith('\n'),
+                      && numbers.every((n, i) => n === i + 1) && roundTrips,
                 evidence: {linesInTheBody: expected, rowsDrawn: numbers.length,
                            lastRangeTo: lastTo, numbers,
                            bodyEndsWithNewline: desc.endsWith('\n'),

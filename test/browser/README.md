@@ -189,6 +189,15 @@ silently, on the most ordinary body there is. The fixture is 8 lines to the API 
 to `split-lines`, which is what gives check 8 something to fail against, and M9 below
 is that failure on purpose.
 
+**The seed asserts that newline; check 8 only reports it.** The fixture is a Recipe in
+a dev database and editing it in the UI is a normal thing for the owner to do — he did,
+mid-run, which is how this came up. A check that failed for that would be blaming the
+app for somebody using the app, so check 8 asserts the rows against the API's own line
+count and pushes a **note** when the body no longer ends in a newline: the run was
+thinner than intended, nothing is wrong, re-run the seed for a fixture that exercises
+it again. Editing the fixture is also worth knowing about before running `cleanup.py`,
+which deletes it and any edits with it.
+
 ### The mutations
 
 | | the edit |

@@ -25,20 +25,26 @@
      gradient. */
   --opaque-bg: #fdf7ee;
   /* The two ends of the provenance spectrum on the Recipe page: blue is a line he
-     saved by hand, red is one an agent wrote. Two properties each, because a line
-     wears both a solid bar in the gutter and a wash behind the whole row — full
-     saturation behind the text would be unreadable on this parchment, and tinting
-     the text itself would cost every line its normal contrast for the sake of a fact
-     the bar already carries.
+     saved by hand, red is one an agent wrote. A line wears both a solid bar in the
+     gutter and a wash behind the whole row — full saturation behind the text would be
+     unreadable on this parchment, and tinting the text itself would cost every line
+     its normal contrast for the sake of a fact the bar already carries.
 
-     Any value between the ends is `color-mix`ed from them per line, which is why
-     they are properties and not literals in `cookbook.css`: the dark theme swaps its
-     own pair in below and every intermediate tint follows without the view knowing
-     there is a theme at all. */
+     **The two ends only, with the wash derived from them** (see `.provenance-line`),
+     rather than a pre-mixed pair of washes as well. Mixing two near-transparent
+     washes of opposing hue dips through a desaturated neutral in the middle, so a
+     line at 0.67 came out *fainter than either end* — the one value that most needs
+     to look like something looked like nothing. Interpolating the solid pair and
+     applying one alpha to the result keeps every point on the scale at the same
+     strength, and sends the middle through purple, which is the honest colour for
+     "both of them touched this".
+
+     They are properties and not literals in `cookbook.css` so that the dark theme can
+     swap its own pair in below and every intermediate tint follows without the view
+     knowing there is a theme at all. */
   --provenance-human: #1d6fd4;
-  --provenance-human-wash: rgba(29, 111, 212, 0.13);
   --provenance-agent: #d1344b;
-  --provenance-agent-wash: rgba(209, 52, 75, 0.13);
+  --provenance-wash: 15%;
 }
 html.dark-mode {
   color-scheme: dark;
@@ -60,11 +66,10 @@ html.dark-mode {
   /* The light-mode input border is a black wash, which vanishes on dark. */
   --input-border: rgba(255, 255, 255, 0.12);
   /* Lifted and desaturated: the light pair is aimed at parchment and goes muddy on
-     this brown, and a wash at 0.13 disappears into it. */
+     this brown, and the wash has to be stronger to be seen against it at all. */
   --provenance-human: #6aa9f4;
-  --provenance-human-wash: rgba(106, 169, 244, 0.2);
   --provenance-agent: #f4788a;
-  --provenance-agent-wash: rgba(244, 120, 138, 0.2);
+  --provenance-wash: 24%;
 }
 @media (prefers-color-scheme: dark) {
   :root { --muted-text: #6c6c70; }

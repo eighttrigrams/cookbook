@@ -116,6 +116,16 @@ def main():
     if not (1.0 in values and 0.0 in values and any(0 < v < 1 for v in values)):
         print('  NOT the fixture the checks need — expected 0.0, 1.0 and one in between')
         return 1
+    # The trailing newline is asserted **here** rather than in check 8. It is what
+    # makes that check able to catch the `split-lines` bug, so the fixture has to
+    # carry it — but it is a property of the fixture and not of the app, and a check
+    # that failed for a body somebody edited by hand would be blaming the app for a
+    # human using it. So: guaranteed at the point it is built, reported as evidence
+    # where it is used.
+    if not full['description'].endswith('\n'):
+        print('  the body does not end in a newline — check 8 cannot catch the'
+              ' split-lines bug against this fixture')
+        return 1
     print('  seen by the checks as SUBJECT_MIXED — run cleanup.py to remove it')
     return 0
 

@@ -1125,11 +1125,13 @@ html.dark-mode .inbox-kind.kind-proposed { background: rgba(245, 158, 11, 0.18);
   gap: 6px;
   margin-top: 16px;
 }
+/* Wide enough that the legend is one line on a desktop — at 46em it wrapped with a
+   single word left over on the second — and still free to wrap on a phone. */
 .provenance-legend {
   color: var(--text-secondary);
   font-size: 0.82em;
   text-align: right;
-  max-width: 46em;
+  max-width: 64em;
   line-height: 1.45;
 }
 
@@ -1151,14 +1153,22 @@ html.dark-mode .inbox-kind.kind-proposed { background: rgba(245, 158, 11, 0.18);
 }
 .provenance-line {
   display: grid;
-  grid-template-columns: 3.2em 3px 1fr;
+  grid-template-columns: 3.2em 4px 1fr;
   gap: 0;
   min-height: 1.55em;
-  /* The wash for this line, mixed from the two ends by its own `--caution`. The
-     fallback keeps an unstyled row honest rather than red: 50% is neither claim. */
-  background: color-mix(in oklab,
-                        var(--provenance-human-wash) var(--caution, 50%),
-                        var(--provenance-agent-wash));
+  /* This line's point on the scale, interpolated from the two ends by its own
+     `--caution`. **`oklch` and not `oklab`**: oklch carries the hue round the wheel
+     and keeps the chroma up, where oklab cuts straight across and loses it — the
+     midpoint of a blue and a red in oklab is a grey, so the 0.67 stretch came out
+     paler than both of the ends it sits between. Round the wheel it is a purple, at
+     the same strength as everything else on the scale.
+     The 50% fallback keeps an unstyled row from claiming either end. */
+  --tint: color-mix(in oklch,
+                    var(--provenance-human) var(--caution, 50%),
+                    var(--provenance-agent));
+  /* One alpha for every point on the scale, so strength says nothing and only hue
+     does. Behind the whole row, since a line is the unit being spoken about. */
+  background: color-mix(in srgb, var(--tint) var(--provenance-wash), transparent);
 }
 .provenance-line-number {
   padding: 0 8px 0 6px;
@@ -1172,11 +1182,9 @@ html.dark-mode .inbox-kind.kind-proposed { background: rgba(245, 158, 11, 0.18);
   user-select: none;
   -webkit-user-select: none;
 }
-.provenance-line-bar {
-  background: color-mix(in oklab,
-                        var(--provenance-human) var(--caution, 50%),
-                        var(--provenance-agent));
-}
+/* The same tint at full strength. This is the part that has to be readable at a
+   glance down the side of a body, so it carries no alpha at all. */
+.provenance-line-bar { background: var(--tint); }
 .provenance-line-text {
   padding: 0 10px 0 10px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
