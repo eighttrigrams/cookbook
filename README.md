@@ -434,7 +434,9 @@ are the interface, not decoration.
   `view_count`, and `pending` — whether a proposal is waiting on it.
 - `GET /api/recipes/:id` — one recipe, lean the same way.
 - **`?detail=full`** on either of those adds the description. That is the only
-  way to get a body, and it is meant to be asked for one recipe at a time.
+  way to get a body, and it is meant to be asked for one recipe at a time. On the
+  single-Recipe read it also adds `caution`, the line-level provenance split of that
+  body — see *Which lines are his*.
 - `POST /api/recipes` — `{:title :useful_when :description}`. Title required.
   The new recipe is version 1 and private; `published` is not accepted here.
 - `PUT /api/recipes/:id` — the same three fields; anything you leave out keeps
@@ -510,6 +512,79 @@ to handle.
 `has_human_edit` is the row-level bit beside it, true exactly when some version
 reads `ui`, and it is what `?human=true` narrows by. It is kept rather than derived
 because deriving it would mean an aggregate over the history on every listing read.
+
+### Which lines are his
+
+**The same question asked of the text instead of the versions.** A `?detail=full`
+read of one Recipe carries `caution` beside the description: the lines of that
+description in ranges, one-based and inclusive, each with a number saying how careful
+an agent should be there — and the legend for that number, in the body, every time.
+
+```json
+"caution": {
+  "legend": "1.00 saved here by hand, 0.00 written by an agent; in between, a stretch both have touched",
+  "ranges": [{"from": 1, "to": 2, "caution": 0.0},
+             {"from": 3, "to": 3, "caution": 1.0}]
+}
+```
+
+`1.00` is his: treat it as close to sacred and have a good reason before touching it.
+`0.00` is an agent's and up for grabs. In between is a stretch both have had a hand
+in. The ranges cover the body exactly once, in order, and adjacent lines that come
+out at the same number are one range.
+
+The legend is nested with the ranges rather than sitting beside them as a
+`caution_legend`, because neither half means anything alone, and it is repeated on
+every read rather than left to `/api/describe` for a plain reason: the reader is
+usually an agent that fetched one Recipe and read no documentation at all, and to
+that reader a bare `0.0` next to a line range is a number it has to already know how
+to read. It is the same string every time — it explains the scale, not this Recipe's
+answer — so read it once and treat it as a constant thereafter. Its wording is the
+version viewer's tooltip said again on purpose (*saved here by hand* / *written by an
+agent*); one fact told in two vocabularies is two facts to anyone who meets both.
+
+**This is not `machine_versions`/`ui_versions` asked again.** Those count *versions*,
+this attributes *the lines of the text as it stands now*, and the two come apart
+immediately: a Recipe he wrote once and an agent has since edited nineteen times
+reads `1(ui)/19(machine)` on its card while his opening paragraph is still at `1.00`
+here. Neither is wrong; only the second tells an agent about to rewrite that body
+which parts of it are its own to redo and which are his to leave alone. That is what
+it is for, and it is why **a machine token is served it** — as it reads everything
+else here, in the owner's audience. It is the one number in this API written for an
+agent to act on.
+
+**It is an estimate.** Nobody recorded who typed which line. It is computed by
+[us-vs-them](../us-vs-them) — a sibling library, wired in by `:local/root`, whose
+`caution_test.clj` is the specification of what the numbers mean — by diffing the
+Recipe's versions against each other and attributing from that, looking for islands
+of his writing in a sea of generated text.
+
+A number between the ends is what dilution looks like, and it is a property of the
+stretch rather than of any one line: an agent's line landing *inside* a stretch of
+his joins it instead of splitting it, and the stretch drops to the share of itself
+that is still his — three of four lines reads `0.75`. That is deliberate, and worth
+knowing before acting on one. The alternative would make that line an island at
+`0.00`, free to edit, at exactly the spot where it is most tangled up in his work.
+So read a middling number as *be careful here anyway*.
+
+Cookbook had both halves of the input all along and had never joined them up: every
+version carries a `source`, every superseded version keeps its own text in
+`recipe_history`, and that is exactly a history of versions each under identifiable
+authorship, which is the only thing the library asks for. `et.cb.caution` is the
+whole of the adapter, and none of the arithmetic.
+
+**A visitor gets no `caution` key at all** — legend included, at any `?detail`,
+published or not. Not an empty list: absent, the way `tags` and `scopes` are absent
+for a caller who may not have them. It is derived from the version history and the
+history is his, so it goes where the history goes; `GET /api/recipes/:id/versions` is
+a 404 for an anonymous caller at every id. Publishing puts today's text in public. It
+does not publish the record of who wrote which part of it.
+
+Not cached, and there is no column for it — the same argument the counts on the card
+make: a stored split could come to disagree with the labels the version list shows.
+The cost is a second read of the history and a diff per version, on a full read only,
+which is nothing at the size of a Recipe and is the first thing to look at if that
+route ever gets slow.
 
 ### Rate limiting
 
