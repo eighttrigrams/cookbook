@@ -337,6 +337,34 @@ with an × that brings it back, which is the only way back, since an excluded
 Scope's badges leave along with the Recipes carrying them. Nothing is remembered
 across a reload.
 
+### A Recipe's own address
+
+Every Recipe is also a page of its own at **`/recipe/<id>`** — bare, no type
+prefix and no title in the slug. The **Page** button in a card's footer goes
+there, beside Publish, Edit, Versions and Delete; it is called *Page* rather than
+*Open* because expanding a card is what "open" already means on the shelf.
+
+The point of it is the address. `/recipe/1` can be linked to, bookmarked, sent to
+somebody and **reloaded**: the server answers every `/recipe/…` with the index,
+so a cold load of one lands on the Recipe and not on a 404. Back and Forward
+work, because the browser's history is what the page is derived from rather than
+something the app writes into and then ignores. Everywhere else in the app is
+`/` — there is one addressable thing here and the rest is the app.
+
+The wildcard deliberately does not look at the id. Which Recipes exist, and which
+of them the caller may see, is the API's answer; so `/recipe/999999` and a
+visitor's `/recipe/<unpublished>` are served the app, which asks, is told no, and
+says *No such Recipe here* with a way back to the shelf. Those two cases are the
+same 404 by design and the page does not try to tell them apart — see *What a
+visitor sees*.
+
+**The page is not owner-only**, and it is the only one that is not: a link to a
+published Recipe that stopped working when you were not signed in would not be a
+link. What it shows a visitor is what the API gives them — every content field,
+and none of the owner's filing. And **opening it counts as a read**, the same as
+expanding a card or fetching the Recipe through the API, which is the number the
+shelf is ranked by.
+
 All three fields are meant to be markdown, with clojure code blocks highlighted
 in the body. **That is not built yet**: it needs `marked`, `highlight.js` and
 `DOMPurify`, and the sanitizer is not optional here — agents write unsupervised
