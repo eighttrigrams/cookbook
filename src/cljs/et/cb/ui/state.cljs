@@ -1,7 +1,8 @@
 (ns et.cb.ui.state
   (:require [reagent.core :as r]
             [clojure.string :as str]
-            [et.cb.ui.api :as api]))
+            [et.cb.ui.api :as api]
+            [et.cb.ui.url :as url]))
 
 (defn- os-prefers-dark? []
   (.-matches (js/window.matchMedia "(prefers-color-scheme: dark)")))
@@ -50,7 +51,18 @@
            ;; shelf silently missing rows for a reason nobody remembers setting.
            :excluded-scopes #{}
            :recipes-request 0    ;; only the newest listing request may land
-           :page :shelf          ;; which page is on: :shelf, :settings, :scopes or :inbox
+           ;; which page is on: :shelf, :settings, :scopes, :inbox or :recipe
+           :page :shelf
+           ;; Which Recipe `:page :recipe` is showing, and how that fetch went.
+           ;; Two keys rather than one, because a Recipe page has three states and
+           ;; only one of them has a Recipe in it: the id is what the page *is*
+           ;; about — it comes off the URL and is known before anything is fetched
+           ;; — and the status is what came back. The body itself is not here: it
+           ;; goes into `:details` like every other fetched body, so a Recipe read
+           ;; on its own page and one read by expanding its card are one cached
+           ;; row and not two that can disagree.
+           :recipe-page-id nil
+           :recipe-page-status nil ;; :loading, :found or :missing
            :inbox []             ;; the owner's unseen changes his agents made, oldest first
            :dismissing-proposal nil ;; event id of the proposal awaiting a dismiss confirmation
            :machine-user nil     ;; {:exists :username :password_set_at} — never a password
@@ -82,16 +94,51 @@
 (declare fetch-machine-user)
 (declare fetch-scopes)
 (declare fetch-inbox)
+(declare fetch-recipe-page!)
+
+(defn- show-page!
+  "Move to `page` and re-read what it draws. **The address bar is not touched
+  here**, and that is the whole reason this is a function of its own.
+
+  Two callers want the state move and disagree about the URL. `go-to-page` below
+  is a *navigation*: the reader asked to go somewhere, so the address has to follow
+  and Back has to be able to return them. `sync-from-url!` is the opposite —
+  the address moved first, either because the page was loaded at one or because the
+  browser went Back — and pushing there would append an entry for the step the
+  reader just took backwards, which is how a Back button comes to do nothing.
+
+  So this writes the state, and each caller answers for the bar. Everything that
+  makes a Recipe page — the id, the status, the fetch — is in one branch here for
+  the same reason `open-viewer!` writes `:diffing` and `:diffing-proposal`
+  together: 'the page says :recipe and there is no id' and 'the id is set and the
+  page is the shelf' are then states nobody has to be careful about."
+  [page recipe-id]
+  (swap! *app-state assoc :page page :editing-scope nil :deleting-scope nil
+         :recipe-page-id (when (= :recipe page) recipe-id)
+         :recipe-page-status (when (= :recipe page) :loading))
+  (case page
+    :settings (fetch-machine-user)
+    :scopes (fetch-scopes)
+    ;; More than freshness here: the queue is the *only* place an agent's write
+    ;; shows up, and it may have arrived while he was reading the shelf.
+    :inbox (fetch-inbox)
+    ;; And this one is not freshness at all: the page has nothing to draw until
+    ;; the body arrives, because the listing never carried one.
+    :recipe (fetch-recipe-page! recipe-id)
+    nil))
 
 (defn go-to-page
-  "Show one page: `:shelf`, `:settings`, `:scopes` or `:inbox`.
+  "Show one page: `:shelf`, `:settings`, `:scopes`, `:inbox` or `:recipe` — the
+  last one takes the Recipe's id as a second argument, and is the only one that
+  needs anything beyond its own name.
 
   **One value and not four booleans, so 'both pages are open' is a state that
   cannot be reached** rather than one that has to be defended wherever the state
   is read. It used to be `:settings-open?` and `:scopes-open?`, each flipped by
   its own toggle, and the two panels stacked over the shelf when both were on.
   The Inbox is the fourth page and it inherited the invariant instead of the bug,
-  which is what this shape is for.
+  which is what this shape is for. The Recipe page is the fifth, and the first that
+  a reader can arrive at without pressing anything.
 
   Arriving re-reads what the page draws rather than trusting what was fetched
   before — an agent may have added a Scope through the API, and the machine
@@ -101,16 +148,56 @@
   The Scopes page's two dialogs are dropped on every move, including a move
   *away* from it: the only buttons that open them are on that page, so one left
   latched would be a confirmation nobody could have asked for, waiting for the
-  next visit."
-  [page]
-  (swap! *app-state assoc :page page :editing-scope nil :deleting-scope nil)
-  (case page
-    :settings (fetch-machine-user)
-    :scopes (fetch-scopes)
-    ;; More than freshness here: the queue is the *only* place an agent's write
-    ;; shows up, and it may have arrived while he was reading the shelf.
-    :inbox (fetch-inbox)
-    nil))
+  next visit.
+
+  **And this is where the address bar is written, for the same reason the page
+  is: it is the one chokepoint.** A Recipe page pushes `/recipe/<id>` and every
+  other page pushes `/` — there is one addressable thing in this app and the rest
+  is the app. Written at the call sites instead, the bar would be right for as long
+  as every future writer of `:page` remembered it, which is the property this
+  function exists to not depend on.
+
+  Two callers deliberately do not come through here and each answers for the bar
+  itself: `logout`, which is a reset rather than a navigation, and
+  `sync-from-url!`, where the URL is already what it is."
+  ([page] (go-to-page page nil))
+  ([page recipe-id]
+   (show-page! page recipe-id)
+   (url/push-state! (if (= :recipe page) (url/recipe-path recipe-id) "/"))))
+
+(defn open-recipe-page
+  "Open one Recipe's own page — the card footer's fifth button, and the one gesture
+  in this app that puts a thing's identity in the address bar."
+  [id]
+  (go-to-page :recipe id))
+
+(defn sync-from-url!
+  "Make the page match the address, without touching the address.
+
+  Called twice: once when the client has finished working out who is calling — a
+  Recipe of the owner's needs his token on the request, so this cannot run before
+  that is known — and again on every `popstate`, which is Back and Forward.
+
+  **It re-derives the whole view rather than undoing one thing**, which is
+  personalist's shape (`ui/core.cljs`) and not tracker's. Tracker's `popstate`
+  handler only closes a modal, and it is right to: its URL names a modal over a
+  page that never moved. Here the URL names the *page*, so Back from a Recipe has
+  to actually land on the shelf and Back-then-Forward has to land on the Recipe
+  again — and a handler that only closed something would leave the address and the
+  screen saying different things.
+
+  An address this app has no page for — `/recipe/abc`, which the server serves the
+  index for on purpose — puts the shelf up and **corrects the bar with
+  `replace-state!`**. Corrected rather than left alone, because a bar naming a
+  Recipe over a shelf is a lie the reader would copy; replaced rather than pushed,
+  because there is no state to go Back to."
+  []
+  (if-let [id (url/parse-recipe-path (url/current-path))]
+    (show-page! :recipe id)
+    (do
+      (show-page! :shelf nil)
+      (when-not (= "/" (url/current-path))
+        (url/replace-state! "/")))))
 
 (defn- toggle-page
   "The top bar's buttons are toggles: pressing the one for the page you are on
@@ -157,7 +244,14 @@
 
 (defn fetch-auth-required
   "Reading published Recipes is public, so the page renders either way.
-  `required` only decides whether the owner's affordances show up."
+  `required` only decides whether the owner's affordances show up.
+
+  **`sync-from-url!` is called from in here and not from `init`**, which is
+  tracker's arrangement and for its reason: a Recipe page loaded at its own address
+  fetches that Recipe, and whether the request carries the owner's token decides
+  whether an unpublished one is a Recipe or a 404. Started in `init` the fetch
+  would race the token out of localStorage, and the owner would meet his own
+  Recipe's not-found page whenever he lost that race."
   []
   (api/fetch-json "/api/auth/required" {}
     (fn [{:keys [required]}]
@@ -171,7 +265,8 @@
                    :logged-in? true
                    :token token
                    :current-user (js->clj (js/JSON.parse user-str) :keywordize-keys true)))))
-      (fetch-shelf!))))
+      (fetch-shelf!)
+      (sync-from-url!))))
 
 (defn login [username password on-success]
   (api/post-json "/api/auth/login" {:username username :password password} {}
@@ -197,14 +292,23 @@
   is a reset and not a navigation — there is nothing to re-read on the way, and
   the machine-user fetch a move to `:settings` would make is the request a
   signed-out client must not send. Both owner-only pages are reached by a button
-  only the owner has, so a visitor left on one would have no way back."
+  only the owner has, so a visitor left on one would have no way back.
+
+  **And the address bar with it**, which is the half the Recipe page added. The
+  Recipe page is not owner-only, so signing out on one does not strand anybody —
+  but `/recipe/7` for one of his unpublished Recipes reads perfectly well while he
+  is signed in and is a 404 the moment he is not, so a client left standing at that
+  address would reload into a not-found page for a Recipe that is sitting on his
+  own shelf. `replace-state!` and not a push, for the reason the state reset is
+  not a navigation either: there is no step here for Back to undo."
   []
   (clear-token!)
+  (url/replace-state! "/")
   (swap! *app-state assoc
          :logged-in? false :token nil :current-user nil
          :recipes [] :details {} :open #{} :editing nil :publishing nil :deleting nil
          :versions {} :versions-request {} :diffing nil :diffing-proposal nil
-         :page :shelf
+         :page :shelf :recipe-page-id nil :recipe-page-status nil
          ;; and the inbox with them, for the strongest version of the same
          ;; reason: the server sends this queue to nobody but the owner — a
          ;; machine token is refused it — so a copy left here would be the one
@@ -471,6 +575,39 @@
     (fn [recipe]
       (cache-detail! recipe)
       (when on-done (on-done recipe)))))
+
+(defn fetch-recipe-page!
+  "The one Recipe a `/recipe/<id>` page is about, into `:details` and a status
+  beside it.
+
+  **This is the first GET in the client with an error handler, and the 404 is an
+  answer rather than a fault.** `/recipe/999999` is an id nobody wrote, and a
+  visitor's `/recipe/<unpublished>` is a Recipe that exists and is not theirs to
+  read; the server deliberately answers both the same way, and so does this — see
+  `views.recipe/not-found` for why the page does not try to tell them apart.
+  Without the handler the status would stay `:loading` and the page would spin
+  forever on a question that had already been answered.
+
+  **The fetch counts as a read**, because it is `?detail=full` and that is what
+  `record-view!` counts. Opening a Recipe's page is a consumption in exactly the
+  way expanding its card is, and the number it moves is the one that ranks the
+  shelf — so this is consistent and intended, and not something to be 'fixed' by
+  fetching lean and filling in the body later.
+
+  Guarded on the id rather than on a request counter, the way
+  `start-diff-at-version` guards on `:diffing`: `:recipe-page-id` is set before the
+  request goes out and there is one page, so a response for a Recipe the reader has
+  since navigated away from has nothing to write to. Reopening the *same* Recipe
+  makes the two responses interchangeable."
+  [id]
+  (api/fetch-json (str "/api/recipes/" id "?detail=full") (auth-headers)
+    (fn [recipe]
+      (when (= id (:recipe-page-id @*app-state))
+        (cache-detail! recipe)
+        (swap! *app-state assoc :recipe-page-status :found)))
+    (fn [_]
+      (when (= id (:recipe-page-id @*app-state))
+        (swap! *app-state assoc :recipe-page-status :missing)))))
 
 (defn toggle-open
   "Expanding is what fetches the body — the collapsed card never had it."
