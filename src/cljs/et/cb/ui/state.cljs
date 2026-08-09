@@ -63,6 +63,12 @@
            ;; row and not two that can disagree.
            :recipe-page-id nil
            :recipe-page-status nil ;; :loading, :found or :missing
+           ;; Whether that page is showing the body's source with its provenance
+           ;; instead of the rendered markdown. **Not persisted and dropped on every
+           ;; move**, by `show-page!`, for the reason the Scopes page's dialogs are:
+           ;; the only button that turns it on is on that page, so one left latched
+           ;; would be a view nobody asked for, waiting for the next Recipe opened.
+           :showing-provenance? false
            :inbox []             ;; the owner's unseen changes his agents made, oldest first
            :dismissing-proposal nil ;; event id of the proposal awaiting a dismiss confirmation
            :machine-user nil     ;; {:exists :username :password_set_at} — never a password
@@ -114,6 +120,7 @@
   page is the shelf' are then states nobody has to be careful about."
   [page recipe-id]
   (swap! *app-state assoc :page page :editing-scope nil :deleting-scope nil
+         :showing-provenance? false
          :recipe-page-id (when (= :recipe page) recipe-id)
          :recipe-page-status (when (= :recipe page) :loading))
   (case page
@@ -608,6 +615,18 @@
     (fn [_]
       (when (= id (:recipe-page-id @*app-state))
         (swap! *app-state assoc :recipe-page-status :missing)))))
+
+(defn toggle-provenance
+  "Show the Recipe page's body as its source, provenance-tinted, or put the rendered
+  markdown back.
+
+  **It fetches nothing.** The split arrived with the body — `caution` rides on the
+  same `?detail=full` response — so this is a view of what is already in `:details`
+  and not a second question asked of the server. Which is also why it can be a plain
+  flip with no request counter and no status of its own, unlike everything above it
+  in this section."
+  []
+  (swap! *app-state update :showing-provenance? not))
 
 (defn toggle-open
   "Expanding is what fetches the body — the collapsed card never had it."

@@ -1115,5 +1115,83 @@ html.dark-mode .inbox-kind.kind-proposed { background: rgba(245, 158, 11, 0.18);
    separate it from, and a box inside a box would only make the page narrower. */
 .recipe-page-body { margin-top: 16px; }
 
+/* The provenance toggle sits over the body's top right, where an editor puts the
+   controls that are about the text rather than part of it, and the legend goes under
+   it — attached to the button that revealed it, and only present while it is on. */
+.recipe-page-body-tools {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  margin-top: 16px;
+}
+.provenance-legend {
+  color: var(--text-secondary);
+  font-size: 0.82em;
+  text-align: right;
+  max-width: 46em;
+  line-height: 1.45;
+}
+
+/* The source view. A grid and not a table, but the columns are the point: the
+   numbers can never push the text out of alignment, and the bar is a column of its
+   own rather than a border, so a row's colour is one solid stripe down the gutter
+   however the text wraps.
+
+   `align-items: stretch` (the default) is what gives an empty line a full-height
+   bar; `min-height` is what stops it collapsing to nothing. A blank line in the
+   middle of a body is a line somebody wrote or did not, and it gets a number and a
+   colour like every other. */
+.provenance-source {
+  margin-top: 10px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg-subtle);
+}
+.provenance-line {
+  display: grid;
+  grid-template-columns: 3.2em 3px 1fr;
+  gap: 0;
+  min-height: 1.55em;
+  /* The wash for this line, mixed from the two ends by its own `--caution`. The
+     fallback keeps an unstyled row honest rather than red: 50% is neither claim. */
+  background: color-mix(in oklab,
+                        var(--provenance-human-wash) var(--caution, 50%),
+                        var(--provenance-agent-wash));
+}
+.provenance-line-number {
+  padding: 0 8px 0 6px;
+  text-align: right;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8em;
+  line-height: 1.55;
+  color: var(--muted-text);
+  /* An editor's gutter is not part of the text. Selecting the body and copying it
+     must not come away with the numbers interleaved. */
+  user-select: none;
+  -webkit-user-select: none;
+}
+.provenance-line-bar {
+  background: color-mix(in oklab,
+                        var(--provenance-human) var(--caution, 50%),
+                        var(--provenance-agent));
+}
+.provenance-line-text {
+  padding: 0 10px 0 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.82em;
+  line-height: 1.55;
+  /* `pre-wrap`, so the stored whitespace is what shows — a fenced block's indent is
+     part of the text — while a long line still wraps instead of scrolling the page
+     sideways. `anywhere` because a URL has no spaces to break at. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* A line the answer did not cover: no claim, so no colour. Not the pale end of the
+   spectrum, which would be a claim. */
+.provenance-line-untold { background: transparent; }
+.provenance-line-untold .provenance-line-bar { background: var(--border-color); }
+
 .recipe-page-missing { color: var(--text-secondary); }
 .recipe-page-missing p { max-width: 46em; line-height: 1.55; }

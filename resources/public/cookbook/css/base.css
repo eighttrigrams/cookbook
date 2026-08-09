@@ -24,6 +24,21 @@
      what is supposed to have replaced it. The two ends of each theme's own
      gradient. */
   --opaque-bg: #fdf7ee;
+  /* The two ends of the provenance spectrum on the Recipe page: blue is a line he
+     saved by hand, red is one an agent wrote. Two properties each, because a line
+     wears both a solid bar in the gutter and a wash behind the whole row — full
+     saturation behind the text would be unreadable on this parchment, and tinting
+     the text itself would cost every line its normal contrast for the sake of a fact
+     the bar already carries.
+
+     Any value between the ends is `color-mix`ed from them per line, which is why
+     they are properties and not literals in `cookbook.css`: the dark theme swaps its
+     own pair in below and every intermediate tint follows without the view knowing
+     there is a theme at all. */
+  --provenance-human: #1d6fd4;
+  --provenance-human-wash: rgba(29, 111, 212, 0.13);
+  --provenance-agent: #d1344b;
+  --provenance-agent-wash: rgba(209, 52, 75, 0.13);
 }
 html.dark-mode {
   color-scheme: dark;
@@ -44,6 +59,12 @@ html.dark-mode {
   --opaque-bg: #1f170d;
   /* The light-mode input border is a black wash, which vanishes on dark. */
   --input-border: rgba(255, 255, 255, 0.12);
+  /* Lifted and desaturated: the light pair is aimed at parchment and goes muddy on
+     this brown, and a wash at 0.13 disappears into it. */
+  --provenance-human: #6aa9f4;
+  --provenance-human-wash: rgba(106, 169, 244, 0.2);
+  --provenance-agent: #f4788a;
+  --provenance-agent-wash: rgba(244, 120, 138, 0.2);
 }
 @media (prefers-color-scheme: dark) {
   :root { --muted-text: #6c6c70; }

@@ -33,6 +33,12 @@
   // Recipe nobody but the owner could ever have reached.
   const SUBJECT = 'Sourdough starter';
 
+  // The provenance phase's Recipe, and the one thing in this file that has to be
+  // made rather than found: a body with a line the API calls 1.00, a line it calls
+  // 0.00, a line strictly between them and a trailing empty one. `provenance-seed.py`
+  // builds it and says why each of those four is needed; `cleanup.py` removes it.
+  const MIXED = 'CHECK-PROV';
+
   const wait = ms => new Promise(r => setTimeout(r, ms));
   const until = async (fn, ms = 5000) => {
     const t0 = Date.now();
@@ -301,6 +307,193 @@
       await step('sign back in', () => st.fetch_auth_required());
       await until(() => stateGet('logged-in?') === true && shelf());
       return done({});
+    },
+
+    // ---- phase four: the provenance view -----------------------------------
+    // **The only phase in this file that needs a fixture**, and the only one that
+    // reads a Recipe it did not find already there. `provenance-seed.py` explains
+    // what CHECK-PROV has that nothing in the dev database is guaranteed to have;
+    // run it before this and `cleanup.py` after.
+    //
+    // Runs last, and from anywhere: it opens the page it is about through
+    // `open_recipe_page`, which is what the card's button calls. It leaves the view
+    // **on**, because that is the thing a human is being asked to look at.
+    provenance: async () => {
+      const {check, step, done, notes} = runner();
+      const subject = rowFor(MIXED);
+      if (!subject) throw new Error('no ' + MIXED + ' Recipe on the shelf — run '
+                                    + 'test/browser/provenance-seed.py first, see README');
+      const id = subject.id;
+      const row = () => (stateGet('details') || {})[id] || {};
+      const toggle = () => document.querySelector('.recipe-page-provenance-toggle');
+      const lines = () => [...document.querySelectorAll('.provenance-line')];
+      const numberOf = el => Number(el.querySelector('.provenance-line-number').textContent);
+      const textOf = el => el.querySelector('.provenance-line-text').textContent;
+      const cautionOf = el => parseFloat(el.style.getPropertyValue('--caution'));
+      const barOf = el => getComputedStyle(el.querySelector('.provenance-line-bar')).backgroundColor;
+      const washOf = el => getComputedStyle(el).backgroundColor;
+      // What the API said, per line, worked out here from the ranges rather than from
+      // the view — so check 9 is comparing two independent readings of one answer and
+      // not the view against itself.
+      const expectedPerLine = () => {
+        const out = [];
+        for (const r of ((row().caution || {}).ranges || []))
+          for (let n = r.from; n <= r.to; n++) out[n - 1] = r.caution;
+        return out;
+      };
+
+      // `open_recipe_page` and not a click, for the reason `signedOut` calls it: this
+      // phase does not care how a reader got here, and it may be started from a page
+      // that has no card to press.
+      await step('open the mixed Recipe at its own address', () => st.open_recipe_page(id));
+      // **Wait for the settled state and not merely for a toggle**, which is the house
+      // rule about waiting on the visible consequence, applied to a phase that may be
+      // started from its own previous run. `show-page!` drops `:showing-provenance?`
+      // on every move, so the settled start is always the rendered body under a
+      // *Show* label — but reagent re-renders a frame later, and a wait that accepted
+      // any toggle returned while the last run's source view was still on screen.
+      // Check 7 then read that as its starting state and went red about the app.
+      await until(() => page() && toggle() && document.querySelector('.recipe-page-body')
+                        && toggle().textContent.trim() === 'Show provenance', 8000);
+      if (!toggle()) throw new Error('no provenance toggle on ' + MIXED
+                                     + ' — is the API sending caution?');
+
+      // 7. **the editor's gesture.** It shows the text, and the rendered body comes
+      //    back when it is turned off — the two never both on screen, in either
+      //    direction, because a reader who could see both would have no way to know
+      //    which one the colours were about.
+      await check('7 the toggle swaps the rendered body for the source, and back', async () => {
+        const snap = () => ({rendered: !!document.querySelector('.recipe-page-body'),
+                             source: !!document.querySelector('.provenance-source'),
+                             label: toggle()?.textContent?.trim()});
+        const before = snap();
+        toggle().click();
+        await until(() => document.querySelector('.provenance-source'));
+        const on = snap();
+        toggle().click();
+        await until(() => document.querySelector('.recipe-page-body'));
+        const off = snap();
+        return {pass: before.rendered && !before.source && before.label === 'Show provenance'
+                      && on.source && !on.rendered && on.label === 'Hide provenance'
+                      && off.rendered && !off.source && off.label === 'Show provenance',
+                evidence: {before, on, off}};
+      });
+
+      // 8. **the numbers, against the text as it is stored.** Two claims in one: the
+      //    rows run 1..n with nothing skipped, and n is the line count the *API*
+      //    numbered its ranges over. The fixture's body ends in a newline on purpose
+      //    — `clojure.string/split-lines` drops that trailing empty line and the
+      //    ranges keep it, so a view built on it draws one row too few, at the end,
+      //    silently. That is what `lastRangeTo` is here to catch.
+      await check('8 the numbers run 1..n over the body as it is stored', async () => {
+        toggle().click();
+        await until(() => document.querySelector('.provenance-source'));
+        const desc = row().description || '';
+        const expected = desc.split('\n').length;   // JS keeps trailing empties; so does the API
+        const ranges = (row().caution || {}).ranges || [];
+        const lastTo = ranges.length ? ranges[ranges.length - 1].to : null;
+        const numbers = lines().map(numberOf);
+        const roundTrips = lines().map(textOf).join('\n') === desc;
+        return {pass: expected > 1 && numbers.length === expected && lastTo === expected
+                      && numbers.every((n, i) => n === i + 1)
+                      && roundTrips && desc.endsWith('\n'),
+                evidence: {linesInTheBody: expected, rowsDrawn: numbers.length,
+                           lastRangeTo: lastTo, numbers,
+                           bodyEndsWithNewline: desc.endsWith('\n'),
+                           textRoundTripsExactly: roundTrips}};
+      });
+
+      // 9. **every line wears the number the API gave that line.** The one silent
+      //    failure the view can have on its own: ranges are inclusive and one-based
+      //    and the rows are a zero-based enumeration, so an off-by-one here tints
+      //    every line with its neighbour's provenance and looks entirely plausible
+      //    doing it.
+      await check('9 each line is tinted with its own caution, not its neighbour\'s', () => {
+        const expected = expectedPerLine();
+        const drawn = lines().map(cautionOf);
+        const mismatches = drawn.map((v, i) => ({line: i + 1, drawn: v, api: expected[i] * 100}))
+                                .filter(x => Math.abs(x.drawn - x.api) > 0.001);
+        return {pass: expected.length === drawn.length && drawn.length > 0
+                      && mismatches.length === 0,
+                evidence: {perLineFromTheApi: expected, perLineOnScreen: drawn, mismatches}};
+      });
+
+      // 10. **a spectrum and not two buckets.** The API hands out numbers between
+      //     the ends, a stretch both have touched is exactly what they are for, and
+      //     thresholding at 0.5 would throw that away while still looking like a
+      //     working feature. So: his end and the agent's end differ, *and* the middle
+      //     is a third colour rather than being rounded onto one of them.
+      await check('10 a line between the ends is a third colour, not rounded to one', () => {
+        const cautions = lines().map(cautionOf);
+        const his = lines()[cautions.indexOf(100)];
+        const theirs = lines()[cautions.indexOf(0)];
+        const middleIdx = cautions.findIndex(v => v > 0 && v < 100);
+        const middle = lines()[middleIdx];
+        if (!his || !theirs || !middle)
+          return {pass: false, evidence: {cautions,
+                    why: 'the fixture must carry 1.00, 0.00 and one in between'}};
+        const bars = {his: barOf(his), theirs: barOf(theirs), middle: barOf(middle)};
+        const washes = {his: washOf(his), theirs: washOf(theirs)};
+        return {pass: bars.his !== bars.theirs
+                      && bars.middle !== bars.his && bars.middle !== bars.theirs
+                      && washes.his !== washes.theirs,
+                evidence: {bars, washes, cautions, middleLine: middleIdx + 1,
+                           barWidth: his.querySelector('.provenance-line-bar')
+                                        .getBoundingClientRect().width}};
+      });
+
+      // 11. **the legend is the API's, not a second wording of it.** It is in the
+      //     response so that one sentence explains this scale everywhere, and a copy
+      //     typed into the cljs is how the page and `/api/describe` come to say
+      //     different things about the same number.
+      await check('11 the legend on the page is the string the API sent', async () => {
+        const shown = text('.provenance-legend');
+        const sent = (row().caution || {}).legend;
+        toggle().click();                         // and it goes away with the view
+        await until(() => !document.querySelector('.provenance-source'));
+        const whenOff = !!document.querySelector('.provenance-legend');
+        toggle().click();
+        await until(() => document.querySelector('.provenance-source'));
+        return {pass: !!sent && sent.length > 20 && shown === sent && !whenOff,
+                evidence: {onThePage: shown, fromTheApi: sent,
+                           stillThereWithTheViewOff: whenOff}};
+      });
+
+      // 12. **the button exists when the answer does, and not when the session
+      //     looks right.** A visitor is served no `caution` key at all — that is the
+      //     API's decision and `caution_integration_test/a-visitor-is-served-no-split`
+      //     is where it is asserted — and this page must not offer a control that
+      //     would then draw nothing. Dev cannot produce a genuine visitor
+      //     (`:dangerously-skip-logins?` serves every request in the owner's
+      //     audience, as this file's header explains for 4a), so what is done here is
+      //     the exact condition a visitor's response creates: the key removed from
+      //     the cached row, the session left signed in. A button keyed off
+      //     `logged-in?` stays on screen and reddens this.
+      await check('12 no caution in the response, no button — even signed in', async () => {
+        const path = c.vector(kw('details'), id);
+        const cached = c.get_in(c.deref(st._STAR_app_state), path);
+        c.swap_BANG_(st._STAR_app_state,
+                     m => c.assoc_in(m, path, c.dissoc(cached, kw('caution'))));
+        await until(() => !toggle());
+        const gone = {toggle: !!toggle(), source: !!document.querySelector('.provenance-source'),
+                      legend: !!document.querySelector('.provenance-legend'),
+                      rendered: !!document.querySelector('.recipe-page-body'),
+                      loggedIn: stateGet('logged-in?')};
+        c.swap_BANG_(st._STAR_app_state, m => c.assoc_in(m, path, cached));
+        await until(() => toggle());
+        return {pass: !gone.toggle && !gone.source && !gone.legend
+                      && gone.rendered && gone.loggedIn === true && !!toggle(),
+                evidence: {withoutTheKey: gone, buttonBackAfterRestoring: !!toggle()}};
+      });
+
+      // Leave it on, and on this Recipe: this is the surface a human is being asked
+      // to look at, and a phase that tidied it away would have him hunt for it.
+      await step('leave the provenance view on', async () => {
+        if (!document.querySelector('.provenance-source')) toggle().click();
+        await until(() => document.querySelector('.provenance-source'));
+      });
+      notes.push('left on ' + path() + ' with the provenance view showing');
+      return done({subject: {id, title: subject.title, url: '/recipe/' + id}});
     },
   };
 })()

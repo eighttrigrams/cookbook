@@ -1,10 +1,20 @@
 (ns et.cb.ui.provenance
-  "What cookbook calls the two places a version of a Recipe can have come from.
+  "What cookbook calls the two places a version of a Recipe can have come from, and
+  how far each *line* of a body leans towards one of them.
 
-  Two surfaces say this — the card's `2(machine)/1(ui)` badge and the version
+  Two surfaces say the first — the card's `2(machine)/1(ui)` badge and the version
   viewer's `Version 2 · ui` label — and they must not name the same fact
   differently. So the names live here once and both read them from here, rather
   than each spelling out its own and drifting.
+
+  The second is the Recipe page's provenance view, and it is the same fact measured
+  differently: the badge counts *versions*, `caution` attributes *the lines of the
+  text as it stands*. A Recipe he wrote once and an agent has since edited nineteen
+  times wears `1(ui)/19(machine)` and still has his opening paragraph at `1.00`. The
+  arithmetic behind that number is `us-vs-them`'s and the API's — nothing here
+  computes it — so what this namespace adds is the one translation the view needs:
+  ranges into lines. See `et.cb.caution` (clj) for the question, and
+  `recipe-handler/get-recipe-handler`'s docstring for the shape it arrives in.
 
   **It was three until migration 010.** `source` was nullable and nil was a
   category of its own: nothing had recorded where that version came from, which was
@@ -12,7 +22,8 @@
   had a column value — an omission on screen reads identically to a bug. The owner
   was asked what those versions were and said they were his, 010 wrote that down
   and made the column `NOT NULL CHECK (source IN ('ui','machine'))`, and so there is
-  no third bucket left to name: every version now says which of the two it is.")
+  no third bucket left to name: every version now says which of the two it is."
+  (:require [clojure.string :as str]))
 
 (def ui-label "ui")
 
@@ -31,3 +42,37 @@
   self-evident from a badge."
   (str "(" ui-label ") saved here by hand, "
        "(" machine-label ") written by an agent"))
+
+(defn split-lines
+  "A description into its lines, **the way the server numbered them**.
+
+  Not `clojure.string/split-lines`, and the difference is not cosmetic: that one
+  drops trailing empty lines, and `caution`'s ranges keep them. A body ending in a
+  newline — which is most bodies typed into a textarea — is `n+1` lines to the API
+  and `n` to `split-lines`, so the view would be one row short of the answer it is
+  drawing, at the end, silently. `-1` keeps them, in cljs as in clj."
+  [description]
+  (str/split (or description "") #"\n" -1))
+
+(defn line-cautions
+  "`caution`'s ranges flattened to one number per line, indexed from 0 for the
+  view's `map-indexed`.
+
+  The API hands back `[{:from :to :caution}]` over one-based inclusive lines,
+  covering the body exactly once and in order, because a range is how the underlying
+  question is answered: the library measures islands of his writing rather than
+  lines, and a stretch's number is a property of the stretch. Expanding it per line
+  is therefore a **view** convenience and not a truer reading of it — every line of
+  one range carries that range's number, including the middling ones.
+
+  `line-count` is passed in rather than taken from the last range, so that the rows
+  and the numbers come from the same string the view is about. They agree today; a
+  view drawn from the text and tinted from a stale answer is the one way they could
+  stop agreeing, and this makes that show up as an untinted row rather than as a
+  colour attributed to the wrong line."
+  [ranges line-count]
+  (let [by-line (reduce (fn [acc {:keys [from to caution]}]
+                          (reduce #(assoc %1 %2 caution) acc (range from (inc to))))
+                        {}
+                        ranges)]
+    (mapv #(get by-line (inc %)) (range line-count))))
