@@ -1052,3 +1052,68 @@ html.dark-mode .inbox-kind.kind-proposed { background: rgba(245, 158, 11, 0.18);
 }
 .diff-header .proposal-dismiss { color: #ff3b30; border-color: #ff3b30; }
 .diff-header .proposal-dismiss:hover { background: rgba(255, 59, 48, 0.1); color: #ff3b30; }
+
+/* --------------------------------------------------------------------------
+   a Recipe's own page
+
+   The one surface in this app that a reader can arrive at from outside it, so it
+   is the one surface that cannot assume the shelf is behind it. It borrows the
+   card's panel — same glass, same radius — because it is the same Recipe, and a
+   page that looked like a different app would make a link feel like a redirect.
+
+   What it does not borrow is the card's density. A card is one of thirteen and is
+   a retrieval index; this is the Recipe, alone, so the title is an `h1`, the body
+   has room, and the header facts sit on a line of their own under the title
+   instead of competing with it for the same line. */
+.recipe-page {
+  padding: 18px 20px 22px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--glass-radius);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+}
+
+/* First in the source and first in the tab order, on all three states — the way
+   off this page has to exist before there is anything to leave. */
+.recipe-page-back { margin-bottom: 14px; }
+
+.recipe-page-header { margin-bottom: 4px; }
+.recipe-page-title {
+  margin: 0;
+  font-size: 1.5em;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+/* `baseline` and not `center`, so the badges sit on the line the date sits on
+   however tall any one of them is; wrapping, because a Recipe filed under four
+   Scopes must not push the reads count off the page. */
+.recipe-page-badges {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+.recipe-page-scopes {
+  display: inline-flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.recipe-page-useful-when {
+  margin-top: 14px;
+  color: var(--text-secondary);
+  font-size: 1em;
+}
+
+/* No inner panel, unlike `.card-body`. On a card the tinted block is what
+   separates the body from the twelve cards around it; here there is nothing to
+   separate it from, and a box inside a box would only make the page narrower. */
+.recipe-page-body { margin-top: 16px; }
+
+.recipe-page-missing { color: var(--text-secondary); }
+.recipe-page-missing p { max-width: 46em; line-height: 1.55; }

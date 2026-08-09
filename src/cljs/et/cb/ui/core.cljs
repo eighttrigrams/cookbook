@@ -3,6 +3,7 @@
             [reagent.core :as r]
             [et.cb.ui.state :as state]
             [et.cb.ui.views.inbox :as inbox]
+            [et.cb.ui.views.recipe :as recipe]
             [et.cb.ui.views.recipes :as recipes]
             [et.cb.ui.views.scopes :as scopes]
             [et.cb.ui.views.settings :as settings]))
@@ -80,24 +81,40 @@
         :else [:button.secondary
                {:on-click #(swap! state/*app-state assoc :show-login? true)} "Sign in"])]]))
 
+(def ^:private owner-only-pages
+  "The pages a signed-out caller is sent away from. Named as a set, because the
+  question the gate below asks changed the day a page arrived that is *not* one of
+  these — see `page-body`."
+  #{:scopes :settings :inbox})
+
 (defn- page-body
-  "Exactly one of the four, chosen by `:page` — the shelf is not a backdrop the
+  "Exactly one of the five, chosen by `:page` — the shelf is not a backdrop the
   others are laid over. It used to be: both panels rendered `(when open?)` and
   the shelf rendered unconditionally underneath, so opening Settings gave you the
   settings *and* the search box, the compose form and every card below it.
 
-  **A caller who is not signed in gets the shelf whatever `:page` says.** The
-  Settings, Scopes and Inbox pages are reached by buttons only the owner has, so a
-  visitor left on one would be looking at a blank page with no way off it — and in
-  the Inbox's case at a page whose one request the server answers with a 403.
-  `logout` already puts `:page` back to `:shelf`; this is the second half of that
-  guarantee, and the one that does not depend on every future writer of the state
-  remembering it."
+  **A caller who is not signed in gets the shelf whatever an owner-only `:page`
+  says.** The Settings, Scopes and Inbox pages are reached by buttons only the
+  owner has, so a visitor left on one would be looking at a blank page with no way
+  off it — and in the Inbox's case at a page whose one request the server answers
+  with a 403. `logout` already puts `:page` back to `:shelf`; this is the second
+  half of that guarantee, and the one that does not depend on every future writer
+  of the state remembering it.
+
+  **The gate used to be `logged-in?` and is now 'is this page owner-only?', because
+  `:recipe` is the first page that is not.** Every sentence above is still true of
+  the three it was written about; what is new is a page a visitor can legitimately
+  be on, since it is reached by an address rather than by a button and a link to a
+  published Recipe that only worked while signed in would not be a link at all.
+  Written the old way, `/recipe/1` would have rendered the shelf for everybody who
+  was not the owner — the URL saying one thing and the screen another, which is
+  exactly the failure the whole address is meant to prevent."
   [logged-in? page]
-  (case (if logged-in? page :shelf)
+  (case (if (and (not logged-in?) (owner-only-pages page)) :shelf page)
     :scopes [scopes/scopes-page]
     :settings [settings/machine-user-block]
     :inbox [inbox/inbox-page]
+    :recipe [recipe/recipe-page]
     [:div.main-layout
      [recipes/recipes-tab]]))
 
@@ -117,5 +134,17 @@
 
 (defn init []
   (state/setup-dark-mode!)
+  ;; Back and Forward. **The whole view is re-derived from the URL**, which is
+  ;; personalist's shape (`et.pe.ui.core/init`) rather than tracker's: tracker's
+  ;; handler only closes a modal, and it is right to, because its address names a
+  ;; modal over a page that never moved. Here the address names the *page*, so Back
+  ;; from a Recipe has to land on the shelf and Forward has to land on the Recipe
+  ;; again — and it must not push, because the browser has already moved the bar.
+  ;;
+  ;; Registered here rather than beside the fetch below because a listener belongs
+  ;; to the window and not to a round trip: `fetch-auth-required` is what calls
+  ;; `sync-from-url!` for the *first* reading, and it does so from inside its own
+  ;; callback, where who is calling is finally known.
+  (.addEventListener js/window "popstate" (fn [_] (state/sync-from-url!)))
   (state/fetch-auth-required)
   (rdomc/render root [app]))
