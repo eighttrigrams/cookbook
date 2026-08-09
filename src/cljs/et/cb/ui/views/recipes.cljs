@@ -45,8 +45,15 @@
   **Tags** are the owner's extra search words. They are searched for everybody,
   including a signed-out visitor, and displayed to nobody but the owner — and the
   displaying half is the *server's* doing, not this file's: a visitor's rows arrive
-  with no `tags` key at all. The `logged-in?` gate on `card-tags` is cosmetic, and
-  the comment there says why that distinction has to be kept.
+  with no `tags` key at all. The `logged-in?` gate on `recipe-badges/tags` is
+  cosmetic, and the docstring there says why that distinction has to be kept.
+
+  **The six header facts are `et.cb.ui.recipe-badges`' and not this file's**, since
+  a Recipe's own page (`views/recipe`) shows the same Recipe and says the same
+  things about it — the argument `et.cb.ui.provenance` and `et.cb.ui.scope-badges`
+  each already make about two surfaces naming one fact. What stays here is what is
+  the *shelf's*: the header placement, the expand-on-click it sits inside, and the
+  shift+click gesture over the Scope badges.
 
   **Scopes** are the other half of the filing, and they sit in the collapsed card's
   header beside the version and published badges — which is where they belong,
@@ -78,14 +85,10 @@
   (:require [reagent.core :as r]
             [clojure.string :as str]
             [et.cb.ui.markdown :as markdown]
-            [et.cb.ui.provenance :as provenance]
+            [et.cb.ui.recipe-badges :as recipe-badges]
             [et.cb.ui.scope-badges :as scope-badges]
             [et.cb.ui.state :as state]
             [et.cb.ui.views.diff :as diff]))
-
-(defn- day [timestamp]
-  (when (seq (str timestamp))
-    (first (str/split (str timestamp) #" "))))
 
 (def ^:private tags-placeholder "Tags — extra words to find this by")
 
@@ -281,116 +284,6 @@
       [:div.card-body [markdown/render (:description detail)]])
     [:div.card-body-loading "Loading…"]))
 
-(def ^:private source-badge-title
-  "Spelled out because the two words decide who to trust for a Recipe's text, which
-  a bare `3(machine)/17(ui)` does not say. The sentence itself comes from
-  `et.cb.ui.provenance`, so this badge and the version viewer's label cannot end up
-  naming the same fact differently."
-  (str "Where this Recipe's versions came from — " provenance/explanation))
-
-(defn- source-split
-  "`3(machine)/17(ui)`, and only the buckets that have something in them: a
-  Recipe nothing has written by machine says `17(ui)` rather than carrying a `0`
-  around. Both empty cannot happen — the counts sum to the version number, so
-  there is always at least one — but a listing row from an older server would have
-  no counts at all, and that renders as nothing rather than as `0(ui)`.
-
-  **Two buckets, since migration 010.** There was a third, for versions whose
-  origin nothing had recorded; the owner said those were his, 010 wrote it down, and
-  the column cannot hold a third value any more. A row from a server older than that
-  would still carry `unrecorded_versions`, and this ignores it rather than showing a
-  bucket the app no longer has a word for.
-
-  The bucket names are the shared ones, for the reason above the tooltip."
-  [{:keys [machine_versions ui_versions]}]
-  (let [buckets (->> [[machine_versions provenance/machine-label]
-                      [ui_versions provenance/ui-label]]
-                     (filter (fn [[n _]] (and (number? n) (pos? n))))
-                     (map (fn [[n label]] (str n "(" label ")"))))]
-    (when (seq buckets)
-      [:span.source-badge {:title source-badge-title} (str/join "/" buckets)])))
-
-(def ^:private views-badge-title
-  "One sentence, and it has to carry three things a bare number does not: that a
-  *listing* is not a read, that everybody's reads are in there and not only the
-  owner's, and that the count starts where migration 008 does — a Recipe written
-  last year and read a hundred times says 0 until somebody opens it again.
-
-  Kept here rather than in `et.cb.ui.provenance`, and that is a judgement call
-  worth stating: that namespace exists because *two* surfaces named the same fact
-  and drifted. This fact has one surface. The API's own wording of it lives in
-  `recipe-handler/get-recipe-handler`'s docstring, which is not a second copy but
-  a different medium — an agent reads that one out of /api/describe. The day a
-  second view in here shows the count, this string moves next to the provenance
-  labels rather than being spelled out twice."
-  (str "How often this Recipe was actually read — its text fetched in full, here "
-       "or through the API, by anyone — never counting a listing, and only since "
-       "cookbook started counting"))
-
-(defn- views-badge
-  "`12 reads`, beside the version pair, because it is the same kind of fact: a
-  count the server keeps about this Recipe, on the one line that says what the
-  Recipe is.
-
-  **A `0` is shown**, unlike an empty bucket in `source-split`. There the zero is
-  a non-fact — nothing wrote a machine version, so saying `0(machine)` would only
-  add noise — while here it is the reading itself: nobody has opened this since
-  the count began, which is exactly what the ranking below acts on. What is *not*
-  shown is a missing key, which is what a listing row from an older server would
-  carry, and that renders as nothing rather than as `0 reads`."
-  [view-count]
-  (when (number? view-count)
-    [:span.views-badge {:title views-badge-title}
-     (str view-count (if (= 1 view-count) " read" " reads"))]))
-
-(def ^:private pending-badge-title
-  "Three things a one-word badge does not say: what is waiting, that the Recipe
-  still reads as it always did, and where to go about it. The last one is the
-  point — this badge is not a control, so it has to name the page that is."
-  (str "An agent proposes to rewrite this Recipe and is waiting for you. Nothing "
-       "here has changed yet — approve or dismiss it in the Inbox"))
-
-(defn- pending-badge
-  "That a proposal is waiting on this Recipe, on the collapsed card.
-
-  **This is why `pending` is on a lean listing row at all.** The flag was put
-  there so the shelf could show it, and until now only the reads had it: a
-  collapsed card is exactly the place that cannot go and fetch a proposal, so
-  without the flag the shelf could not say that one was queued.
-
-  **It is a badge and not a control.** Approving or dismissing happens in the
-  Inbox, where the agent's text can be read against the Recipe's own — a decision
-  nobody should make from a word on a card — so nothing here is clickable and the
-  tooltip says where to go instead.
-
-  **The `logged-in?` gate at the call site is cosmetic and must not be read as the
-  boundary**, the same distinction `card-tags` draws: a visitor's projection does
-  not name the column, so a signed-out client is not holding a `pending` it has
-  been asked not to draw — there is no key in what it was sent. Deleting the gate
-  would show a visitor nothing extra; deleting the server half would tell strangers
-  which of the owner's Recipes an agent is queued to rewrite."
-  []
-  [:span.pending-badge {:title pending-badge-title} "proposal"])
-
-(defn- card-tags
-  "The owner's extra search words, on his own card.
-
-  **This gate is cosmetic and must not be read as the privacy boundary.** The
-  boundary is the server: a visitor's projection does not name the `tags` column,
-  so a signed-out client is not holding tags it has been asked not to draw — there
-  is no `tags` key in what it was sent, and `logged-in?` here would be redundant if
-  the client could be trusted, which is exactly why it is not the mechanism.
-  Do not 'simplify' `select-columns` on the grounds that this hides them; deleting
-  this line would show nothing extra, and deleting the server half would publish
-  the owner's filing.
-
-  Rendered as plain text rather than through the markdown renderer the other
-  fields use: these are search words, not prose, and a stray `_` in one is a
-  character and not emphasis — the same reading the search itself gives it."
-  [tags]
-  [:div.card-tags {:title "Extra words this Recipe can be found by — yours alone"}
-   tags])
-
 (def ^:private scope-badge-hint
   "The gesture, spelled out on every badge, because a modifier key is the one
   affordance a reader cannot see. Tracker gets away without saying it — its badges
@@ -442,7 +335,7 @@
   was not looking at anywhere else.
 
   **This gate is cosmetic and must not be read as the privacy boundary**, exactly
-  as with `card-tags`. The boundary is the server: for a visitor the join is not run
+  as with `recipe-badges/tags`. The boundary is the server: for a visitor the join is not run
   at all, so a signed-out client holds no `scopes` key to draw and `logged-in?` here
   would be redundant if the client could be trusted — which is precisely why it is
   not the mechanism. Do not 'simplify' `db.recipe/with-scopes` on the grounds that
@@ -469,9 +362,7 @@
       [:span.card-toggle (if expanded? "▾" "▸")]
       [:h2.card-title [markdown/render-inline title]]
       (when (and logged-in? published?)
-        [:span.published-badge {:title (str "Published " (day published_at)
-                                            " — public, and one way")}
-         "published"])
+        [recipe-badges/published-badge published_at])
       ;; Next to the latch rather than next to the counts: both are states the
       ;; Recipe is *in* — one settled and one waiting — where the version, the
       ;; provenance split and the reads are all numbers about its past. And a
@@ -479,21 +370,21 @@
       ;; against a published Recipe, and what a visitor sees stays the approved
       ;; version until he says otherwise.
       (when (and logged-in? pending?)
-        [pending-badge])
+        [recipe-badges/pending-badge])
       (when (and logged-in? (seq scopes))
         [card-scopes scopes])
-      [:span.version-badge {:title "Every edit makes a new version"} (str "v" version)]
-      [source-split recipe]
+      [recipe-badges/version-badge version]
+      [recipe-badges/source-split recipe]
       ;; Not gated on `logged-in?`, for the same reason the version badge is not:
       ;; it is a fact about the Recipe rather than about the owner's filing, and
       ;; the server puts it in the visitor's projection deliberately. It also
       ;; explains the order of the shelf a visitor is looking at.
-      [views-badge view_count]
-      [:span.card-date (day modified_at)]]
+      [recipe-badges/views-badge view_count]
+      [:span.card-date (recipe-badges/day modified_at)]]
      (when (seq useful_when)
        [:div.card-useful-when [markdown/render-inline useful_when]])
      (when (and logged-in? (seq tags))
-       [card-tags tags])
+       [recipe-badges/tags tags {:class "card-tags"}])
      (when expanded?
        [card-body (get details id)])
      (when logged-in?
@@ -511,6 +402,20 @@
           {:on-click #(state/start-diff id)
            :title "Step through every version and see what each save changed"}
           "Versions"]
+         ;; **"Page" and not "Open"**, because expanding the card is what "open"
+         ;; already means here — a reader with both words in front of them would
+         ;; have to guess which one leaves the shelf. What this does is put the
+         ;; Recipe at an address, so it is named after the thing it takes you to.
+         ;;
+         ;; It sits in the owner's footer with the other four, which is what "a
+         ;; fifth button" means — and the consequence is worth stating rather than
+         ;; discovering: a signed-out visitor has no footer, so from the shelf there
+         ;; is no button to a Recipe's page. They can still *follow* a link to a
+         ;; published one, which is what the address is for.
+         [:button.secondary
+          {:on-click #(state/open-recipe-page id)
+           :title "Open this Recipe on a page of its own, at an address you can keep"}
+          "Page"]
          [:button.secondary.danger {:on-click #(state/start-deleting id)} "Delete"]]])]))
 
 (defn- excluded-scopes-strip
