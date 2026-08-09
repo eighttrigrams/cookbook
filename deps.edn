@@ -13,7 +13,13 @@
         buddy/buddy {:mvn/version "2.0.0"}
         nrepl/nrepl {:mvn/version "1.7.0"}
         com.taoensso/telemere {:mvn/version "1.2.1"}
-        aero/aero {:mvn/version "1.1.6"}}
+        aero/aero {:mvn/version "1.1.6"}
+        ;; The sibling checkout, by :local/root like every other cross-app
+        ;; dependency in this suite — plurama's own deps.edn names cookbook the
+        ;; same way. It resolves relative to *this* file, so the umbrella build
+        ;; follows it from /opt/cookbook to /opt/us-vs-them and the deploy has to
+        ;; put it there: see plurama/Dockerfile and the workspace .dockerignore.
+        eighttrigrams/us-vs-them {:local/root "../us-vs-them"}}
  :aliases {:run {:exec-fn et.cb.server/-main}
            :test {:extra-paths ["test/unit" "test/integration"]
                   :extra-deps {io.github.cognitect-labs/test-runner {:git/tag "v0.5.1"

@@ -1,5 +1,6 @@
 (ns et.cb.server.recipe-handler
   (:require [clojure.string :as str]
+            [et.cb.caution :as caution]
             [et.cb.server.common :as common]
             [et.cb.db.proposal :as db.proposal]
             [et.cb.db.recipe :as db.recipe]))
@@ -121,6 +122,41 @@
   (if (common/authenticated? req)
     (common/get-user-id req)
     db.recipe/visitor-audience))
+
+(defn- caution-body
+  "The line-level provenance split for one Recipe's body, or nil for a caller who
+  is not to be served it.
+
+  **The legend rides with the ranges, in one key**, because neither half is
+  meaningful alone: the numbers need reading and the reading is about nothing
+  without them. A sibling `caution_legend` would also be two keys for a rule that
+  wants to be one omission — see the visitor paragraph below, which has to take the
+  legend away too, and would be a bug the day it took away only one of them.
+
+  **Only on a `?detail=full` read of one Recipe, and only for a logged-in caller.**
+  Both halves of that are decided here rather than in `et.cb.caution`, which is
+  arithmetic and has no audience: this is where the app already knows whether a
+  body was handed over and to whom.
+
+  The visitor refusal is the history's refusal, inherited. These ranges are derived
+  from `list-versions`, which answers 404 for an anonymous caller at every id —
+  publishing puts today's text in public, not the record of who wrote which part of
+  it. So the key is absent for a visitor, like `tags` and `scopes`, rather than
+  present and empty.
+
+  **It costs a second read and a fold over the whole history**, on the app's
+  hottest route: `list-versions` re-reads the row and selects every history row for
+  it, and `assess` then diffs each version against the one before it. That is
+  linear in versions and quadratic in lines, which is nothing at the size of a
+  Recipe and is the thing to look at first if this route ever gets slow. It is not
+  cached and there is no column for it, deliberately — a stored split could come to
+  disagree with the labels the version list shows, which is the argument
+  `db.recipe/source-split-columns` already makes about the counts on the card."
+  [ds req id]
+  (when (common/authenticated? req)
+    {:legend caution/legend
+     :ranges (caution/ranges
+              (:versions (db.recipe/list-versions ds (common/get-user-id req) id)))}))
 
 (defn list-recipes-handler
   "GET /api/recipes — the caller's recipes, **ranked by how much they are used**,
@@ -286,6 +322,37 @@
   anonymous reader the approved text and no part of the proposal. What a visitor is
   shown is the last approved version, always.
 
+  **`caution` is the line-level provenance split of the body**, and it rides along
+  on a ?detail=full read only — there is no body on a lean one for it to be about.
+  It is `{legend, ranges}`. `ranges` is `[{from, to, caution}]`: ranges of the
+  description's lines, one-based and inclusive, each with a number from `1.0` — his,
+  treat as sacred — down to `0.0` — an agent's, up for grabs — and the spectrum in
+  between where a stretch has been written by both. They cover the body exactly once,
+  in order, and adjacent lines that come out at the same number are one range.
+
+  `legend` is that scale said in one line, and it is in the response **on every full
+  read** rather than here only: you may have fetched one Recipe and never read this
+  text, and a bare `0.0` beside a line range is a number you would have to already
+  know how to read. It is the same string every time — it explains the spectrum, not
+  this Recipe's answer — so it is documentation to read once and thereafter a
+  constant, not a field to branch on.
+
+  **It is not the counts on the listing asked again.** `machine_versions` and
+  `ui_versions` say how many *versions* came from where; this says which *lines of
+  the text as it stands now* did. A Recipe he wrote once and an agent has edited
+  nineteen times reads `1(ui)/19(machine)` on its card while his opening paragraph
+  still reads `1.00` here. That is the point of it: an agent about to rewrite this
+  body can see which parts of it are its own to redo and which are his to leave
+  alone, which the version counts cannot tell it.
+
+  It is computed from the Recipe's version history by `us-vs-them`, a sibling
+  library, and it is an **estimate** — a diff-based attribution and not a record
+  anybody kept per line. A machine token is served it, deliberately: it is the one
+  number in this API written for an agent to act on. **A visitor gets no `caution`
+  key at all**, legend included, at any ?detail, because it is derived from the
+  version history and the history is the owner's — GET /api/recipes/:id/versions is
+  a 404 for an anonymous caller at every id, published or not.
+
   **A ?detail=full read of an existing Recipe counts as a consumption**: it bumps
   that Recipe's `view_count`, which is how the shelf is ranked (see GET
   /api/recipes). This request is the only one in the API that hands back the
@@ -313,7 +380,14 @@
         ;; other reading is the one a reviewer will assume, hence this comment:
         ;; the next listing shows the incremented value.
         (when full? (db.recipe/record-view! ds id))
-        {:status 200 :body recipe})
+        ;; `full?` is asked here rather than inside `caution-body` because it is
+        ;; a fact about *this response* — there is no body on a lean read for a
+        ;; split to be about — while who may be served one is a fact about the
+        ;; caller, and that lives in the one function. nil for either reason leaves
+        ;; the key off entirely rather than null, which is the shape `tags` and
+        ;; `scopes` already take for a caller who may not have them.
+        (let [split (when full? (caution-body ds req id))]
+          {:status 200 :body (cond-> recipe split (assoc :caution split))}))
       {:status 404 :body {:error "Recipe not found"}})))
 
 (defn add-recipe-handler
