@@ -109,14 +109,27 @@
   same fact twice, two paragraphs apart, with only one of them able to be wrong.
 
   Drawn by both of this page's modes, reading and editing, which is what makes it
-  the page's identity rather than the reading's."
+  the page's identity rather than the reading's.
+
+  **`corner` is whatever belongs in the panel's top-right, level with the title** —
+  today the provenance toggle, in both modes. *also it should be placed in the top
+  right corner of that REcipe's space.* It is passed in rather than reached for, so
+  this function stays a statement of what the Recipe *is* and holds no opinion about
+  the controls that happen to sit beside the title; the two modes each hand it their
+  own, and either may hand it nothing."
   [{:keys [title tags version published published_at modified_at view_count pending]
     :as recipe}
-   logged-in?]
+   logged-in? corner]
   (let [published? (= 1 published)
         pending? (= 1 pending)]
     [:div.recipe-page-header
-     [:h1.recipe-page-title [markdown/render-inline title]]
+     ;; The title and the corner share a line, which is what *top right corner* means
+     ;; here — the corner of the panel and not of the body below it. A row rather than
+     ;; a float, so a title long enough to reach the button pushes it rather than
+     ;; running under it.
+     [:div.recipe-page-title-row
+      [:h1.recipe-page-title [markdown/render-inline title]]
+      corner]
      [:div.recipe-page-badges
       (when (and logged-in? published?)
         [recipe-badges/published-badge published_at])
@@ -290,21 +303,26 @@
                 "instead of the rendered text")}
    (if showing? "Hide provenance" "Show provenance")])
 
-(defn- provenance-tools
-  "The toggle, and the legend while it is on — the row that sits over the body in
-  **both** of this page's modes.
+(defn- provenance-legend
+  "The legend, over the body, while the source view is up.
 
-  One component and not one per mode, because the two are the same control saying the
-  same thing about the same field: the reading tints the stored body and the editor
-  tints the draft, and a reader who has met one has met the other. Which of the two
-  bodies is being described is `source-view`'s caller's business, not this row's.
+  **It stayed when the toggle moved to the corner.** The toggle is a control about the
+  page and belongs with the title; this explains the *tints*, so it belongs with the
+  thing being tinted — a legend in a corner would be a sentence about something two
+  paragraphs away.
 
-  The legend is the API's own string in both modes. It explains the *scale*, and the
-  scale does not change because the text is unsaved."
-  [showing? legend]
+  It renders only with the legend in it, and that is why the `when` is at the call
+  sites rather than in here: `.recipe-page-body-tools` used to hold the toggle as well,
+  so it was on the page whether the view was up or not. With only the legend left, a
+  row that rendered unconditionally would be an empty one with the panel's spacing
+  around it — the fifth time this run of work has met that, after music's card footer,
+  this panel's top edge, the diff header's ✕ and the Publish-only row.
+
+  The API's own string in both modes: it explains the *scale*, and the scale does not
+  change because the text is unsaved."
+  [legend]
   [:div.recipe-page-body-tools
-   [provenance-toggle showing?]
-   (when showing? [:div.provenance-legend legend])])
+   [:div.provenance-legend legend]])
 
 (defn- source-line
   "One source line: its number, its provenance, and the text exactly as it is stored.
@@ -409,9 +427,16 @@
   thing being avoided: on a long Recipe, Delete is a scroll away. That is the trade, and
   a reader six months from now should find it here rather than a silent reversal.
 
-  `provenance-tools` sits between them, above the body, for the reading it always had:
-  Publish is what you can *do* to the Recipe and the toggle is how you want to *look* at
-  it, and the doing is not a property of the text.
+  **The provenance toggle used to sit between them, above the body, and the argument for
+  it is recorded here because it was half overruled.** It ran: Publish is what you can
+  *do* to the Recipe and the toggle is how you want to *look* at it, and the doing is not
+  a property of the text. **The distinction survives and is still why they are not one
+  row** — what did not survive is the conclusion that the looking-at control therefore
+  belongs over the body. He asked for the corner — *also it should be placed in the top
+  right corner of that REcipe's space* — and the corner says the same thing more plainly:
+  a control level with the title is about the page, where one over the body reads as
+  being about the body. Only the **legend** stayed down there, with the tints it
+  explains.
 
   The tab order comes out right without being arranged here, and the move made it
   stronger: the bar precedes the panel in the document, so `← Shelf`, Edit and Versions
@@ -435,15 +460,15 @@
         offered? (and (seq ranges) (not blank?))
         showing? (and offered? showing-provenance?)]
     [:<>
-     [header recipe logged-in?]
+     [header recipe logged-in? (when offered? [provenance-toggle showing?])]
      (when logged-in?
        [scope-filing recipe])
      (when (seq (:useful_when recipe))
        [:div.recipe-page-useful-when [markdown/render-inline (:useful_when recipe)]])
      (when logged-in?
        [mutating-actions recipe])
-     (when offered?
-       [provenance-tools showing? legend])
+     (when showing?
+       [provenance-legend legend])
      (cond
        blank? [:div.card-body-empty "No body yet."]
        ;; The reading's lines *are* the lines the ranges index, so the alignment is the
@@ -519,7 +544,7 @@
         offered? (and (seq ranges) (not (str/blank? description)))
         showing? (and offered? (:showing-provenance? @state/*app-state))]
     [:<>
-     [header recipe logged-in?]
+     [header recipe logged-in? (when offered? [provenance-toggle showing?])]
      [:div.recipe-page-edit
       [:input.recipe-page-edit-title
        {:type "text" :placeholder "Title"
@@ -533,8 +558,8 @@
        {:type "text" :placeholder recipe-fields/tags-placeholder
         :value tags
         :on-change #(state/set-recipe-draft-field :tags (-> % .-target .-value))}]
-      (when offered?
-        [provenance-tools showing? legend])
+      (when showing?
+        [provenance-legend legend])
       (if showing?
         ;; The **stored** body is what the ranges are about, so it is what the draft is
         ;; aligned against — `(:description recipe)` and not the draft's own text.

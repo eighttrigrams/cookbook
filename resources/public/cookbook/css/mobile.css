@@ -16,6 +16,21 @@
   .top-bar-right { flex-wrap: wrap; }
   .modal-backdrop { padding: 12px; align-items: flex-start; }
   .modal { margin-top: 12px; }
+  /* **The panel's corner control goes above the title rather than beside it.** On a
+     wide panel the two share a line and a long title pushes the button; at this width
+     there is not enough room for both, and keeping them on one line squeezes the title
+     into a four-word-wide ribbon while the button keeps its full width — measured, and
+     it is the worse of the two failures. `column-reverse` puts the button at the top
+     right, which is where it was asked to be, and gives the title the whole width
+     underneath. The DOM order is unchanged, so a reader who is not looking at it still
+     meets the title first. */
+  .recipe-page-title-row {
+    flex-direction: column-reverse;
+    align-items: flex-end;
+    gap: 10px;
+  }
+  .recipe-page-title-row > .recipe-page-title { margin-right: 0; align-self: stretch; }
+
   .diff-page { padding: 14px 12px 32px; }
   /* The same arithmetic as the desktop rule, with this breakpoint's numbers: body's
      14px top padding, the bar's 32px, and the 16px it keeps below itself here. */

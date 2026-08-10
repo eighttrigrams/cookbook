@@ -1114,6 +1114,18 @@ html.dark-mode .inbox-kind.kind-proposed { background: rgba(245, 158, 11, 0.18);
    because the class is how a check finds the way out of a not-found page. */
 
 .recipe-page-header { margin-bottom: 4px; }
+/* The title and whatever the panel's top-right corner holds, on one line. `baseline`
+   so the button sits on the title's baseline rather than floating in the middle of a
+   two-line heading, and `gap` with `margin-right: auto` on the title so a long title
+   pushes the corner instead of sliding under it. The corner shrinks last: a title has
+   somewhere to wrap to and a button does not. */
+.recipe-page-title-row {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+}
+.recipe-page-title-row > .recipe-page-title { margin-right: auto; }
+.recipe-page-title-row > button { flex: 0 0 auto; }
 .recipe-page-title {
   margin: 0;
   font-size: 1.5em;
@@ -1216,14 +1228,16 @@ html.dark-mode .inbox-kind.kind-proposed { background: rgba(245, 158, 11, 0.18);
    separate it from, and a box inside a box would only make the page narrower. */
 .recipe-page-body { margin-top: 16px; }
 
-/* The provenance toggle sits over the body's top right, where an editor puts the
-   controls that are about the text rather than part of it, and the legend goes under
-   it — attached to the button that revealed it, and only present while it is on. */
+/* The **legend** over the body, right-aligned where the toggle that revealed it used
+   to be. The toggle has gone to the panel's top-right corner, level with the title —
+   it is a control about the page — and this stayed with the tints it explains. The row
+   is only in the document while the source view is up, which is `views/recipe`'s call
+   sites and not a rule here: with the toggle gone it would otherwise be an empty row
+   carrying this margin. */
 .recipe-page-body-tools {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 6px;
   margin-top: 16px;
 }
 /* Wide enough that the legend is one line on a desktop — at 46em it wrapped with a
