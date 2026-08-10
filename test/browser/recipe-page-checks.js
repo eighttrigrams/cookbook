@@ -120,7 +120,24 @@
       const cardBadges = badgesIn(cardFor(SUBJECT)?.querySelector('.card-header'));
       await step('collapse it again', () => clickIn(cardFor(SUBJECT), '.card-header'));
 
-      // 1. the fifth button navigates, and what it lands on is the Recipe
+      // 13. **the card's footer is one button.** Publish, Edit, Versions and Delete
+      //     were beside Page and are on the Recipe's page now — *all the buttons go
+      //     to that page then* — so a footer that grew a fifth button back is this
+      //     change coming undone. Every card and not only the subject's: the footer
+      //     is `card`'s and one Recipe's would pass while the rest regressed.
+      //
+      //     It runs before check 1 because check 1 navigates. Numbers here are names
+      //     and not positions, which the README says at length.
+      await check('13 a card carries Page and nothing else', () => {
+        const perCard = cards().map(c => ({
+          title: c.querySelector('.card-title')?.textContent?.trim().slice(0, 30),
+          buttons: [...c.querySelectorAll('.card-actions button')].map(b => b.textContent.trim())}));
+        return {pass: perCard.length > 0
+                      && perCard.every(c => c.buttons.length === 1 && c.buttons[0] === 'Page'),
+                evidence: {loggedIn: stateGet('logged-in?'), perCard}};
+      });
+
+      // 1. the one button navigates, and what it lands on is the Recipe
       await check('1 the Page button opens the Recipe at its own address', async () => {
         clickIn(cardFor(SUBJECT), '.card-actions button', 'Page');
         await until(() => page() && document.querySelector('.recipe-page-body'));
@@ -149,6 +166,30 @@
         return {pass: cardBadges.length >= 5 && missing.length === 0
                       && onPage.includes('source-badge'),
                 evidence: {onTheCard: cardBadges, onThePage: onPage, missing}};
+      });
+
+      // 14. **and the four are here instead**, which is the other half of 13: the
+      //     removal alone would have made publishing, editing, version-viewing and
+      //     deleting unreachable in the whole UI, since the card footer was the only
+      //     caller of all four `state/start-*` fns. Asserted as the *set* of labels,
+      //     so a fifth control appearing in the row reddens this too.
+      //
+      //     SUBJECT is published, so the expected set is the three: Publish is
+      //     conditional on the latch, exactly as it was on the card. The row's own
+      //     `published` flag is in the evidence, so a run against an unpublished
+      //     SUBJECT says why it wants four rather than looking arbitrary.
+      await check('14 the Recipe page carries the four actions, Publish by the latch', () => {
+        const labels = [...document.querySelectorAll('.recipe-page-actions button')]
+          .map(b => b.textContent.trim());
+        const published = subject.published === 1;
+        const expected = published ? ['Edit', 'Versions', 'Delete']
+                                   : ['Publish', 'Edit', 'Versions', 'Delete'];
+        const danger = [...document.querySelectorAll('.recipe-page-actions button.danger')]
+          .map(b => b.textContent.trim());
+        return {pass: labels.join(',') === expected.join(',') && danger.join(',') === 'Delete',
+                evidence: {onThePage: labels, expected, published,
+                           wearingDanger: danger,
+                           ownerOnly: stateGet('logged-in?')}};
       });
 
       // 3. Back and Forward. Nothing reloads — every move so far was a pushState —
@@ -218,7 +259,7 @@
     // and the page renders because the client never left the document. This is the
     // load that goes to the server first, and it is why `GET /recipe/*` exists.
     coldLoad: async () => {
-      const {check, done} = runner();
+      const {check, step, done} = runner();
       await check('2 a cold load of the address lands on the Recipe, not on a 404', async () => {
         await until(() => page() && document.querySelector('.recipe-page-body'), 8000);
         const id = Number(path().split('/')[2]);
@@ -233,6 +274,68 @@
                            status: stateGet('recipe-page-status'),
                            recipePageId: stateGet('recipe-page-id'), askedFor: id,
                            cachedTitle: row.title}};
+      });
+
+      // 15. **the overlays draw on a page the shelf's listing had nothing to do
+      //     with**, and this is the one check that could have caught the bug the
+      //     actions were moved *into*. `publish-modal` and `delete-modal` used to
+      //     find their Recipe with a filter over `:recipes`; that is a narrowed,
+      //     ranked answer to a question this page never asked, so a Recipe missing
+      //     from it — hidden Scope, active search, or simply a listing that has not
+      //     landed yet — got a confirmation that silently did not render. They read
+      //     `:details` now, which is where this page's own fetch put the row.
+      //
+      //     Here rather than in `shelf()` for the reason this phase exists at all: a
+      //     click through from the shelf cannot see it, because the shelf's fetch has
+      //     already happened. This phase makes the closest thing a browser can
+      //     reach — a context that was never on the shelf — and to make the
+      //     independence unmistakable it **empties `:recipes` first**, which is
+      //     `checks.js` 12's technique: build the exact condition the failure needs
+      //     and leave the rest of the session alone.
+      //
+      //     Only Cancel is ever pressed. This file writes nothing and that stays
+      //     true — a Delete confirmation opened and dismissed is two renders.
+      await check('15 the confirmations draw from the page\'s own row, not the listing',
+        async () => {
+          const before = (stateGet('recipes') || []).length;
+          c.swap_BANG_(st._STAR_app_state, m => c.assoc(m, kw('recipes'), c.vector()));
+          await until(() => (stateGet('recipes') || []).length === 0);
+          const act = label => [...document.querySelectorAll('.recipe-page-actions button')]
+            .find(b => b.textContent.trim() === label);
+          const modal = () => document.querySelector('.modal-backdrop');
+          const evidence = {rowsInTheListing: (stateGet('recipes') || []).length,
+                            rowsBefore: before};
+
+          act('Delete').click();
+          const dm = await until(() => modal());
+          evidence.deleteConfirmation = {shown: !!dm,
+            subtitle: dm?.querySelector('.modal-subtitle')?.textContent?.trim(),
+            note: dm?.querySelector('.modal-note')?.textContent?.trim()};
+          dm && clickIn(dm.querySelector('.modal-actions'), 'button.secondary', 'Cancel');
+          await until(() => !modal());
+
+          act('Edit').click();
+          const em = await until(() => modal());
+          evidence.editForm = {shown: !!em,
+            subtitle: em?.querySelector('.modal-subtitle')?.textContent?.trim(),
+            prefilledTitle: em?.querySelector('input')?.value};
+          em && clickIn(em.querySelector('.modal-actions'), 'button.secondary', 'Cancel');
+          await until(() => !modal());
+
+          const d = evidence.deleteConfirmation, e = evidence.editForm;
+          return {pass: evidence.rowsInTheListing === 0
+                        && !!d.shown && (d.subtitle || '').includes(SUBJECT)
+                        && /version/.test(d.note || '')
+                        && !!e.shown && (e.prefilledTitle || '').includes(SUBJECT)
+                        && !modal(),
+                  evidence};
+        });
+
+      // and put the listing back, so a session left open here is the one that was
+      // found — the check emptied it, nothing else did
+      await step('refetch the listing', async () => {
+        st.fetch_recipes();
+        await until(() => (stateGet('recipes') || []).length > 0);
       });
       return done({});
     },

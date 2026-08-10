@@ -74,9 +74,16 @@
   exclusion is seen and undone, and it is not decoration; the reason is written
   down there.
 
-  Publishing happens from the card, behind a confirmation, and only the owner
-  sees the affordance. It is one way — the API has no unpublish — so a published
-  card loses its Publish button and wears a badge instead.
+  **A card's footer carries one button, and it is *Page*.** Publishing, editing,
+  deleting and reading a version history were four buttons beside it and are on the
+  Recipe's own page now (`views.recipe/actions`) — *all the buttons go to that page
+  then*, which leaves this file the retrieval index it says it is above and puts
+  every gesture that changes a Recipe on the one surface that is about one Recipe.
+  The footer stays owner-only all the same, which `card` argues where the button is.
+
+  What the card still says about the publish latch is the badge, and the badge is
+  enough to say it: publishing is one way — the API has no unpublish — so a published
+  Recipe wears it and has no Publish button anywhere, here or on its page.
 
   All three fields are markdown, but not the same markdown: the title and the
   useful-when line are rendered inline, so they cannot grow a heading or a list
@@ -255,35 +262,32 @@
      (when expanded?
        [card-body (get details id)])
      (when logged-in?
+       ;; **One button, and it is the way off the shelf.** Publish, Edit, Versions
+       ;; and Delete were here beside it and are on the Recipe's own page now — he
+       ;; asked for a card that carries nothing else and said where they were to go:
+       ;; *all the buttons go to that page then*. What is left is a card that is only
+       ;; the retrieval index this namespace's docstring says it is, and one route to
+       ;; the surface that can change the Recipe. `views.recipe/actions` is where the
+       ;; four went; nothing about them lives here any more.
+       ;;
+       ;; **"Page" and not "Open"**, because expanding the card is what "open"
+       ;; already means here — a reader with both words in front of them would have
+       ;; to guess which one leaves the shelf. What this does is put the Recipe at an
+       ;; address, so it is named after the thing it takes you to.
+       ;;
+       ;; **Still owner-only, and that is a decision rather than a leftover.** With
+       ;; the other four gone the gate around a single navigation looks like it could
+       ;; come off, and the consequence of keeping it is worth stating rather than
+       ;; discovering: a signed-out visitor has no footer, so from the shelf there is
+       ;; no button to a Recipe's page. They can still *follow* a link to a published
+       ;; one, which is what the address is for. Ungating it would be a visibility
+       ;; change he has not asked for, so it stays as it was.
        [:div.card-footer
         [:span.card-actions
-         (when-not published?
-           [:button.secondary {:on-click #(state/start-publishing id)} "Publish"])
-         [:button.secondary {:on-click #(state/start-editing id)} "Edit"]
-         ;; Named for what it shows rather than for the merge view inside it: a
-         ;; one-version Recipe has nothing to diff and this still answers the
-         ;; question, which is what the `v1` badge next to the title is pointing
-         ;; at. Owner-only here because the whole footer is, and owner-only at
-         ;; the API too — a visitor gets a 404 from /versions for every id.
-         [:button.secondary
-          {:on-click #(state/start-diff id)
-           :title "Step through every version and see what each save changed"}
-          "Versions"]
-         ;; **"Page" and not "Open"**, because expanding the card is what "open"
-         ;; already means here — a reader with both words in front of them would
-         ;; have to guess which one leaves the shelf. What this does is put the
-         ;; Recipe at an address, so it is named after the thing it takes you to.
-         ;;
-         ;; It sits in the owner's footer with the other four, which is what "a
-         ;; fifth button" means — and the consequence is worth stating rather than
-         ;; discovering: a signed-out visitor has no footer, so from the shelf there
-         ;; is no button to a Recipe's page. They can still *follow* a link to a
-         ;; published one, which is what the address is for.
          [:button.secondary
           {:on-click #(state/open-recipe-page id)
            :title "Open this Recipe on a page of its own, at an address you can keep"}
-          "Page"]
-         [:button.secondary.danger {:on-click #(state/start-deleting id)} "Delete"]]])]))
+          "Page"]]])]))
 
 (defn- excluded-scopes-strip
   "The Scopes the shelf is currently hiding: one chip each with an × that clears

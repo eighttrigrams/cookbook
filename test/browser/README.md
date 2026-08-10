@@ -120,12 +120,15 @@ waited on like any other consequence.
 instead. `:recipes` is in the atom on every page, so a suite that only checked for the
 Recipe would half-run from a Recipe page and produce two false reds.
 
+    13  a card carries Page and nothing else
     1   the Page button opens the Recipe at its own address, and the body is the card's
     6   the page wears the same header facts as the card
+    14  the Recipe page carries the four actions, Publish by the latch
     3a  Back returns to the shelf, and the bar says so
     3b  Forward returns to the Recipe, at the same address
     5   a top-bar button leaves the page and puts / back in the bar
     2   a cold load of the address lands on the Recipe, not on a 404   (coldLoad)
+    15  the confirmations draw from the page's own row, not the listing
     4a  signed out, a published Recipe still has a page                (signedOut)
     4b  an address that names no readable Recipe says so, and offers a way back
     7   the toggle swaps the rendered body for the source, and back    (provenance)
@@ -142,6 +145,14 @@ a **listing** aggregate that `GET /api/recipes/:id` does not carry, and `source-
 reads a count it was not sent as a fact it has not been told. Nothing failed. Comparing
 the two surfaces is the only assertion that could have caught it, because each of them
 on its own looked complete.
+
+13, 14 and 15 came with the change that took **Publish, Edit, Versions and Delete off
+the card and put them on the page**, and they are three claims about one move: the card
+carries one button, the four are somewhere, and the two confirmations can draw on a page
+the shelf's listing had nothing to do with. The last of those is the bug the whole change
+turned on — the confirmations used to look their Recipe up in `:recipes` — and it is in
+`coldLoad()` because clicking through from the shelf cannot see it. Each of the three is
+green while either of the other two is broken, which is why they are three.
 
 ### What this suite cannot assert, and where it is asserted instead
 
@@ -216,6 +227,9 @@ which deletes it and any edits with it.
 | **M11** | threshold the tint in `source-line`: `(if (< caution 0.5) 0 100)` |
 | **M12** | write the legend into the cljs — `[:div.provenance-legend "1.00 means human, 0.00 means agentic"]` — instead of rendering the API's |
 | **M13** | key the button off the session: `offered? (and logged-in? (not blank?))` |
+| **M14** | put Publish, Edit, Versions and Delete back in `views/recipes`' card footer |
+| **M15** | delete `(when logged-in? [actions recipe])` from `views/recipe/found` — the removal from the card without its replacement, which is the reading the work order for that change refused |
+| **M16** | source `publish-modal` and `delete-modal` from `:recipes` again, as they were: `(first (filter #(= publishing (:id %)) recipes))` |
 
 M2 is the one that reddens hardest and is worth doing at least once: with the route
 gone there is no app on the page at all — `/recipe/1` is the JSON 404 — so `coldLoad()`
@@ -235,3 +249,9 @@ property gate exists to prevent.
 M2′ is the same check's other half and needs no restart, which makes it the cheap one
 to re-run: the index is served, the app boots, and it puts the shelf up under an
 address naming a Recipe.
+
+M16 is this file's second `checks.js`-11 case: a mutation that only one check can see.
+With the confirmations reading `:recipes` again, `shelf()` stays 7/7 and 2 stays green —
+clicking Page from the shelf works because the listing is already in the atom — and 15
+goes red on its own, which is the whole reason it lives in `coldLoad()` and empties the
+listing before it presses anything.

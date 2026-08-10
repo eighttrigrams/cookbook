@@ -327,9 +327,12 @@ textarea:focus {
   user-select: none;
 }
 
-/* The latch, at a glance. A published Recipe is public and cannot be taken
-   back, so the card says so on its own rather than only in the footer — where
-   the Publish button is gone precisely because there is nothing left to do. */
+/* The latch, at a glance. A published Recipe is public and cannot be taken back,
+   so it is said outright rather than left to be inferred from a control that is
+   not there. The card has no Publish button at all any more — it has one button
+   and the four actions are on the Recipe's page — and the one *there* is gone
+   precisely because there is nothing left to do, which is exactly the reading a
+   badge has to carry on its own. */
 .published-badge {
   padding: 2px 8px;
   border-radius: 6px;

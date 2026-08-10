@@ -173,8 +173,8 @@
    (url/push-state! (if (= :recipe page) (url/recipe-path recipe-id) "/"))))
 
 (defn open-recipe-page
-  "Open one Recipe's own page — the card footer's fifth button, and the one gesture
-  in this app that puts a thing's identity in the address bar."
+  "Open one Recipe's own page — the only button a card's footer carries, and the one
+  gesture in this app that puts a thing's identity in the address bar."
   [id]
   (go-to-page :recipe id))
 

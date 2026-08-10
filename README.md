@@ -321,11 +321,16 @@ card in the browser goes and fetches it. Recipes are **fully versioned** — eve
 edit that changes something archives the outgoing state and bumps the version.
 
 A Recipe is private when created and stays that way until the owner publishes
-it from its card, behind a confirmation because the step is one way. A published
-card wears a badge and loses its Publish button. A card also wears a `proposal`
-badge while an agent is waiting for approval on it — see *Edits that need
-approving* — and that one is a badge and not a control: the deciding happens in
-the inbox, against the agent's text.
+it **from its own page**, behind a confirmation because the step is one way. A
+published Recipe wears a badge on both surfaces and has no Publish button left
+anywhere. A card also wears a `proposal` badge while an agent is waiting for
+approval on it — see *Edits that need approving* — and that one is a badge and
+not a control: the deciding happens in the inbox, against the agent's text.
+
+**The shelf's cards carry one button, *Page*.** Publishing, editing, deleting
+and reading a version history are all on the Recipe's own page: a card is a
+retrieval index and the page is the one surface that is about one Recipe, so
+that is where the things you can do to it are. See *A Recipe's own address*.
 
 The shelf narrows three ways at once, all of them the endpoint's own clauses
 rather than anything the browser filters: the search box, the human-edited
@@ -341,8 +346,12 @@ across a reload.
 
 Every Recipe is also a page of its own at **`/recipe/<id>`** — bare, no type
 prefix and no title in the slug. The **Page** button in a card's footer goes
-there, beside Publish, Edit, Versions and Delete; it is called *Page* rather than
+there, and it is the only button that footer has; it is called *Page* rather than
 *Open* because expanding a card is what "open" already means on the shelf.
+
+The page is also where the owner's four actions are — **Publish, Edit, Versions
+and Delete**, in one row under the header, the same four words the card used to
+carry. Deleting from there lands you back on the shelf.
 
 The point of it is the address. `/recipe/1` can be linked to, bookmarked, sent to
 somebody and **reloaded**: the server answers every `/recipe/…` with the index,
