@@ -160,12 +160,29 @@
       //    five of the card's six header facts. Nothing failed and nothing said so.
       //    Comparing the two surfaces is the only assertion that could have caught
       //    it, because each of them on its own looked complete.
+      //
+      //    **The Scopes are the one fact the two surfaces say differently, and this
+      //    check went red when they started to.** The card wears them as badges
+      //    because a card cannot do anything about them; the page draws the picker
+      //    that *files* them, and drawing both would be the same fact twice with
+      //    only one of them able to be wrong. So `scope-badge` comes out of the
+      //    comparison and the picker is asserted in its place — a page that lost
+      //    the filing altogether still reddens this, which is what keeps the
+      //    exclusion from being a hole.
       await check('6 the page wears the same header facts as the card', () => {
         const onPage = badgesIn(document.querySelector('.recipe-page-badges'));
-        const missing = cardBadges.filter(b => !onPage.includes(b));
-        return {pass: cardBadges.length >= 5 && missing.length === 0
-                      && onPage.includes('source-badge'),
-                evidence: {onTheCard: cardBadges, onThePage: onPage, missing}};
+        const expected = cardBadges.filter(b => b !== 'scope-badge');
+        const missing = expected.filter(b => !onPage.includes(b));
+        const filing = document.querySelector('.scope-picker.recipe-page-filing');
+        return {pass: expected.length >= 5 && missing.length === 0
+                      && onPage.includes('source-badge')
+                      && !!filing,
+                evidence: {onTheCard: cardBadges, comparedWith: expected,
+                           onThePage: onPage, missing,
+                           scopesAsAControl: !!filing,
+                           chips: [...(filing?.querySelectorAll('.scope-chip') || [])]
+                             .map(c2 => c2.textContent.trim()
+                                        + (c2.classList.contains('on') ? ' (on)' : ''))}};
       });
 
       // 14. **and the four are here instead**, which is the other half of 13: the
@@ -370,16 +387,22 @@
                       && !!text('.recipe-page-body')
                       && stateGet('logged-in?') === false
                       // the owner's own facts stay his, which is what says this is
-                      // the visitor's rendering and not the owner's page relabelled
+                      // the visitor's rendering and not the owner's page relabelled.
+                      // The filing is now the strongest of the three: it is not a
+                      // fact the server withheld but a **control**, and a visitor
+                      // holding a chip row would be holding one over a PUT the API
+                      // refuses. `.recipe-page-scopes` used to be here and is gone
+                      // from the app — the picker is what replaced it.
                       && !document.querySelector('.recipe-page-tags')
-                      && !document.querySelector('.recipe-page-scopes'),
+                      && !document.querySelector('.scope-picker'),
                 evidence: {loggedIn: stateGet('logged-in?'), path: path(),
                            recipePageRendered: !!page(), shelfRendered: !!shelf(),
                            title: text('.recipe-page-title'),
                            body: text('.recipe-page-body'),
+                           filingControl: !!document.querySelector('.scope-picker'),
                            ownerOnlyBitsOnThePage:
                              [...document.querySelectorAll(
-                               '.recipe-page-tags, .recipe-page-scopes, .pending-badge, .published-badge')]
+                               '.recipe-page-tags, .scope-picker, .pending-badge, .published-badge')]
                                .map(e => e.className)}};
       });
 

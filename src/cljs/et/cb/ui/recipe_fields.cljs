@@ -26,28 +26,40 @@
   the Scopes page.
 
   **Controlled, and it holds nothing.** `:selected` is the set of ids that are on
-  and `:on-toggle` is handed **the set the row would become**, so the caller says
-  what a toggle means for it — a ratom on the compose form, a PUT on the read page
-  — and this component owns neither answer. Keeping its own copy would be the same
-  fact in two places, which is the argument its first version made about reading a
+  and `:on-toggle` is handed **the id that was clicked**. The caller says what a
+  toggle means for it — a `swap!` on the compose form, a PUT on the read page — and
+  this component owns neither answer. Keeping its own copy would be the same fact
+  in two places, which is the argument its first version made about reading a
   child's state back out.
 
-  It computes the next set rather than reporting the id that was clicked, because
-  otherwise every caller writes `(if (contains? s id) (disj s id) (conj s id))`
-  again and one of them eventually writes it differently.
+  **The id and not the set the row would become, and that is the whole of what this
+  component gets right.** Handing over the next set is the obvious shape and it was
+  the first one written here; it loses the second of two clicks that land in the
+  same animation frame. `:selected` is a value out of a *render*, so both handlers
+  close over the same set, and the second computes `that + Scratch` where the owner
+  meant `that + Ops + Scratch`: two saves both succeed and one chip he pressed is
+  simply not filed. Measured, not reasoned about — clicking two chips as fast as a
+  hand can sent both PUTs and left the first Scope off.
 
-  `:disabled?` takes the whole row out of service. Nothing passes it today — the
-  read page **queues** a second toggle instead of refusing it, see
-  `state/set-recipe-scopes` — and it is here because a row of live chips that
-  silently drop clicks is the worse of the two failures to have available."
-  [{:keys [selected on-toggle disabled?]}]
+  So the next set has to be computed from whatever is current **at click time**, and
+  only the holder of the set can do that: `swap!` reads the ratom, and
+  `state/toggle-recipe-scope` reads the atom, including the set a save already in
+  flight is going to produce. The cost is that `(if (contains? s id) (disj s id)
+  (conj s id))` is written at both call sites, which is a line state.cljs already
+  carries twice for the same reason — a cheap price for a correctness property that
+  cannot be got back any other way.
+
+  `:class` goes on the row, the way `scope-badges/badges` and `recipe-badges/tags`
+  take one: what a surface gets to say about a shared component is where it sits,
+  never what it looks like."
+  [{:keys [selected on-toggle class]}]
   ;; The deref happens out here, before the `for`. A deref inside the body of a
   ;; lazy seq is evaluated after reagent has stopped watching, so the chips would
   ;; not repaint when one was clicked — and reagent says so at the console rather
   ;; than silently.
   (let [scopes (:scopes @state/*app-state)]
     (when (seq scopes)
-      [:div.scope-picker
+      [:div.scope-picker {:class class}
        [:span.scope-picker-label {:title "Categories this Recipe is filed under"}
         "Scopes"]
        (for [{:keys [id title description]} scopes]
@@ -56,8 +68,5 @@
           {:type "button"
            :class (when (contains? selected id) "on")
            :title description
-           :disabled (boolean disabled?)
-           :on-click #(on-toggle (if (contains? selected id)
-                                   (disj selected id)
-                                   (conj selected id)))}
+           :on-click #(on-toggle id)}
           title])])))

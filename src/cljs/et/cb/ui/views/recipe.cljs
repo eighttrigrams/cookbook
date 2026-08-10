@@ -41,18 +41,22 @@
   this by fetching lean and filling the body in afterwards; the number would then
   mean 'read, unless by link', which is not a number anybody could rank by.
 
-  The badges are `et.cb.ui.recipe-badges`' and the Scope pills are
-  `et.cb.ui.scope-badges`', because the shelf's card says the same six things about
-  the same Recipe and two spellings of one fact is how they drift. The Scope badges
-  carry no gesture here: shift+clicking one on the shelf hides the Recipes filed
-  under it, which is a filter over a listing — from this page it would be a filter
-  over a page the reader is not looking at, and `scope-badges` says why a surface
-  with no gesture explains none."
+  The badges are `et.cb.ui.recipe-badges`', because the shelf's card says the same
+  things about the same Recipe and two spellings of one fact is how they drift.
+
+  **The Scopes are the exception, and they are a control here rather than a fact.**
+  The card wears them as `scope-badges` pills; this page draws the owner's whole
+  Scope list as a picker and files the Recipe as he toggles — see `scope-filing`.
+  The shelf's gesture does not come with them and could not: shift+clicking a badge
+  over there hides the Recipes filed under that Scope, which is a filter over a
+  *listing*, and from this page it would be a filter over a page the reader is not
+  looking at. A chip's plain click already means something here, which is the other
+  half of why there is nothing for a modifier to add."
   (:require [clojure.string :as str]
             [et.cb.ui.markdown :as markdown]
             [et.cb.ui.provenance :as provenance]
             [et.cb.ui.recipe-badges :as recipe-badges]
-            [et.cb.ui.scope-badges :as scope-badges]
+            [et.cb.ui.recipe-fields :as recipe-fields]
             [et.cb.ui.state :as state]))
 
 (defn- back-to-shelf
@@ -75,11 +79,20 @@
   "The one line that says what this Recipe is — the card's header, on a page.
 
   Same facts and the same order, deliberately: a reader who knows the shelf can
-  read this without learning anything. Three of them are gated on `logged-in?` at
+  read this without learning anything. Two of them are gated on `logged-in?` at
   this call site exactly as they are at the card's, and the gate is **cosmetic** —
-  a visitor's row carries no `tags`, no `scopes` and no `pending` key at all, and
-  the server is the boundary. See the docstrings in `recipe-badges`."
-  [{:keys [title tags scopes version published published_at modified_at view_count pending]
+  a visitor's row carries no `tags` and no `pending` key at all, and the server is
+  the boundary. See the docstrings in `recipe-badges`.
+
+  **The Scopes are no longer among them, and that is not a fact this page stopped
+  saying.** The card's header shows them as badges because a card cannot do
+  anything about them; here they are a *control* — `scope-filing`, below the
+  header — and the picker's lit chips are the display. Drawing both would be the
+  same fact twice, two paragraphs apart, with only one of them able to be wrong.
+
+  Drawn by both of this page's modes, reading and editing, which is what makes it
+  the page's identity rather than the reading's."
+  [{:keys [title tags version published published_at modified_at view_count pending]
     :as recipe}
    logged-in?]
   (let [published? (= 1 published)
@@ -91,8 +104,6 @@
         [recipe-badges/published-badge published_at])
       (when (and logged-in? pending?)
         [recipe-badges/pending-badge])
-      (when (and logged-in? (seq scopes))
-        [scope-badges/badges scopes {:class "recipe-page-scopes"}])
       [recipe-badges/version-badge version]
       ;; The whole row and not the two counts: `source-split` reads them itself and
       ;; decides which buckets exist, which is the decision that must not be made
@@ -102,6 +113,53 @@
       [:span.card-date (recipe-badges/day modified_at)]]
      (when (and logged-in? (seq tags))
        [recipe-badges/tags tags {:class "recipe-page-tags"}])]))
+
+(defn- scope-filing
+  "Which Scopes this Recipe is filed under, as the control that files it — the
+  owner's whole Scope list as chips, the ones this Recipe carries lit, **saving on
+  every toggle**.
+
+  *lets make it that we select the scopes not in the modal but on the Page page*,
+  and then, asked whether it belonged here or on the editor: *yeah, we dont need no
+  version bump on this and can go to the read page*. That is not a preference the
+  client is honouring, it is what the API already does —
+  `update-recipe-handler`'s docstring: **Changing it makes no version either — a
+  Scope is a way back to a Recipe, not part of it.** So filing is not editing, and
+  the place it belongs is the page you are reading, not the form you save.
+
+  There is no Save here for the same reason. A confirmation would be a step in
+  front of a change that costs nothing to undo: the chip you just lit unlights, and
+  no version, no history row and no `has_human_edit` mark was made either way.
+  `state/toggle-recipe-scope` is where the two things that *are* delicate live — the
+  empty set going as `[]`, and one request at a time.
+
+  **What is lit is the receipt, not the click** — `state/filed-under` is that
+  sentence, and it is the one place both the drawing and the toggling read from. It
+  answers with what the server last confirmed, or with what the owner has asked for
+  while a save is out, so a chip answers immediately and is then corrected by the
+  response. It has to be that way round: the handler drops ids the caller does not
+  own, so a picker that trusted its own set would show such an id as filed.
+
+  **This component computes nothing.** It hands `state/toggle-recipe-scope` the id
+  that was pressed, and the next set is worked out there against the live one —
+  which is what makes two chips pressed inside one frame both land. Anything derived
+  here would be derived from a render, and a render is exactly what two clicks in
+  one frame share.
+
+  Nothing is disabled while a save is out. `toggle-recipe-scope` queues instead, and
+  says why at length: a disabled chip does not fire, so the second of two quick
+  clicks would be lost rather than merely delayed.
+
+  The `logged-in?` gate is the call site's, and it is **as cosmetic as the badge row
+  it replaces**: a visitor is sent no `scopes` key on the Recipe and no Scope list
+  at all — `/api/scopes` answers them 403 and `show-page!` does not even ask — so
+  there is nothing here for them to draw. The boundary is the server, twice over,
+  and this gate is convenience."
+  [{:keys [id]}]
+  [recipe-fields/scope-picker
+   {:selected (state/filed-under id)
+    :on-toggle #(state/toggle-recipe-scope id %)
+    :class "recipe-page-filing"}])
 
 (defn- actions
   "Publish, Edit, Versions and Delete — the four the shelf's card footer used to
@@ -245,7 +303,18 @@
 
   Above `recipe-page-body-tools` for the same reading: this row is what you can *do*
   to the Recipe, that one is how you want to *look* at it, and the doing is not a
-  property of the text the way the provenance view is."
+  property of the text the way the provenance view is.
+
+  **The Scope picker sits between the header and the useful-when line**, where the
+  card's header wears the badges it replaces — the filing is part of what says which
+  Recipe this is, and it reads with the tags row above it, which is the other half of
+  the same filing. It is above the four actions rather than among them because it is
+  not one: those four are things you ask for and this one is already saved by the time
+  your finger is off it.
+
+  It is drawn by this mode only. The editor has no picker — `editor` says why — so
+  this is the one surface in the app that files a Recipe, and there is no second
+  control anywhere disagreeing about when it saves."
   [recipe logged-in? showing-provenance?]
   (let [{:keys [legend ranges]} (:caution recipe)
         body (:description recipe)
@@ -254,6 +323,8 @@
         showing? (and offered? showing-provenance?)]
     [:<>
      [header recipe logged-in?]
+     (when logged-in?
+       [scope-filing recipe])
      (when (seq (:useful_when recipe))
        [:div.recipe-page-useful-when [markdown/render-inline (:useful_when recipe)]])
      (when logged-in?

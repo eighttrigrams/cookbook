@@ -69,8 +69,10 @@
           :rows 8
           :value @description
           :on-change #(reset! description (-> % .-target .-value))}]
-        [recipe-fields/scope-picker {:selected @scope-ids
-                                     :on-toggle #(reset! scope-ids %)}]
+        [recipe-fields/scope-picker
+         {:selected @scope-ids
+          :on-toggle #(swap! scope-ids
+                             (fn [s] (if (contains? s %) (disj s %) (conj s %))))}]
         [:div.modal-actions
          [:button {:disabled (str/blank? @title)
                    :on-click #(state/update-recipe (:id recipe)

@@ -59,9 +59,14 @@
   header beside the version and published badges — which is where they belong,
   because that header is the retrieval index and a Scope is how a Recipe is found
   again. Same arrangement as the tags: the server sends a visitor no `scopes` key
-  at all and the `logged-in?` gate here is cosmetic. Picking them happens in the
-  compose form and the Edit modal, from the owner's own list; making them happens
-  on the Scopes page (`et.cb.ui.views.scopes`), not here.
+  at all and the `logged-in?` gate here is cosmetic.
+
+  **A card only ever says which Scopes a Recipe is under; it does not file it.** The
+  filing is done on the Recipe's own page, where the badges are a picker that saves
+  as it is toggled (`views.recipe/scope-filing`) — filing makes no version, so it
+  did not belong behind a Save. The compose form here picks Scopes for a Recipe that
+  does not exist yet, which is the one case that cannot be done on a page. Making a
+  Scope happens on the Scopes page (`et.cb.ui.views.scopes`), not here either.
 
   **Shift+click a Scope badge and the Recipes filed under it leave the shelf.**
   Tracker's gesture, and being the same finger in both apps is the reason for it
@@ -142,8 +147,13 @@
            :rows 4
            :value @description
            :on-change #(reset! description (-> % .-target .-value))}]
-         [recipe-fields/scope-picker {:selected @scope-ids
-                                      :on-toggle #(reset! scope-ids %)}]
+         ;; `swap!` and not a `reset!` of a set computed by the picker: the function
+         ;; reads the ratom at click time, so two chips pressed inside one animation
+         ;; frame both land. The picker's docstring says what the other shape costs.
+         [recipe-fields/scope-picker
+          {:selected @scope-ids
+           :on-toggle #(swap! scope-ids
+                              (fn [s] (if (contains? s %) (disj s %) (conj s %))))}]
          [:button {:on-click submit :disabled (str/blank? @title)} "Add"]]))))
 
 (defn- card-body

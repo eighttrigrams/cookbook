@@ -1100,12 +1100,15 @@ html.dark-mode .inbox-kind.kind-proposed { background: rgba(245, 158, 11, 0.18);
   gap: 10px;
   margin-top: 10px;
 }
-.recipe-page-scopes {
-  display: inline-flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  min-width: 0;
-}
+/* The filing, as the control that does it. Where the card's header wears Scope
+   badges this page draws a picker, so there is no `.recipe-page-scopes` pill row
+   any more — see `views/recipe/scope-filing` for why the two are not both drawn.
+
+   It borrows `.scope-picker` whole rather than restyling it: the same chips in the
+   compose form, in this page and in nothing else, so a lit chip means the same
+   thing wherever it is met. What is the page's is only where it sits — under the
+   header, on the margin that separates it from the useful-when line below. */
+.scope-picker.recipe-page-filing { margin-top: 12px; }
 
 .recipe-page-useful-when {
   margin-top: 14px;

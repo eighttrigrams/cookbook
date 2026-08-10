@@ -63,6 +63,14 @@
            ;; row and not two that can disagree.
            :recipe-page-id nil
            :recipe-page-status nil ;; :loading, :found or :missing
+           ;; A filing save that is out on the wire, and what the owner has asked
+           ;; for since — `nil`, or `{:id :wanted :sent}`. One value and not three
+           ;; keys, for the reason `:diffing`/`:diffing-proposal` are written
+           ;; together: 'a set is queued and nothing is in flight' is then a state
+           ;; that cannot be reached rather than one every reader has to check.
+           ;; `toggle-recipe-scope` is the only writer. See it for why a queue
+           ;; and not a disabled row.
+           :filing nil
            ;; Whether that page is showing the body's source with its provenance
            ;; instead of the rendered markdown. **Not persisted and dropped on every
            ;; move**, by `show-page!`, for the reason the Scopes page's dialogs are:
@@ -131,7 +139,18 @@
     :inbox (fetch-inbox)
     ;; And this one is not freshness at all: the page has nothing to draw until
     ;; the body arrives, because the listing never carried one.
-    :recipe (fetch-recipe-page! recipe-id)
+    ;;
+    ;; **The Scope list comes too, and only this page needed teaching.** The
+    ;; picker on it draws from `:scopes` — the owner's whole list, not the
+    ;; Recipe's — and that was fetched for the Scopes page and by `fetch-shelf!`
+    ;; and nowhere else. An owner arriving at `/recipe/<id>` by its address has
+    ;; had neither, so the picker would have rendered as **nothing at all**: a
+    ;; control that is silently not there, on the one path with no shelf visit in
+    ;; front of it. Signed in only, because the endpoint answers 403 to anybody
+    ;; else and a 403 in the console reads as a bug — the same gate `fetch-shelf!`
+    ;; puts on it.
+    :recipe (do (fetch-recipe-page! recipe-id)
+                (when (:logged-in? @*app-state) (fetch-scopes)))
     nil))
 
 (defn go-to-page
@@ -316,6 +335,9 @@
          :recipes [] :details {} :open #{} :editing nil :publishing nil :deleting nil
          :versions {} :versions-request {} :diffing nil :diffing-proposal nil
          :page :shelf :recipe-page-id nil :recipe-page-status nil
+         ;; a filing save in flight is a statement about the owner's own filing,
+         ;; and its `:wanted` set is a chip row a signed-out client must not draw
+         :filing nil
          ;; and the inbox with them, for the strongest version of the same
          ;; reason: the server sends this queue to nobody but the owner — a
          ;; machine token is refused it — so a copy left here would be the one
@@ -879,6 +901,135 @@
         (fetch-inbox)
         (when on-success (on-success)))
       (err-handler "Could not save"))))
+
+;; ---------------------------------------------------------------------------
+;; the filing
+;;
+;; Which Scopes a Recipe is filed under, saved as the owner toggles a chip on its
+;; page rather than behind a Save. It is the same `PUT /api/recipes/:id` the editor
+;; uses and it is deliberately **not** `update-recipe`: three of the things that
+;; function does after a save are about a new version, and this save makes none.
+;;
+;; `update-recipe-handler`'s docstring is where that is settled, and it is quoted
+;; rather than re-derived here:
+;;
+;;   "**`scope_ids` behaves exactly like that**, being the other half of the
+;;    filing: omit the key and the Recipe stays filed where it is, send an array
+;;    and it replaces the whole set, **send an empty array and it clears them**.
+;;    Changing it makes no version either — a Scope is a way back to a Recipe, not
+;;    part of it — and it moves `modified_at` for the same reason tags do […] Ids
+;;    you do not own are dropped and the response's `scopes` is the receipt"
+;;
+;; Four consequences, and each one is a line of code below: a one-field PUT is
+;; safe ("a field you leave out keeps its current value"), the empty set has to go
+;; as `[]`, the version cache must **not** be dropped, and the moved `modified_at`
+;; is what makes two quick clicks a 409 unless they are serialised.
+
+(declare put-filing!)
+
+(defn filed-under
+  "The set of Scope ids this Recipe is filed under **as far as this client is
+  concerned right now**: what the owner has asked for if a save is out, and
+  otherwise the receipt the server last sent.
+
+  Two callers and they need it for different reasons. The picker draws it — which
+  is A6's optimistic half: a chip answers the moment it is pressed and is then
+  corrected by the response, because the handler drops ids the caller does not own
+  and a client that believed its own set would show such an id as filed. And
+  `toggle-recipe-scope` reads it to work out what the next set is, at click time,
+  which is the half that has to be a function of the atom and not of a render."
+  [id]
+  (let [{:keys [wanted] filing-id :id} (:filing @*app-state)]
+    (if (= id filing-id)
+      wanted
+      (set (map :id (get-in @*app-state [:details id :scopes]))))))
+
+(defn toggle-recipe-scope
+  "File this Recipe under one more Scope, or unfile it from one — the read page's
+  picker, one PUT per chip.
+
+  **The next set is computed here and now, off `filed-under`, and that is not a
+  detail.** The picker is handed the id that was clicked precisely so that this
+  reads the live set instead of the one that was on screen: two chips pressed
+  inside a single animation frame are two handlers closing over the same rendered
+  set, and a component that computed `rendered + this-chip` for each of them would
+  send two saves that both succeed with the first chip missing from the result. The
+  docstring at `recipe-fields/scope-picker` has the measurement.
+
+  **And a queue, not a disabled row, because the second click has to land.** The
+  save moves `modified_at`, and the PUT carries the stamp from the last read as the
+  409 guard, so a second request sent while the first is out asks the server to
+  overwrite a row it no longer holds: 409, *Could not save the filing*, and a chip
+  that springs back for no reason the owner can see. Disabling the chips for the
+  round trip stops that and **swallows** the click — a disabled button does not fire
+  — so two fast chips would file one. That is the same bug wearing a nicer face.
+
+  So: one request in flight, and the latest thing he has asked for remembered.
+  `:filing` is `{:id :wanted :sent}` — `:wanted` is what he has asked for, `:sent`
+  is what is on the wire — and `put-filing!`'s callback compares the two and goes
+  again when they differ. Any number of clicks during one round trip coalesce into
+  one follow-up request, which is the other thing a queue buys over a lock."
+  [id scope-id]
+  (let [now (filed-under id)
+        next (if (contains? now scope-id) (disj now scope-id) (conj now scope-id))]
+    (if (= id (:id (:filing @*app-state)))
+      ;; one is already out for this Recipe: this is the set that goes next
+      (swap! *app-state assoc-in [:filing :wanted] next)
+      (do (swap! *app-state assoc :filing {:id id :wanted next :sent next})
+          (put-filing! id next)))))
+
+(defn- put-filing!
+  "One filing PUT, and the one place that decides whether another has to follow.
+
+  `scope_ids` is **always sent, and always as an array** — `(vec (sort ids))`, so
+  the empty set goes as `[]` and clears the filing rather than being omitted and
+  keeping it. Those are two different requests to this endpoint and only one of
+  them is 'he unfiled the last Scope'. Sorted for the reason the exclusion list on
+  the listing URL is: the same set spells the same request every time.
+
+  Nothing else is in the body. *A field you leave out keeps its current value*, so
+  a one-field save cannot blank the body, and the title this route insists on is
+  the one already stored.
+
+  The retry reads `modified_at` out of `:details` *after* `cache-detail!` has
+  written the response, so it carries the stamp its own predecessor made and cannot
+  409 against it.
+
+  What follows a success is `update-recipe`'s list minus everything about a new
+  version:
+
+  - `cache-detail!` — the response is the full row, carrying the receipt and the
+    new `modified_at` the next save will need.
+  - `fetch-recipes` — the badges on the shelf's cards moved.
+  - `fetch-scopes` — the per-Scope counts moved, which is the reason
+    `update-recipe` refetches them too.
+  - **not `forget-versions!`**: no version was made, so the cached history is
+    still true. Dropping it would make every chip a Recipe's whole history to
+    re-fetch the next time the viewer opened.
+  - **not `fetch-inbox`**: filing makes no version and no proposal, so there is
+    nothing new for the queue to be about.
+
+  A failure clears `:filing` outright rather than trying `:wanted` next — whatever
+  refused the first is likely to refuse the second, and a queue that retries into
+  an error banner is worse than a chip that goes back to saying what this client
+  last read."
+  [id ids]
+  (api/put-json (str "/api/recipes/" id)
+                {:scope_ids (vec (sort ids))
+                 :modified_at (get-in @*app-state [:details id :modified_at])}
+                (auth-headers)
+    (fn [recipe]
+      (cache-detail! recipe)
+      (fetch-recipes)
+      (fetch-scopes)
+      (let [{:keys [wanted sent]} (:filing @*app-state)]
+        (if (= wanted sent)
+          (swap! *app-state assoc :filing nil)
+          (do (swap! *app-state assoc-in [:filing :sent] wanted)
+              (put-filing! id wanted)))))
+    (fn [resp]
+      (swap! *app-state assoc :filing nil)
+      ((err-handler "Could not save the filing") resp))))
 
 (defn publish-recipe
   "One way: there is no unpublish call to pair with this one, on the server or
