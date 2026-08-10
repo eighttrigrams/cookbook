@@ -28,49 +28,9 @@
   The version viewer comes with them for both reasons at once — see `overlays`."
   (:require [reagent.core :as r]
             [clojure.string :as str]
+            [et.cb.ui.recipe-fields :as recipe-fields]
             [et.cb.ui.state :as state]
             [et.cb.ui.views.diff :as diff]))
-
-(def tags-placeholder
-  "The owner's extra search words, said the same way in both forms that write them
-  — the shelf's compose form and the Edit modal below. One string and not two, for
-  the reason the badges are one component: a placeholder is what tells him what the
-  field is for, and two wordings of it is how the two forms come to describe the
-  same field differently."
-  "Tags — extra words to find this by")
-
-(defn scope-picker
-  "Which Scopes this Recipe is filed under, as a row of toggles over the owner's
-  own list. Rendered as nothing at all when he has made no Scopes yet: an empty
-  picker would be a control that cannot do anything, and the place to make one is
-  the Scopes page.
-
-  `selected` is a ratom holding a set of ids, so this component owns no state of
-  its own — the form around it is what sends the set, and reading it back out of a
-  child would be the same fact in two places.
-
-  Shared with the shelf's compose form, and it lives here with the Edit modal
-  rather than there because of which way the requires may point: the root mounts
-  this namespace, so it must not reach into the shelf."
-  [selected]
-  ;; Both derefs happen out here, before the `for`. A deref inside the body of a
-  ;; lazy seq is evaluated after reagent has stopped watching, so the chips would
-  ;; not repaint when one was clicked — and reagent says so at the console rather
-  ;; than silently.
-  (let [scopes (:scopes @state/*app-state)
-        chosen @selected]
-    (when (seq scopes)
-      [:div.scope-picker
-       [:span.scope-picker-label {:title "Categories this Recipe is filed under"}
-        "Scopes"]
-       (for [{:keys [id title description]} scopes]
-         ^{:key id}
-         [:button.scope-chip
-          {:type "button"
-           :class (when (contains? chosen id) "on")
-           :title description
-           :on-click #(swap! selected (fn [s] (if (contains? s id) (disj s id) (conj s id))))}
-          title])])))
 
 (defn- edit-modal
   "Tags and Scopes sit in here with the three content fields even though a save
@@ -101,7 +61,7 @@
         [:input {:type "text" :placeholder "Useful when…"
                  :value @useful-when
                  :on-change #(reset! useful-when (-> % .-target .-value))}]
-        [:input.modal-tags {:type "text" :placeholder tags-placeholder
+        [:input.modal-tags {:type "text" :placeholder recipe-fields/tags-placeholder
                             :value @tags
                             :on-change #(reset! tags (-> % .-target .-value))}]
         [:textarea.modal-description
@@ -109,7 +69,8 @@
           :rows 8
           :value @description
           :on-change #(reset! description (-> % .-target .-value))}]
-        [scope-picker scope-ids]
+        [recipe-fields/scope-picker {:selected @scope-ids
+                                     :on-toggle #(reset! scope-ids %)}]
         [:div.modal-actions
          [:button {:disabled (str/blank? @title)
                    :on-click #(state/update-recipe (:id recipe)

@@ -95,11 +95,11 @@
             [et.cb.ui.recipe-badges :as recipe-badges]
             [et.cb.ui.scope-badges :as scope-badges]
             [et.cb.ui.state :as state]
-            ;; The picker and the placeholder, borrowed from the Edit form rather
-            ;; than kept here: the Edit modal is mounted at the app root now and
-            ;; must not reach into the shelf to draw itself — see
-            ;; `views.recipe-modals`. This direction is the safe one.
-            [et.cb.ui.views.recipe-modals :as recipe-modals]))
+            ;; The picker and the placeholder, out of a leaf namespace rather than
+            ;; out of whichever view happened to have them last: this form and the
+            ;; Recipe's own page both draw them, and neither view may require the
+            ;; other. See `et.cb.ui.recipe-fields`.
+            [et.cb.ui.recipe-fields :as recipe-fields]))
 
 (defn- compose-form []
   (let [title (r/atom "")
@@ -133,7 +133,7 @@
            :on-change #(reset! useful-when (-> % .-target .-value))
            :on-key-down #(when (= (.-key %) "Enter") (submit))}]
          [:input.compose-tags
-          {:type "text" :placeholder recipe-modals/tags-placeholder
+          {:type "text" :placeholder recipe-fields/tags-placeholder
            :value @tags
            :on-change #(reset! tags (-> % .-target .-value))
            :on-key-down #(when (= (.-key %) "Enter") (submit))}]
@@ -142,7 +142,8 @@
            :rows 4
            :value @description
            :on-change #(reset! description (-> % .-target .-value))}]
-         [recipe-modals/scope-picker scope-ids]
+         [recipe-fields/scope-picker {:selected @scope-ids
+                                      :on-toggle #(reset! scope-ids %)}]
          [:button {:on-click submit :disabled (str/blank? @title)} "Add"]]))))
 
 (defn- card-body
