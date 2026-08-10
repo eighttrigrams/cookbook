@@ -60,15 +60,28 @@
             [et.cb.ui.recipe-fields :as recipe-fields]
             [et.cb.ui.state :as state]))
 
-(defn- back-to-shelf
-  "The way off this page, and it is on all three states rather than only on the two
-  that went well. A reader who followed a link to a Recipe that is not there has no
-  history to go back through and no top-bar button that means 'the shelf' — the
-  three there are the owner's, and two of them are a page each. Without this a
-  visitor's dead link would be a dead end.
+(defn back-to-shelf
+  "The way off this page — **in the top bar's left slot, where the brand sits
+  everywhere else.** *the back button should go there where on the list view the
+  cookbook brand logo is.*
+
+  **It is on all three states, and it is now so by construction.** It used to be
+  rendered inside the panel by `recipe-page`, above the `case`, so that loading,
+  found and not-found all got one: a reader who followed a link to a Recipe that is
+  not there has no history to go back through, and — the argument as it stood — no
+  top-bar button that means 'the shelf'. There *is* such a button now and this is it,
+  so the reasoning has not gone away, it has got stronger. The bar does not know
+  which of the three states the page is in and has no way to leave one of them out,
+  where three call sites inside the panel were three chances to forget.
+
+  It stays a `views.recipe` component that `core/top-bar` renders, rather than
+  becoming the bar's own. `core` already requires this namespace, so either direction
+  compiles; what decides it is that this is *this page's* control — it exists because
+  of what a Recipe page can be arrived at without, and that record belongs with the
+  page rather than in the chrome that happens to draw it.
 
   It goes through `state/go-to-page`, so the address bar goes back to `/` with it:
-  leaving the page by this button and leaving it by the top bar have to put the
+  leaving the page by this button and leaving it by anything else have to put the
   same thing in the bar, or one of them is telling the truth and the other is not."
   []
   [:button.secondary.recipe-page-back
@@ -503,7 +516,9 @@
                 recipes showing-provenance?]}
         @state/*app-state]
     [:div.recipe-page
-     [back-to-shelf]
+     ;; No way out drawn in here any more: `back-to-shelf` is in the top bar's left
+     ;; slot, which is where it is present on all three of these states without this
+     ;; function having to put it above the `case`.
      (case recipe-page-status
        :found (if-let [recipe (get details recipe-page-id)]
                 (if (and recipe-page-edit? logged-in?)

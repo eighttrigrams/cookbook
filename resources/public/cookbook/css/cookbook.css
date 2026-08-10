@@ -4,6 +4,12 @@
   gap: 16px;
   margin-bottom: 24px;
 }
+/* The left slot: the brand on most pages, a Recipe page's own chrome on that one.
+   `center` and not `baseline` because what it holds may be a button — `.brand`'s
+   baseline alignment is for the glyph and the word inside it, and is still there.
+   Its gap is the bar's own 8px, so Save and Cancel sit together the way the
+   right-hand side's controls do. */
+.top-bar-left { display: flex; align-items: center; gap: 8px; }
 .brand { display: flex; align-items: baseline; gap: 8px; }
 .brand-mark { color: var(--accent); font-size: 1.4em; }
 .brand-name { font-size: 1.4em; font-weight: 600; letter-spacing: -0.02em; }
@@ -1078,9 +1084,10 @@ html.dark-mode .inbox-kind.kind-proposed { background: rgba(245, 158, 11, 0.18);
   -webkit-backdrop-filter: blur(var(--glass-blur));
 }
 
-/* First in the source and first in the tab order, on all three states — the way
-   off this page has to exist before there is anything to leave. */
-.recipe-page-back { margin-bottom: 14px; }
+/* The way off this page lives in the top bar's left slot now, so it has no margin of
+   its own: `.top-bar-left` places it, and the 14px that used to separate it from the
+   title below was panel spacing that means nothing in a bar. It keeps its class,
+   because the class is how a check finds the way out of a not-found page. */
 
 .recipe-page-header { margin-bottom: 4px; }
 .recipe-page-title {

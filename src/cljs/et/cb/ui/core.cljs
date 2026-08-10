@@ -26,13 +26,33 @@
                   :on-key-down #(when (= (.-key %) "Enter") (do-login))}]
          [:button {:on-click do-login} "Sign in"]]))))
 
+(defn- left-slot
+  "The top bar's left-hand side, which is **one slot with more than one thing in
+  it**: the app's name where you are looking at the app, and a Recipe page's own
+  chrome where you are looking at one Recipe.
+
+  *the back button should go there where on the list view the cookbook brand logo
+  is.* So on `/recipe/<id>` the slot is `views.recipe/back-to-shelf`, and the app's
+  name is not on screen. That is the ordinary contextual-back pattern and it is the
+  trade it comes with — a bar that kept both by shrinking the brand would be paying
+  for a word nobody needs on a page they arrived at by address.
+
+  **The slot and not the brand is what varies**, which is why `.brand` stays exactly
+  what it was and gets rendered *into* here. A `.brand` that sometimes held a button
+  would have made every rule keyed off that class a question."
+  [page]
+  [:div.top-bar-left
+   (if (= :recipe page)
+     [recipe/back-to-shelf]
+     [:div.brand
+      [:span.brand-mark "▤"]
+      [:span.brand-name "Cookbook"]])])
+
 (defn- top-bar []
   (let [{:keys [auth-required? logged-in? show-login? dark-mode page]}
         @state/*app-state]
     [:div.top-bar
-     [:div.brand
-      [:span.brand-mark "▤"]
-      [:span.brand-name "Cookbook"]]
+     [left-slot page]
      [:div.top-bar-right
       ;; The Inbox. Owner-only like the other two, and it is the one of the three
       ;; that carries a number: how many of his agents' changes are waiting. The
