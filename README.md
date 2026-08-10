@@ -351,11 +351,13 @@ there, and it is the only button that footer has; it is called *Page* rather tha
 *Open* because expanding a card is what "open" already means on the shelf.
 
 The page is also where the owner's four actions are — **Publish, Edit, Versions and
-Delete**, the same four words the card used to carry. They sit in two places, by a
+Delete**, the same four words the card used to carry. They sit in three places, by a
 rule worth knowing: **the top bar carries the ways of *looking* at a Recipe and the
-panel keeps what *changes* it.** So ← Shelf, Edit and Versions are up in the bar, and
-Publish and Delete stay in the page, a row away from any button whose worst outcome
-is a wasted step. Deleting lands you back on the shelf.
+page keeps what *changes* it.** So ← Shelf, Edit and Versions are up in the bar,
+Publish is under the header, and **Delete is at the bottom right** — the conventional
+home for a destructive control, out of the reading path and reached deliberately, at
+the cost of being a scroll away on a long Recipe. Delete is in the same place while
+editing, and deleting lands you back on the shelf.
 
 **And it is where a Recipe is filed.** The Scopes sit under the header as a row of
 chips over the owner's whole Scope list, the ones this Recipe carries lit, and a
@@ -372,6 +374,14 @@ carries **no** Scope picker: filing belongs to the reading, and a save from here
 omits `scope_ids` entirely, so changing the text cannot disturb where the Recipe is
 filed. A visitor who types that address gets the reading, and the query comes off
 the bar.
+
+**The provenance view works while editing, over the text in the editor.** The same
+toggle, the same tints, and lines you have just typed or changed read as *no
+provenance for this line* — because they have none: no version records them yet. The
+rule is deliberately conservative: a draft line keeps its stored provenance only when
+it is at the same index **and** has the same text, so inserting a line makes
+everything below it untold rather than risk attributing one person's writing to
+another. It is not a diff and is not trying to be.
 
 **A Recipe page is a focused surface, and the top bar says so.** Its left-hand
 slot — the app's name everywhere else — holds that page's own chrome instead:

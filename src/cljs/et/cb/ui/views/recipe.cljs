@@ -213,39 +213,68 @@
     "Versions"]])
 
 (defn- mutating-actions
-  "**Publish and Delete: what changes the Recipe, kept in the panel.** It was four
-  buttons here and is two — Edit and Versions went up into the bar's left slot, and
-  `navigation-actions` writes down the rule that decided which went where.
+  "**Publish: what changes the Recipe, under the header.** It was four buttons here,
+  then two, and is one — Edit and Versions went up into the bar's left slot, and
+  **Delete has gone to the bottom right** (`delete-action`). `navigation-actions`
+  writes down the rule that decided the first move; this is the second.
 
-  A destructive control does not belong in a row of navigation. `← Shelf`, Edit and
-  Versions are all one click from being pressed by mistake and all three cost a step;
-  Delete costs the Recipe and every version of it, and Publish is a latch the API has
-  no way to undo. Keeping them a row apart from the chrome is the cheap half of the
-  same care the two confirmations take.
+  **It renders nothing at all for a published Recipe**, which is the case to get right
+  rather than to leave to `when-not`: Publish is the only thing in here now, so a
+  published Recipe has no mutation to offer under the header, and a `div` with the
+  panel's spacing around it and nothing in it is a gap a reader has to account for.
+  That leftover has turned up four times in this run of work — music's card footer,
+  this panel's top edge, the diff header's `✕`, and here — so it is the one thing this
+  function checks before it draws.
 
-  **The same words as the card's footer, deliberately.** `header` argues that a reader
+  **The same word as the card's footer, deliberately.** `header` argues that a reader
   who knows the shelf can read this page without learning anything, about the six
-  facts; it holds for the controls too. *Publish changes* and *Remove* would be things
-  to learn about a Recipe he has already learnt on the card.
+  facts; it holds for the controls too. *Publish changes* would be a thing to learn
+  about a Recipe he has already learnt on the card.
 
-  `secondary`, and Delete keeps `.danger` — the one distinction the card drew. Full-size
-  buttons rather than the card's smaller ones, for the reason the title is an `h1`: a
-  card is one of thirteen and this is the Recipe, alone.
+  **Publish stays here, and only Delete moved**, because he named Delete only and the
+  two are not the same kind of thing. Publishing is a latch the API cannot undo, which
+  is why it asks first — but it is an ordinary step in a Recipe's life, taken on purpose
+  and at a moment of the owner's choosing. Deleting is the one control on this page
+  whose worst outcome is losing the Recipe, and that is what earns it a place out of
+  the reading path.
 
-  **Publish only while there is something to publish.** The latch is one way, so a
-  published Recipe loses the button and wears the badge in the header instead. Same
-  rule as the card's, and the same reading of the JSON: `published` arrives as 0 or 1
-  and 0 is truthy in cljs, so it is a comparison.
-
-  Owner-only at the call site, and here the gate is **not** merely cosmetic the way
-  the header's two are: these are writes, and the server refuses them to anybody else.
-  What the gate prevents is a row of controls that could only produce errors."
+  Owner-only at the call site, and here the gate is **not** merely cosmetic the way the
+  header's two are: this is a write, and the server refuses it to anybody else."
   [{:keys [id published]}]
-  (let [published? (= 1 published)]
+  (when-not (= 1 published)
     [:div.recipe-page-actions
-     (when-not published?
-       [:button.secondary {:on-click #(state/start-publishing id)} "Publish"])
-     [:button.secondary.danger {:on-click #(state/start-deleting id)} "Delete"]]))
+     [:button.secondary {:on-click #(state/start-publishing id)} "Publish"]]))
+
+(defn- delete-action
+  "**Delete, at the bottom right of the panel — in both of this page's modes.** *on
+  both edit and view pages the delete button goes to the bottom right.*
+
+  **This overrules an argument written in `found`, and that argument is rewritten there
+  rather than dropped.** It said that a page's body has no length, so a footer under it
+  would put Delete at the end of a scroll. That is still true and it is now the accepted
+  cost: bottom-right is the conventional home for a destructive control *because* it is
+  out of the reading path and reached deliberately, and on a long Recipe being a scroll
+  away is the price of that. The reader who comes here in six months should find the
+  trade, not a silent reversal.
+
+  Right-aligned and last, so both halves of *out of the way* hold: nothing follows it
+  in the panel, and nothing sits beside it to be aimed at by mistake. It keeps
+  `.danger`, which is the only colour in the panel and now the only thing wearing it.
+
+  **The tab order comes out right without being arranged here**, and moving it made
+  that stronger rather than weaker: the bar precedes the panel in the document, so
+  `← Shelf`/Edit/Versions — or Save/Cancel — are reached first, and Delete is now the
+  *last* stop on the page rather than the fourth.
+
+  On the edit page it appears for the first time, and it means deleting a Recipe you
+  have unsaved edits to. Three mechanisms already cooperate to make that safe rather
+  than one: the confirmation is mounted at the app root, `state/delete-recipe` leaves
+  for the shelf when it deletes the page's own Recipe, and `show-page!` drops the draft
+  on every page move. Three things lining up is exactly what stops being true quietly,
+  so it is checked rather than assumed."
+  [{:keys [id]}]
+  [:div.recipe-page-delete
+   [:button.secondary.danger {:on-click #(state/start-deleting id)} "Delete"]])
 
 (defn- provenance-toggle
   "The control, in an editor's register — *Show line numbers*, except that the
@@ -359,25 +388,35 @@
   for this, and a second wording of a scale is how two surfaces come to explain it
   differently.
 
-  **What the owner can *do* to the Recipe is split across two containers now, by the
-  rule `navigation-actions` writes down**: the ways of looking at it are in the top
-  bar's left slot beside `← Shelf`, and the two that change it stay in this panel.
-  `mutating-actions` is that row, and it goes under the header and above the body:
+  **What the owner can *do* to the Recipe is split across three places now**, by the
+  rule `navigation-actions` writes down and one decision that came after it: the ways of
+  *looking* at it are in the top bar's left slot beside `← Shelf`; **Publish** is under
+  the header; and **Delete is at the bottom right**, after the body.
 
-  - Under the header, because a control that changes the Recipe belongs with the facts
-    that say which Recipe it is. It is also a row apart from the chrome, which is the
-    cheap half of keeping a Delete out of a row of navigation.
-  - Above the body, which is *not* where the card puts them. A card's footer sits under
-    a body that is a paragraph or two between twelve neighbours; a page's body is the
-    Recipe in full and has no length at all — a footer under it would put Delete at the
-    end of a scroll.
+  `mutating-actions` is Publish, and under the header is where a control that changes
+  the Recipe belongs — with the facts that say which Recipe it is, and a row apart from
+  the chrome.
 
-  Above `recipe-page-body-tools` for the same reading: this row is what you can *do*
-  to the Recipe, that one is how you want to *look* at it, and the doing is not a
-  property of the text the way the provenance view is.
+  **Delete used to be beside it, and the argument for keeping it there is recorded here
+  because it was overruled rather than mistaken.** It ran: a page's body is *not* a
+  card's. A card's footer sits under a paragraph or two between twelve neighbours, while
+  a page's body is the Recipe in full and has no length at all — so a footer under it
+  puts Delete at the end of a scroll. He asked for the end of the scroll anyway — *on
+  both edit and view pages the delete button goes to the bottom right* — and it is his
+  design and the conventional one: bottom-right is where a destructive control lives
+  **because** it is out of the reading path and reached deliberately. The cost is exactly
+  what the old paragraph named, and it is now the thing being accepted rather than the
+  thing being avoided: on a long Recipe, Delete is a scroll away. That is the trade, and
+  a reader six months from now should find it here rather than a silent reversal.
 
-  The tab order comes out right without being arranged here: the bar precedes the
-  panel in the document, so `← Shelf`, Edit and Versions all come before Delete.
+  `provenance-tools` sits between them, above the body, for the reading it always had:
+  Publish is what you can *do* to the Recipe and the toggle is how you want to *look* at
+  it, and the doing is not a property of the text.
+
+  The tab order comes out right without being arranged here, and the move made it
+  stronger: the bar precedes the panel in the document, so `← Shelf`, Edit and Versions
+  are reached first, and Delete is now the **last** stop on the page rather than sitting
+  beside Publish near the top.
 
   **The Scope picker sits between the header and the useful-when line**, where the
   card's header wears the badges it replaces — the filing is part of what says which
@@ -411,7 +450,9 @@
        ;; identity one — see `source-view` for why the caller chooses it.
        showing? [source-view body (provenance/line-cautions
                                    ranges (count (provenance/split-lines body)))]
-       :else [:div.recipe-page-body [markdown/render body]])]))
+       :else [:div.recipe-page-body [markdown/render body]])
+     (when logged-in?
+       [delete-action recipe])]))
 
 (defn- editor
   "The Recipe's four content fields — this page's other mode, at `?edit=true`, with
@@ -503,7 +544,13 @@
          {:placeholder "The recipe itself"
           :rows 16
           :value description
-          :on-change #(state/set-recipe-draft-field :description (-> % .-target .-value))}])]]))
+          :on-change #(state/set-recipe-draft-field :description (-> % .-target .-value))}])]
+     ;; **The same place in this mode as in the reading**, which is the whole of *on
+     ;; both edit and view pages*: a control that is somewhere else depending on which
+     ;; mode you are in is a control you have to look for. Deleting a Recipe you have
+     ;; unsaved edits to is the interaction that follows from it — `delete-action` says
+     ;; which three mechanisms make it safe.
+     [delete-action recipe]]))
 
 (defn- not-found
   "What an address that names no readable Recipe gets.

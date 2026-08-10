@@ -158,12 +158,12 @@ Recipe would half-run from a Recipe page and produce two false reds.
     13  a card carries Page and nothing else
     1   the Page button opens the Recipe at its own address, and the body is the card's
     6   the page wears the same header facts as the card
-    14  the four actions are reachable across the slot and the panel
     22  a Recipe page keeps the theme toggle and no page selectors
     25  the versions viewer says ← Recipe and comes back to it
     3a  Back returns to the shelf, and the bar says so
     3b  Forward returns to the Recipe, at the same address
     5   a top-bar button leaves the page and puts / back in the bar
+    14  the four actions are reachable, set per container and per mode
     16  Edit goes to ?edit=true, prefilled, and Cancel comes back
     17  Back leaves the editor and Forward returns to it
     23  the slot is ← Shelf while reading and Save+Cancel while editing
@@ -179,7 +179,11 @@ Recipe would half-run from a Recipe page and produce two false reds.
     9   each line is tinted with its own caution, not its neighbour's
     10  a line between the ends is a third colour, not rounded to one
     11  the legend on the page is the string the API sent
-    12  no caution in the response, no button — even signed in
+    12  no caution in the response, no button — in either mode
+    26  the alignment rule keeps a line only at the same index and text
+    27  edit mode tints the draft: a typed line is untold, its neighbours are not
+    28  a line inserted on top makes the rest untold — the conservative arm
+    29  Cancel leaves the reading's provenance exactly as it was
     20  a toggle files the Recipe, and the version does not move       (filing)
     21  two chips in one frame both land
 
@@ -198,6 +202,28 @@ move — what is *not* up there any more, what stands in the slot in each mode, 
 the draft the slot's Save reads does not outlive a Cancel. The last of those is the one
 with teeth: the draft used to be four component-local ratoms that went out of scope with
 the component, and is now app-state that has to be *cleared*.
+
+26 to 29 came with **provenance in edit mode**, over the draft. 26 is the only check in
+either suite that calls a *pure function* — `provenance/draft-cautions` — because the
+alignment rule is worth testing apart from the view that draws it: a red in 27–29 could
+be the rule or the drawing of it, and 26 tells them apart. Its `twoIdenticalLines` case
+is the one that records a decision rather than a behaviour: a text-keyed lookup would
+tint the second `alpha` confidently and wrongly, so the rule is index **and** text.
+
+**28 asserts the conservative arm on purpose.** A line inserted at the top makes every
+line below it untold, which reads like a defect and is the design — under-claiming beats
+a confident tint against the wrong line. It is written down as a check so that the next
+person to think "a diff would fix this" meets the argument first. M35 is that mistake.
+
+**12 was extended rather than duplicated**, because the rule is one rule: the button
+exists when the answer does, in both modes.
+
+**14 has now been revised three times** — off the card, into the slot, and now that
+Delete has gone to the bottom right — so its shape is built for a fourth: set equality
+**per container, per mode**. It also **moved** in the file, to sit after 3a/3b/5: it
+navigates now (Edit, then Cancel), and those three read a history stack of exactly
+`[/, /recipe/<id>]`. Above them it reddens 3a and then eight checks in a row, which is
+how the constraint was rediscovered.
 
 **14 was rewritten rather than re-listed.** The four actions live in *two* containers
 now — the top bar's left slot carries `← Shelf`, Edit and Versions, and the panel keeps
@@ -315,6 +341,11 @@ which deletes it and any edits with it.
 | **M32** | move Delete up into the slot with them — `navigation-actions` renders it too |
 | **M33** | make `core/focused-surface?` ignore `:diffing`, so the bar keeps its selectors under the viewer |
 | **M34** | give the viewer's slot `← Shelf`, Edit and Versions as well as its back button |
+| **M35** | make `provenance/draft-cautions` match on text alone — `(some #(= line %) stored)` — instead of index and text |
+| **M36** | have the editor tint the stored body: pass `line-cautions` where it passes `draft-cautions` |
+| **M37** | key edit mode's toggle off `logged-in?` instead of `caution` being present |
+| **M38** | render `[delete-action recipe]` only in `found`, so the edit page loses it |
+| **M39** | drop the `when-not` from `mutating-actions`, so a published Recipe gets an empty actions row |
 
 M2 is the one that reddens hardest and is worth doing at least once: with the route
 gone there is no app on the page at all — `/recipe/1` is the JSON 404 — so `coldLoad()`
@@ -349,6 +380,14 @@ opposite — 18 goes red and 16 stays green, since the push still happens and th
 still follows it in the same context; **17** catches it too, which is the reason it is
 not folded into 16. **M20** reddens 19 alone, and it is the one worth looking at: a
 visitor gets a form, fills it in, presses Save, and the API answers 403.
+
+M35 to M39 are provenance-in-edit-mode's and Delete's. **M35** is the one worth running:
+it reddens 26 on `twoIdenticalLines` alone and leaves 27, 28 and 29 green, because a body
+whose lines are all distinct cannot tell the two rules apart — which is why 26 exists.
+**M36** reddens 27 and 28 (the editor stops describing the draft) and leaves 26 green.
+**M37** reddens 12's editing half only. **M38** and **M39** are 14's: the first empties
+the bottom-right container in the editing column, the second puts an empty row back under
+the header for a published Recipe — the leftover this run of work has met four times.
 
 M33 and M34 are the versions view's, and both are about the slot being an *order*:
 **M33** leaves the page selectors up while a dialog is open, which 22 does not see (it

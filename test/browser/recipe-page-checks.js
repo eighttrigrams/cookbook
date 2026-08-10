@@ -215,48 +215,6 @@
                                         + (c2.classList.contains('on') ? ' (on)' : ''))}};
       });
 
-      // 14. **and the four are here instead**, which is the other half of 13: the
-      //     removal alone would have made publishing, editing, version-viewing and
-      //     deleting unreachable in the whole UI, since the card footer was the only
-      //     caller of all four `state/start-*` fns. That is still the point.
-      //
-      //     **They live in two containers now, and this check has to span both.** The
-      //     page's own rule put the ways of *looking* at a Recipe in the top bar's
-      //     left slot — `← Shelf`, Edit, Versions — and kept what *changes* it in the
-      //     panel: Publish, Delete. A set assertion that looked at one container would
-      //     go green with the other one empty, which is precisely the unreachability
-      //     this check exists to catch. So: set equality in **each** half, so a fifth
-      //     control appearing in either reddens it, plus the four-across-two as the
-      //     claim that survives however they are arranged next.
-      //
-      //     SUBJECT is published, so Publish is absent — conditional on the latch,
-      //     exactly as it was on the card. The row's own flag is in the evidence, so a
-      //     run against an unpublished SUBJECT says why it wanted four rather than
-      //     looking arbitrary.
-      await check('14 the four actions are reachable across the slot and the panel', () => {
-        const labelsIn = sel => [...document.querySelectorAll(sel + ' button')]
-          .map(b => b.textContent.trim());
-        const published = subject.published === 1;
-        const inTheSlot = labelsIn('.top-bar-left');
-        const inThePanel = labelsIn('.recipe-page-actions');
-        const expectedSlot = ['← Shelf', 'Edit', 'Versions'];
-        const expectedPanel = published ? ['Delete'] : ['Publish', 'Delete'];
-        const danger = [...document.querySelectorAll('.recipe-page-actions button.danger')]
-          .map(b => b.textContent.trim());
-        // the claim that outlives any rearranging of the two containers
-        const allFour = ['Publish', 'Edit', 'Versions', 'Delete']
-          .filter(l => published && l === 'Publish' ? true
-                                                   : inTheSlot.concat(inThePanel).includes(l));
-        return {pass: inTheSlot.join(',') === expectedSlot.join(',')
-                      && inThePanel.join(',') === expectedPanel.join(',')
-                      && danger.join(',') === 'Delete'
-                      && allFour.length === 4,
-                evidence: {inTheSlot, expectedSlot, inThePanel, expectedPanel,
-                           published, wearingDanger: danger,
-                           publishAbsentBecausePublished: published && !inThePanel.includes('Publish'),
-                           ownerOnly: stateGet('logged-in?')}};
-      });
-
       // 22. **on a focused surface the right-hand side keeps the theme toggle and
       //     nothing else**, and the left slot holds the page's own way out instead of
       //     the brand. *a couple of widgets on the right hand side, of which only
@@ -363,6 +321,74 @@
       await step('go back to the Recipe page', () =>
         clickIn(cardFor(SUBJECT), '.card-actions button', 'Page'));
       await until(() => page());
+
+      // 14. **the four actions are reachable, across three containers now.** Still the
+      //     other half of 13 — stripping the card's footer would have made all four
+      //     unreachable, since it was the only caller of the four `state/start-*` fns —
+      //     and this is its **third** revision: once when they moved off the card, once
+      //     when Edit and Versions moved into the slot, and now that Delete has gone to
+      //     the bottom right.
+      //
+      //     So the shape is built to survive a fourth: **set equality per container, in
+      //     both modes.** A check that counted one container would go green with another
+      //     empty, which is the unreachability it exists to catch; a check that only
+      //     summed them would miss a control appearing somewhere absurd.
+      //
+      //       container                 reading                      editing
+      //       the slot                  ← Shelf · Edit · Versions    Save · Cancel
+      //       panel, under the header   Publish, absent once published   absent
+      //       panel, bottom right       Delete                       Delete
+      //
+      //     **Publish is absent while editing, and that is not the order's table.** It
+      //     was never on the edit page and it is deliberately not put there: publishing
+      //     is a one-way latch, and pressing it over a draft that has not been saved
+      //     would make a Recipe public in a state its own editor disagrees with. The
+      //     order says *Publish stays where it is*, and where it is, is the reading.
+      //
+      //     **It sits after 3a/3b/5 because it navigates.** Entering the editor and
+      //     cancelling out pushes two history entries, and those three read a stack of
+      //     exactly [/, /recipe/<id>]. Put back above them it reddens 3a and then eight
+      //     checks in a row, which is how this was found — the same constraint 16 and
+      //     17 already carry.
+      await check('14 the four actions are reachable, set per container and per mode', async () => {
+        const labelsIn = sel => [...document.querySelectorAll(sel + ' button')]
+          .map(b => b.textContent.trim());
+        const published = subject.published === 1;
+        const shot = () => ({slot: labelsIn('.top-bar-left'),
+                             underTheHeader: labelsIn('.recipe-page-actions'),
+                             bottomRight: labelsIn('.recipe-page-delete'),
+                             danger: [...document.querySelectorAll('.recipe-page button.danger')]
+                               .map(b => b.textContent.trim()),
+                             deleteIsLast: document.querySelector('.recipe-page')
+                                             .lastElementChild
+                                           === document.querySelector('.recipe-page-delete')});
+        const reading = shot();
+        clickIn(document.querySelector('.top-bar-left'), 'button', 'Edit');
+        await until(() => document.querySelector('.recipe-page-edit'));
+        const editing = shot();
+        clickIn(document.querySelector('.top-bar-left'), '.recipe-edit-cancel');
+        await until(() => document.querySelector('.recipe-page-body'));
+
+        const expectedHeader = published ? [] : ['Publish'];
+        const allFour = ['Publish', 'Edit', 'Versions', 'Delete'].filter(l =>
+          published && l === 'Publish'
+            ? true
+            : reading.slot.concat(reading.underTheHeader, reading.bottomRight).includes(l));
+        return {pass: reading.slot.join(',') === '← Shelf,Edit,Versions'
+                      && reading.underTheHeader.join(',') === expectedHeader.join(',')
+                      && reading.bottomRight.join(',') === 'Delete'
+                      && reading.danger.join(',') === 'Delete'
+                      && reading.deleteIsLast
+                      && editing.slot.join(',') === 'Save,Cancel'
+                      && editing.underTheHeader.length === 0
+                      && editing.bottomRight.join(',') === 'Delete'
+                      && editing.danger.join(',') === 'Delete'
+                      && editing.deleteIsLast
+                      && allFour.length === 4,
+                evidence: {reading, editing, expectedHeader, published,
+                           publishAbsentWhileEditing: editing.underTheHeader.length === 0,
+                           allFourReachableInTheReading: allFour}};
+      });
 
       // 16. **Edit is a navigation now, not an overlay.** It was a modal, and the
       //     modal is gone: *instead of an edit modal, lets go to a separate page,
@@ -631,10 +657,11 @@
           const before = (stateGet('recipes') || []).length;
           c.swap_BANG_(st._STAR_app_state, m => c.assoc(m, kw('recipes'), c.vector()));
           await until(() => (stateGet('recipes') || []).length === 0);
-          // Delete is the panel's and Edit is the bar's — the split this page makes
-          // between what changes the Recipe and what only looks at it
+          // Three containers now, and this check does not care which is which — the
+          // split is 14's subject. Delete is at the bottom right (`.recipe-page-delete`),
+          // Publish under the header, Edit in the bar's slot.
           const act = label => [...document.querySelectorAll(
-              '.recipe-page-actions button, .top-bar-left button')]
+              '.recipe-page-actions button, .recipe-page-delete button, .top-bar-left button')]
             .find(b => b.textContent.trim() === label);
           const modal = () => document.querySelector('.modal-backdrop');
           const form = () => document.querySelector('.recipe-page-edit');
@@ -1020,21 +1047,185 @@
       //     the exact condition a visitor's response creates: the key removed from
       //     the cached row, the session left signed in. A button keyed off
       //     `logged-in?` stays on screen and reddens this.
-      await check('12 no caution in the response, no button — even signed in', async () => {
+      //
+      //     **Extended to both modes rather than duplicated**, because the rule is one
+      //     rule: *the button exists when the answer does*. The editor tints the draft
+      //     and the reading tints the stored body, but neither has anything to tint
+      //     without `caution` — so an edit mode that offered a button the reading did
+      //     not would be the same lie on a different surface. One condition, made once,
+      //     read on both.
+      await check('12 no caution in the response, no button — in either mode', async () => {
         const path = c.vector(kw('details'), id);
         const cached = c.get_in(c.deref(st._STAR_app_state), path);
         c.swap_BANG_(st._STAR_app_state,
                      m => c.assoc_in(m, path, c.dissoc(cached, kw('caution'))));
         await until(() => !toggle());
-        const gone = {toggle: !!toggle(), source: !!document.querySelector('.provenance-source'),
-                      legend: !!document.querySelector('.provenance-legend'),
-                      rendered: !!document.querySelector('.recipe-page-body'),
-                      loggedIn: stateGet('logged-in?')};
+        const reading = {toggle: !!toggle(), source: !!document.querySelector('.provenance-source'),
+                         legend: !!document.querySelector('.provenance-legend'),
+                         rendered: !!document.querySelector('.recipe-page-body'),
+                         loggedIn: stateGet('logged-in?')};
+        // the same row, the same missing key, the other mode
+        st.open_recipe_editor(id);
+        await until(() => document.querySelector('.recipe-page-edit'));
+        await wait(150);
+        const editing = {toggle: !!toggle(), source: !!document.querySelector('.provenance-source'),
+                         legend: !!document.querySelector('.provenance-legend'),
+                         textarea: !!document.querySelector('.recipe-page-edit-body')};
+        st.cancel_recipe_edit();
+        await until(() => document.querySelector('.recipe-page-body'));
         c.swap_BANG_(st._STAR_app_state, m => c.assoc_in(m, path, cached));
         await until(() => toggle());
-        return {pass: !gone.toggle && !gone.source && !gone.legend
-                      && gone.rendered && gone.loggedIn === true && !!toggle(),
-                evidence: {withoutTheKey: gone, buttonBackAfterRestoring: !!toggle()}};
+        return {pass: !reading.toggle && !reading.source && !reading.legend
+                      && reading.rendered && reading.loggedIn === true
+                      // and the editor: no button, and the field still there to type in
+                      && !editing.toggle && !editing.source && !editing.legend
+                      && editing.textarea
+                      && !!toggle(),
+                evidence: {withoutTheKey: {reading, editing},
+                           buttonBackAfterRestoring: !!toggle()}};
+      });
+
+      // ---- the draft's provenance, in edit mode -----------------------------
+      // *show provenance button should be avilable in both edit and view modes. and in
+      // edit modes it should reflect the volatile state.* Four checks, and the fixture
+      // is the right one to make them on: `CHECK-PROV` is the only body in the dev
+      // database guaranteed to carry a 1.00 line, a 0.00 line and one in between, so a
+      // line that keeps its tint is visibly keeping a *particular* tint.
+      //
+      // The draft is app-state, so none of these save anything — the editor is entered,
+      // typed into and left by Cancel, which is what `shelf()` does for check 24.
+
+      const editBody = async (v) => {
+        if (!document.querySelector('.recipe-page-edit-body')) {
+          toggle().click();
+          await until(() => document.querySelector('.recipe-page-edit-body'));
+        }
+        type(document.querySelector('.recipe-page-edit-body'), v);
+        await until(() => (stateGet('recipe-draft') || {}).description === v);
+        toggle().click();
+        await until(() => document.querySelector('.provenance-source'));
+      };
+      const untoldFlags = () => lines()
+        .map(el => el.classList.contains('provenance-line-untold'));
+
+      // 26. **the alignment rule itself**, called directly, because the rule is worth
+      //     testing apart from the view that draws it. Three cases plus the two that
+      //     say why it is *index and text* rather than anything cleverer.
+      //
+      //     `provenance/draft-cautions` and not the DOM: this is the one assertion in
+      //     the file about a pure function, and going through the renderer would make a
+      //     red ambiguous between the rule and the drawing of it — which is exactly
+      //     what 27 to 29 are for.
+      await check('26 the alignment rule keeps a line only at the same index and text', () => {
+        const prov = window.et.cb.ui.provenance;
+        const ranges = c.js__GT_clj(JSON.parse(JSON.stringify(
+          [{from: 1, to: 1, caution: 1.0},
+           {from: 2, to: 2, caution: 0.5},
+           {from: 3, to: 3, caution: 0.0}])), kw('keywordize-keys'), true);
+        const stored = 'alpha\nbravo\ncharlie';
+        const run = draft => c.clj__GT_js(prov.draft_cautions(stored, ranges, draft));
+        const cases = {
+          storedAgainstItself: run(stored),
+          aNewLineAtTheEnd: run(stored + '\ndelta'),
+          aLineEditedInPlace: run('alpha\nBRAVO changed\ncharlie'),
+          aLineInsertedOnTop: run('zero\n' + stored),
+          aLineRemovedFromTheTop: run('bravo\ncharlie'),
+          // the case that says why a text-keyed lookup was refused: the second `alpha`
+          // is at index 1, where the stored body has `bravo`, so it is untold. A
+          // text-keyed match would have tinted it 1.00 — confidently, and wrongly.
+          twoIdenticalLines: run('alpha\nalpha\ncharlie')};
+        const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+        return {pass: eq(cases.storedAgainstItself, [1, 0.5, 0])
+                      && eq(cases.aNewLineAtTheEnd, [1, 0.5, 0, null])
+                      && eq(cases.aLineEditedInPlace, [1, null, 0])
+                      && eq(cases.aLineInsertedOnTop, [null, null, null, null])
+                      && eq(cases.aLineRemovedFromTheTop, [null, null])
+                      && eq(cases.twoIdenticalLines, [1, null, 0]),
+                evidence: cases};
+      });
+
+      // 27. **the toggle is in edit mode and it draws the draft.** Two arms of the same
+      //     claim: a line typed at the end is untold while everything above keeps its
+      //     tint, and a line changed in place goes untold on its own. If the editor
+      //     were tinting the *stored* body it would pass neither, and if it were
+      //     tinting nothing it would pass the untold half and fail the kept half —
+      //     which is why both are in one check.
+      await check('27 edit mode tints the draft: a typed line is untold, its neighbours are not',
+        async () => {
+          const stored = row().description;
+          st.open_recipe_editor(id);
+          await until(() => document.querySelector('.recipe-page-edit'));
+          const before = {toggle: !!toggle(), label: toggle()?.textContent?.trim(),
+                          textarea: !!document.querySelector('.recipe-page-edit-body')};
+          // an untouched draft has to read exactly as the reading does
+          toggle().click();
+          await until(() => document.querySelector('.provenance-source'));
+          const untouched = {rows: lines().length, untold: untoldFlags().filter(Boolean).length,
+                             textareaGone: !document.querySelector('.recipe-page-edit-body')};
+
+          await editBody(stored + '\nA line the owner has just typed.');
+          const typed = {rows: lines().length, flags: untoldFlags()};
+
+          const storedLines = stored.split('\n');
+          const edited = storedLines.slice();
+          edited[1] = storedLines[1] + ' — CHANGED';
+          await editBody(edited.join('\n'));
+          const changed = {rows: lines().length, flags: untoldFlags()};
+
+          return {pass: before.toggle && before.textarea && untouched.textareaGone
+                        && untouched.untold === 0 && untouched.rows > 2
+                        // the typed line, and only it
+                        && typed.rows === untouched.rows + 1
+                        && typed.flags[typed.flags.length - 1] === true
+                        && typed.flags.slice(0, -1).every(f => f === false)
+                        // the changed line, and only it
+                        && changed.rows === untouched.rows
+                        && changed.flags[1] === true
+                        && changed.flags.filter(Boolean).length === 1,
+                  evidence: {before, untouched, typed, changed}};
+        });
+
+      // 28. **a line inserted at the top makes every line below it untold, and that is
+      //     the rule working rather than a bug.** Asserted deliberately, because it is
+      //     the arm somebody will read as a defect and "fix" with a diff.
+      //
+      //     The rule is index-and-text, so an insertion shifts every following line off
+      //     the index its caution belongs to. The alternative — carrying the tints down
+      //     — would mean guessing, and a wrong guess here is the view telling the reader
+      //     that the owner wrote a line an agent wrote. Under-claiming reads as *we do
+      //     not know*, which is true. `provenance/draft-cautions` argues it at length,
+      //     including why `views.diff` is not a source of a line-diff.
+      await check('28 a line inserted on top makes the rest untold — the conservative arm',
+        async () => {
+          const stored = row().description;
+          await editBody('A line inserted at the very top.\n' + stored);
+          const flags = untoldFlags();
+          return {pass: flags.length === stored.split('\n').length + 1
+                        && flags.every(Boolean),
+                  evidence: {rows: flags.length, allUntold: flags.every(Boolean), flags,
+                             why: 'index+text alignment: an insertion shifts every line '
+                                  + 'below it, so none of them is at the index its '
+                                  + 'caution belongs to. Under-claiming is the design.'}};
+        });
+
+      // 29. **Cancel out of the editor and the reading is untouched.** The draft never
+      //     reached the server, so the stored ranges cannot have moved — but the draft
+      //     *is* app-state now, and `show-page!` dropping it on every page move is what
+      //     makes that true. This is the assertion that those two facts meet.
+      await check('29 Cancel leaves the reading\'s provenance exactly as it was', async () => {
+        const stored = row().description;
+        st.cancel_recipe_edit();
+        await until(() => document.querySelector('.recipe-page-body'));
+        await wait(150);
+        toggle().click();
+        await until(() => document.querySelector('.provenance-source'));
+        const reading = {rows: lines().length, untold: untoldFlags().filter(Boolean).length};
+        return {pass: reading.rows === stored.split('\n').length
+                      && reading.untold === 0
+                      && Object.keys(stateGet('recipe-draft') || {}).length === 0
+                      && row().description === stored,
+                evidence: {reading, draft: stateGet('recipe-draft'),
+                           storedUnchanged: row().description === stored}};
       });
 
       // Leave it on, and on this Recipe: this is the surface a human is being asked

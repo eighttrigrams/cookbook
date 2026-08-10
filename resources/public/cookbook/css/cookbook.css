@@ -1177,12 +1177,12 @@ html.dark-mode .inbox-kind.kind-proposed { background: rgba(245, 158, 11, 0.18);
    accent, Cancel a `.secondary` — sized by `.top-bar-left button` along with
    everything else that slot holds. */
 
-/* The owner's four actions, under the header and above the body — `views/recipe`'s
-   `found` argues the placement. Left-aligned, where `.card-actions` is pushed right
-   by a `margin-left: auto` inside the card's footer: on a card the footer is shared
-   with the date and the buttons are the far end of a line, and here they are a row
-   of their own at the start of the text column, under the useful-when line they read
-   on from.
+/* Publish, under the header — `views/recipe`'s `found` argues the placement, and
+   records the argument that Delete's move to the bottom right overruled. Left-aligned,
+   where `.card-actions` is pushed right by a `margin-left: auto` inside the card's
+   footer: on a card the footer is shared with the date and the buttons are the far end
+   of a line, and here they are a row of their own at the start of the text column,
+   under the useful-when line they read on from.
 
    No padding or font-size of their own, which is the density argument the panel
    itself makes: a card's buttons are shrunk to 6px/0.9em because a card is one of
@@ -1194,6 +1194,21 @@ html.dark-mode .inbox-kind.kind-proposed { background: rgba(245, 158, 11, 0.18);
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 18px;
+}
+
+/* Delete, at the end of the panel and pushed to its right edge — *on both edit and
+   view pages the delete button goes to the bottom right*. `flex-end` and not
+   `text-align: right`, so the button is the only thing on its line and there is
+   nothing beside it to aim at by mistake; the whole point of the position is that it
+   is reached on purpose.
+
+   A wider top margin than the rows above it, and that is the position doing its job
+   rather than decoration: what separates it from the body is *space*, since there is
+   no other row down here for it to belong to. */
+.recipe-page-delete {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 28px;
 }
 
 /* No inner panel, unlike `.card-body`. On a card the tinted block is what
