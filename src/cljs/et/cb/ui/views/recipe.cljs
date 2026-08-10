@@ -269,9 +269,11 @@
                 [found (with-provenance recipe recipes) logged-in? showing-provenance?]
                 ;; The status says the fetch landed and the cache says otherwise,
                 ;; which nothing produces today — `fetch-recipe-page!` caches before
-                ;; it writes the status. Rendered as the not-found rather than as a
-                ;; blank, because a page with only a Back button on it is the one
-                ;; outcome this file exists to never produce.
+                ;; it writes the status, and `state/delete-recipe`, which is the one
+                ;; thing that takes a row back out of `:details`, leaves this page in
+                ;; the same breath. Rendered as the not-found rather than as a blank,
+                ;; because a page with only a Back button on it is the one outcome
+                ;; this file exists to never produce.
                 [not-found])
        :missing [not-found]
        [:div.card-body-loading "Loading…"])]))

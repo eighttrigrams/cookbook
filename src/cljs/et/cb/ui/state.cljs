@@ -906,7 +906,11 @@
 
   `on-done` runs on failure too, for the same reason it does in
   `publish-recipe`: it is what closes the confirmation, and the error banner
-  renders under the modal's fixed overlay."
+  renders under the modal's fixed overlay.
+
+  **And it leaves the deleted Recipe's own page, if that is where the reader is.**
+  Here rather than in the modal, so it holds for every caller and not only for the
+  one button that happens to exist today."
   [id on-done]
   (let [done #(when on-done (on-done))]
     (api/delete-simple (str "/api/recipes/" id) (auth-headers)
@@ -923,6 +927,19 @@
                                       (update :open disj id)
                                       (cond-> (= id (:diffing s))
                                         (assoc :diffing nil :diffing-proposal nil)))))
+        ;; **Off the page, if the page was this Recipe's**, and the reason is the
+        ;; `swap!` above: the cached row is gone while `:recipe-page-id` and
+        ;; `:recipe-page-status :found` stay exactly as they were, so
+        ;; `views.recipe/recipe-page`'s `:found` branch would fall through its
+        ;; `if-let` to `[not-found]` — the case whose comment says *which nothing
+        ;; produces today*. This is what keeps that sentence true instead of turning
+        ;; it into a lie on every delete from a page. `go-to-page` and not a bare
+        ;; `assoc`, so the address bar leaves with the page; it **pushes** `/`, which
+        ;; puts the deleted Recipe's address one Back away — and what is there is the
+        ;; not-found page, whose own sentence already names *one that has since been
+        ;; deleted* as one of the cases it covers.
+        (when (= id (:recipe-page-id @*app-state))
+          (go-to-page :shelf))
         (fetch-recipes)
         ;; its associations went with it server-side, so the counts moved here too
         (fetch-scopes)
@@ -937,13 +954,34 @@
 ;; ---------------------------------------------------------------------------
 ;; view state
 
+(defn- open-on-detail!
+  "Latch one of the three Recipe overlays open — and not before the Recipe's **full
+  row is in `:details`**, which is the only place all three of them read.
+
+  **One source, and the guarantee for it in one place.** Publish and Delete used to
+  find their Recipe in `:recipes`, on the argument that the listing already carries
+  the short fields their question needs; that was true of the shelf and false of
+  everywhere else, and `views.recipe-modals/overlays` records what it cost. Making
+  `:details` the source for all three is what lets any surface open them, and this is
+  where that is paid for rather than in each modal.
+
+  On a Recipe's own page nothing is ever fetched here: `fetch-recipe-page!` caches
+  the row *before* it writes `:found`, so the cached branch always wins. The fetch is
+  for a caller holding no row at all — a collapsed card on the shelf is one — and it
+  is the fetch `start-editing` always had to make anyway, since the Edit form needs
+  the body the listing deliberately never carried. It is `?detail=full`, so it counts
+  as a read the way expanding a card does; that is the honest price of asking a
+  question about a Recipe whose text this client has not got."
+  [id k]
+  (if (get-in @*app-state [:details id])
+    (swap! *app-state assoc k id)
+    (fetch-detail id (fn [_] (swap! *app-state assoc k id)))))
+
 (defn start-editing
   "The modal edits all three fields, so it needs the body — which the listing
   deliberately did not carry."
   [id]
-  (if (get-in @*app-state [:details id])
-    (swap! *app-state assoc :editing id)
-    (fetch-detail id (fn [_] (swap! *app-state assoc :editing id)))))
+  (open-on-detail! id :editing))
 
 (defn stop-editing []
   (swap! *app-state assoc :editing nil))
@@ -952,7 +990,7 @@
 ;; back off — so a misplaced click is not something an undo could repair.
 
 (defn start-publishing [id]
-  (swap! *app-state assoc :publishing id))
+  (open-on-detail! id :publishing))
 
 (defn stop-publishing []
   (swap! *app-state assoc :publishing nil))
@@ -961,7 +999,7 @@
 ;; recipe together with every version of it, and there is no undo call either.
 
 (defn start-deleting [id]
-  (swap! *app-state assoc :deleting id))
+  (open-on-detail! id :deleting))
 
 (defn stop-deleting []
   (swap! *app-state assoc :deleting nil))

@@ -193,17 +193,22 @@
   entry in `:inbox` rather than to a Recipe, and the only place it can be opened from
   is the one page that draws that list, so it is that page's and not a Recipe's."
   []
-  (let [{:keys [recipes details editing publishing deleting diffing]} @state/*app-state]
+  (let [{:keys [details editing publishing deleting diffing]} @state/*app-state]
     [:<>
+     ;; **All three from `:details`, which is the one map holding a full Recipe
+     ;; row.** The two confirmations used to be looked up in `:recipes` instead, on
+     ;; the argument that each of them needs only short fields the listing already
+     ;; carries — a title, a version count — so neither had to wait for a body. True
+     ;; of the shelf and false of everywhere else: arrive at `/recipe/<id>` by URL and
+     ;; the listing was never fetched, so that lookup found nil and the modal
+     ;; silently did not render. `state/open-on-detail!` is the one place each of
+     ;; these is latched open and it answers for the row being there, so this is one
+     ;; source rather than three modals each knowing where its Recipe comes from.
      (when-let [recipe (get details editing)]
        [edit-modal recipe])
-     ;; The confirmation only needs the two short fields, which the listing
-     ;; already carries — unlike the Edit modal it never has to fetch a body.
-     (when-let [recipe (first (filter #(= publishing (:id %)) recipes))]
+     (when-let [recipe (get details publishing)]
        [publish-modal recipe])
-     ;; Same again: the question needs the title and the version count, both of
-     ;; which the listing carries, so this one never fetches a body either.
-     (when-let [recipe (first (filter #(= deleting (:id %)) recipes))]
+     (when-let [recipe (get details deleting)]
        [delete-modal recipe])
      (when diffing
        [diff/component])]))
