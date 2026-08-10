@@ -26,10 +26,34 @@
                   :on-key-down #(when (= (.-key %) "Enter") (do-login))}]
          [:button {:on-click do-login} "Sign in"]]))))
 
+(defn- focused-surface?
+  "Whether what is on screen is a **focused surface**: about one thing, arrived at by
+  its own address or opened over everything else, and carrying its own way out. Today
+  that is the Recipe page and only the Recipe page.
+
+  **One question, asked in one place, because the answer decides more than one
+  thing** — and because the set is going to grow. *a couple of widgets on the right
+  hand side, of which only dark light mode is shown in every view*: so on a focused
+  surface the top bar's right-hand side keeps the theme toggle and nothing else, and
+  the left slot holds that surface's own chrome instead of the brand. Written as
+  three conditions at three call sites, adding the next focused surface would mean
+  finding all three; written here, it is one clause.
+
+  It takes the whole state rather than `page` for exactly that reason. The version
+  viewer is a focused surface by the same argument and is not a `:page` at all — it
+  is `:diffing`, an overlay over whichever page is up — so the shape that answers for
+  it has to be able to look at more than the page.
+
+  What is *not* one answer is the left slot's **contents**: each focused surface has
+  its own way out and only it knows what that is. This decides which chrome goes
+  away; `left-slot` decides what replaces it."
+  [{:keys [page]}]
+  (= :recipe page))
+
 (defn- left-slot
   "The top bar's left-hand side, which is **one slot with more than one thing in
-  it**: the app's name where you are looking at the app, and a Recipe page's own
-  chrome where you are looking at one Recipe.
+  it**: the app's name where you are looking at the app, and a focused surface's own
+  chrome where you are looking at one thing.
 
   *the back button should go there where on the list view the cookbook brand logo
   is.* So on `/recipe/<id>` the slot is `views.recipe/back-to-shelf`, and the app's
@@ -39,7 +63,11 @@
 
   **The slot and not the brand is what varies**, which is why `.brand` stays exactly
   what it was and gets rendered *into* here. A `.brand` that sometimes held a button
-  would have made every rule keyed off that class a question."
+  would have made every rule keyed off that class a question.
+
+  Keyed off the page and not off `focused-surface?`, deliberately: that predicate
+  answers *whether* the app's chrome steps aside, and this answers *what stands there
+  instead*, which is a different answer for every surface that ever does it."
   [page]
   [:div.top-bar-left
    (if (= :recipe page)
@@ -49,8 +77,32 @@
       [:span.brand-name "Cookbook"]])])
 
 (defn- top-bar []
-  (let [{:keys [auth-required? logged-in? show-login? dark-mode page]}
-        @state/*app-state]
+  (let [app-state @state/*app-state
+        {:keys [auth-required? logged-in? show-login? dark-mode page]} app-state
+        ;; **On a focused surface the right-hand side keeps the theme toggle and
+        ;; nothing else.** *a couple of widgets on the right hand side, of which only
+        ;; dark light mode is shown in every view* — so this gates every one of the
+        ;; others, and `focused-surface?` is the one place that decides what counts.
+        ;;
+        ;; He asked first for *the inbox or settings selectors* to go, and then for
+        ;; the third: *the scope configuration should also only be accessible from
+        ;; the global view*. The code would have argued that on its own — the Scopes
+        ;; button borrows the settings button's styling precisely because it is the
+        ;; same kind of control in the same corner, so hiding two of three identical
+        ;; adjacent controls reads as a bug rather than as a decision. The principle
+        ;; underneath, now that it has been said twice: **the owner's configuration
+        ;; surfaces are reached from the global view, not from a surface about one
+        ;; Recipe.** A reader who wants the Inbox goes to the shelf first. That is a
+        ;; deliberate narrowing — the next person to look will otherwise try to put
+        ;; them back.
+        ;;
+        ;; **Sign in / Sign out goes with them**, which is the part with a
+        ;; consequence rather than just a tidier corner: a visitor who followed a
+        ;; link to a published Recipe has no Sign in button *on that page* and has to
+        ;; go through `← Shelf` first. That is one click, it is the control standing
+        ;; where the brand would be, and it is the trade the rule comes with — the
+        ;; right-hand side is widgets, and only the theme toggle is in every view.
+        chrome? (not (focused-surface? app-state))]
     [:div.top-bar
      [left-slot page]
      [:div.top-bar-right
@@ -61,7 +113,7 @@
       ;; what is unseen. Shown at 0 as well, because a button that appeared only
       ;; when there was work would leave him with no way to look at an empty queue
       ;; and confirm that it is empty.
-      (when logged-in?
+      (when (and chrome? logged-in?)
         (let [n (state/unseen-count)]
           [:button.settings-toggle.inbox-toggle
            {:on-click state/toggle-inbox
@@ -78,29 +130,39 @@
       ;; a claim about safety: the endpoints behind it answer 403 to anybody else,
       ;; which is the boundary. It borrows `.settings-toggle`'s styling because it
       ;; is the same kind of control in the same corner.
-      (when logged-in?
+      (when (and chrome? logged-in?)
         [:button.settings-toggle.scopes-toggle
          {:on-click state/toggle-scopes
           :class (when (= :scopes page) "active")
           :title "Scopes"}
          "▦"])
       ;; only the owner has a setting to make: the machine user's password
-      (when logged-in?
+      (when (and chrome? logged-in?)
         [:button.settings-toggle
          {:on-click state/toggle-settings
           :class (when (= :settings page) "active")
           :title "Machine user"}
          "⚙"])
+      ;; **The one widget in every view**, and the only thing on this side of a
+      ;; focused surface. Not gated, because reading in the wrong theme is a reason
+      ;; to change it wherever you are.
       [:button.dark-mode-toggle
        {:on-click state/toggle-dark-mode
         :title (if dark-mode "Switch to light" "Switch to dark")}
        (if dark-mode "☀" "☾")]
-      (cond
-        (not auth-required?) nil
-        logged-in? [:button.secondary {:on-click state/logout} "Sign out"]
-        show-login? nil
-        :else [:button.secondary
-               {:on-click #(swap! state/*app-state assoc :show-login? true)} "Sign in"])]]))
+      ;; Signing in and out is gated with the selectors, not with the theme toggle —
+      ;; see `chrome?` above for the consequence, which is a visitor going through
+      ;; `← Shelf` to find Sign in. Dev never draws either of these
+      ;; (`:dangerously-skip-logins?` leaves `auth-required?` false), so the rule
+      ;; here is only observable by making `auth-required?` true in the atom, which
+      ;; is what the check does.
+      (when chrome?
+        (cond
+          (not auth-required?) nil
+          logged-in? [:button.secondary {:on-click state/logout} "Sign out"]
+          show-login? nil
+          :else [:button.secondary
+                 {:on-click #(swap! state/*app-state assoc :show-login? true)} "Sign in"]))]]))
 
 (def ^:private owner-only-pages
   "The pages a signed-out caller is sent away from. Named as a set, because the
