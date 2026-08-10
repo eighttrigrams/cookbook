@@ -686,23 +686,33 @@
   "One fetched or returned row into `:details`, **merged over what is there rather
   than replacing it**.
 
-  **Because the write endpoints answer with less than the read one does.** `GET
-  /api/recipes/:id?detail=full` carries `caution` — the per-line provenance split —
-  and `PUT /api/recipes/:id` and the publish POST do not: they return the row, and
-  the split is a *derived* answer the read endpoint computes. An `assoc-in` therefore
-  dropped the key on every write, and `views.recipe/found` keys the *Show provenance*
-  button off the key being there — correctly, since a client that has not been told
-  the split must not offer to draw it. So filing a Scope took the button off the page
-  until the next full read, and nothing said so.
+  **Because a response may answer with less than the read one does.** `GET
+  /api/recipes/:id?detail=full` carries `caution` — the per-line provenance split — and
+  the publish POST does not: it returns the row, and the split is a *derived* answer.
+  An `assoc-in` therefore dropped the key on writes that had nothing to say about it,
+  and `views.recipe/found` keys the *Show provenance* button off the key being there —
+  correctly, since a client that has not been told the split must not offer to draw one.
+  So filing a Scope took the button off the page until the next full read, and nothing
+  said so.
 
   A merge keeps it, and keeping it is right for exactly the writes that reach here
   without it: a filing save and a publish both leave the version history alone, so the
-  split this client holds is still the answer. **A save that makes a new version does
-  not**, and that is `forget-derived!`'s job — it drops the split in the same breath
-  as the cached history, for the same reason.
+  split this client holds is still the answer.
 
-  So: keys a response carries win, keys it does not carry survive, and the one key
-  that can go stale is dropped explicitly by the one thing that stales it."
+  **And the case that used to need forgetting is now answered instead.** A save that
+  makes a version does stale the split — but since `df96747` such a save's response
+  *carries the new one*, computed over the history including it, so the merge above
+  installs the fresh answer in the same motion that used to lose the old one. There is
+  no moment left in which this client holds a split that describes text it no longer
+  has.
+
+  So the rule, restated because the old one has moved: **keys a response carries win,
+  keys it does not carry survive — and every key that can go stale is one the response
+  carries when it does.** The previous sentence ended *dropped explicitly by the one
+  thing that stales it*, which was the old `forget-derived!` dropping `caution`; that
+  is no longer true and no longer needed. What `forget-versions!` forgets now is the
+  cached *history*, which is a different fact and the only one the server does not hand
+  back."
   [recipe]
   (swap! *app-state update-in [:details (:id recipe)] merge recipe))
 
@@ -803,33 +813,32 @@
              (swap! *app-state assoc-in [:versions id] versions)
              (when on-landed (on-landed versions)))))))))
 
-(defn- forget-derived!
-  "Everything this client holds that a **new version** makes untrue: the cached
-  history, and the cached per-line provenance split.
+(defn- forget-versions!
+  "The cached version history for one Recipe, dropped because a new version makes it
+  short by one — and a history one version behind the count on the card is exactly the
+  contradiction the viewer exists not to show. Dropped rather than refetched: nothing is
+  looking at it — the editor is a page and the viewer is over it — so the next open pays
+  for it.
 
-  The history first, which is what this was originally for. Anything that makes a
-  new version makes the cached list short by one, and a history one version behind
-  the count on the card is exactly the contradiction the viewer exists not to show.
-  Dropped rather than refetched: nothing is looking at it — the editor is a page and
-  the viewer is over it — so the next open pays for it.
+  **It was `forget-derived!` and it dropped the provenance split as well, and that is
+  the change here: it was conflating two facts.** Both are derived from the version
+  history, so both did die on a save that made a version — but the *server* now hands
+  back the new split on exactly that save (`update-recipe-handler`, `df96747`), so the
+  split is answered rather than forgotten, and `cache-detail!`'s merge installs it. The
+  history is the one that still has to be forgotten, because nothing hands that back:
+  the response is one row, not a list of them.
 
-  **And `caution` with it**, for the same reason one step along: the split is derived
-  from the version history, so a save that adds a version changes who wrote which
-  line. `cache-detail!` merges, precisely so that the writes which *cannot* change
-  the split — a filing save, a publish — keep it; this is the one that can, so it
-  says so here rather than leaving a stale answer to be tinted onto the source view.
-  Dropped and not refetched, and the consequence is worth stating: *Show provenance*
-  is absent on that page until the Recipe is read in full again, because the button
-  exists exactly when the answer does. That is the rule the page already has, met
-  honestly rather than papered over with a stale one.
+  Dropping the split here as well would have been the bug that made the server change
+  invisible. `update-recipe` runs `cache-detail!` and then this, in that order, so a
+  `dissoc :caution` on this line would throw away the fresh answer the line before had
+  just installed — and nothing about it would look wrong. The suite would have been
+  green about a button that still disappeared.
 
-  Publishing is not one of these things. It writes no history row and no version
-  bump, and it touches none of the three fields a version is made of, so both the
-  cached list and the cached split are still true after one."
+  Publishing is not one of these things. It writes no history row and no version bump,
+  and it touches none of the three fields a version is made of, so the cached list is
+  still true after one — as is the cached split, which is why `cache-detail!` merges."
   [id]
-  (swap! *app-state (fn [s] (-> s
-                                (update :versions dissoc id)
-                                (update-in [:details id] dissoc :caution)))))
+  (swap! *app-state update :versions dissoc id))
 
 (defn- open-viewer!
   "The **only** writer of `:diffing` and `:diffing-proposal`, which is why they are
@@ -1020,7 +1029,7 @@
                   (auth-headers)
       (fn [recipe]
         (cache-detail! recipe)
-        (forget-derived! id)
+        (forget-versions! id)
         (fetch-recipes)
         ;; a save may have refiled the Recipe, so the per-Scope counts moved
         (fetch-scopes)
@@ -1214,9 +1223,10 @@
   - `fetch-recipes` — the badges on the shelf's cards moved.
   - `fetch-scopes` — the per-Scope counts moved, which is the reason
     `update-recipe` refetches them too.
-  - **not `forget-derived!`**: no version was made, so the cached history is still
-    true and so is the cached provenance split. Dropping them would make every chip
-    a Recipe's whole history to re-fetch and a button to disappear.
+  - **not `forget-versions!`**: no version was made, so the cached history is still
+    true — and so is the cached split, which is why this response does not carry one
+    and does not need to. Dropping the history would make every chip a Recipe's whole
+    history to re-fetch.
   - **not `fetch-inbox`**: filing makes no version and no proposal, so there is
     nothing new for the queue to be about.
 
