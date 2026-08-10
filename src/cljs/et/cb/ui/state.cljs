@@ -63,6 +63,13 @@
            ;; row and not two that can disagree.
            :recipe-page-id nil
            :recipe-page-status nil ;; :loading, :found or :missing
+           ;; Which of that page's two modes is on: the reading, or the editor at
+           ;; `?edit=true`. Written in the same `swap!` as the two above and by the
+           ;; same one function, so 'the editor is open and the page is the shelf'
+           ;; is unreachable rather than defended. It is **derived from the
+           ;; address**, never toggled: `sync-from-url!` is what reads it, which is
+           ;; what makes Back and Forward move between the two modes.
+           :recipe-page-edit? false
            ;; A filing save that is out on the wire, and what the owner has asked
            ;; for since — `nil`, or `{:id :wanted :sent}`. One value and not three
            ;; keys, for the reason `:diffing`/`:diffing-proposal` are written
@@ -122,36 +129,58 @@
   reader just took backwards, which is how a Back button comes to do nothing.
 
   So this writes the state, and each caller answers for the bar. Everything that
-  makes a Recipe page — the id, the status, the fetch — is in one branch here for
-  the same reason `open-viewer!` writes `:diffing` and `:diffing-proposal`
-  together: 'the page says :recipe and there is no id' and 'the id is set and the
-  page is the shelf' are then states nobody has to be careful about."
-  [page recipe-id]
-  (swap! *app-state assoc :page page :editing-scope nil :deleting-scope nil
-         :showing-provenance? false
-         :recipe-page-id (when (= :recipe page) recipe-id)
-         :recipe-page-status (when (= :recipe page) :loading))
-  (case page
-    :settings (fetch-machine-user)
-    :scopes (fetch-scopes)
-    ;; More than freshness here: the queue is the *only* place an agent's write
-    ;; shows up, and it may have arrived while he was reading the shelf.
-    :inbox (fetch-inbox)
-    ;; And this one is not freshness at all: the page has nothing to draw until
-    ;; the body arrives, because the listing never carried one.
-    ;;
-    ;; **The Scope list comes too, and only this page needed teaching.** The
-    ;; picker on it draws from `:scopes` — the owner's whole list, not the
-    ;; Recipe's — and that was fetched for the Scopes page and by `fetch-shelf!`
-    ;; and nowhere else. An owner arriving at `/recipe/<id>` by its address has
-    ;; had neither, so the picker would have rendered as **nothing at all**: a
-    ;; control that is silently not there, on the one path with no shelf visit in
-    ;; front of it. Signed in only, because the endpoint answers 403 to anybody
-    ;; else and a 403 in the console reads as a bug — the same gate `fetch-shelf!`
-    ;; puts on it.
-    :recipe (do (fetch-recipe-page! recipe-id)
-                (when (:logged-in? @*app-state) (fetch-scopes)))
-    nil))
+  makes a Recipe page — the id, the mode, the status, the fetch — is in one branch
+  here for the same reason `open-viewer!` writes `:diffing` and `:diffing-proposal`
+  together: 'the page says :recipe and there is no id', 'the id is set and the page
+  is the shelf' and 'the editor is open over no Recipe' are then states nobody has
+  to be careful about. `edit?` joined that list rather than getting a `swap!` of its
+  own.
+
+  **Switching between the two modes of a Recipe already on screen does not re-read
+  it, and that is the one condition in here.** Everywhere else this fetches
+  unconditionally, deliberately — `views.recipe`'s docstring argues that opening a
+  Recipe's page *is* a read and that the count it moves is the one ranking the shelf.
+  Pressing Edit is not opening it a second time. Left unconditional, one edit would
+  have counted three reads — the page, the editor, and the page again after Save —
+  and inflated the number that decides the shelf's order by an amount that has
+  nothing to do with anybody reading anything. So: same Recipe, already `:found`,
+  keep the row and the status and fetch nothing. Every other arrival — a cold load
+  at either address, a different Recipe, a return from the shelf — fetches as before,
+  because `:recipe-page-id` is not this one or the status is not `:found`."
+  [page recipe-id edit?]
+  (let [{:keys [recipe-page-id recipe-page-status]} @*app-state
+        same-recipe? (and (= :recipe page)
+                          (= recipe-id recipe-page-id)
+                          (= :found recipe-page-status))]
+    (swap! *app-state assoc :page page :editing-scope nil :deleting-scope nil
+           :showing-provenance? false
+           :recipe-page-id (when (= :recipe page) recipe-id)
+           :recipe-page-edit? (and (= :recipe page) (boolean edit?))
+           :recipe-page-status (when (= :recipe page)
+                                 (if same-recipe? :found :loading)))
+    (case page
+      :settings (fetch-machine-user)
+      :scopes (fetch-scopes)
+      ;; More than freshness here: the queue is the *only* place an agent's write
+      ;; shows up, and it may have arrived while he was reading the shelf.
+      :inbox (fetch-inbox)
+      ;; And this one is not freshness at all: the page has nothing to draw until
+      ;; the body arrives, because the listing never carried one.
+      ;;
+      ;; **The Scope list comes too, and only this page needed teaching.** The
+      ;; picker on it draws from `:scopes` — the owner's whole list, not the
+      ;; Recipe's — and that was fetched for the Scopes page and by `fetch-shelf!`
+      ;; and nowhere else. An owner arriving at `/recipe/<id>` by its address has
+      ;; had neither, so the picker would have rendered as **nothing at all**: a
+      ;; control that is silently not there, on the one path with no shelf visit in
+      ;; front of it. Signed in only, because the endpoint answers 403 to anybody
+      ;; else and a 403 in the console reads as a bug — the same gate `fetch-shelf!`
+      ;; puts on it. Asked for on both modes, because the reading is one Cancel
+      ;; away from any editor and a picker that arrived a request late would be the
+      ;; same silently-absent control one step further along.
+      :recipe (do (when-not same-recipe? (fetch-recipe-page! recipe-id))
+                  (when (:logged-in? @*app-state) (fetch-scopes)))
+      nil)))
 
 (defn go-to-page
   "Show one page: `:shelf`, `:settings`, `:scopes`, `:inbox` or `:recipe` — the
@@ -177,25 +206,43 @@
   next visit.
 
   **And this is where the address bar is written, for the same reason the page
-  is: it is the one chokepoint.** A Recipe page pushes `/recipe/<id>` and every
-  other page pushes `/` — there is one addressable thing in this app and the rest
-  is the app. Written at the call sites instead, the bar would be right for as long
-  as every future writer of `:page` remembered it, which is the property this
-  function exists to not depend on.
+  is: it is the one chokepoint.** A Recipe page pushes `/recipe/<id>` — or
+  `/recipe/<id>?edit=true` for its editor — and every other page pushes `/`; there
+  is one addressable thing in this app and the rest is the app. Written at the call
+  sites instead, the bar would be right for as long as every future writer of
+  `:page` remembered it, which is the property this function exists to not depend
+  on. The third argument is the mode, and it exists so that the *editor's* address
+  is written here too rather than by whichever button opens it.
+
+  **A push, including for the editor**, because entering it is a move the reader
+  made: Back out of the editor has to land on the reading of the same Recipe, and
+  Forward has to return. That is the whole of what makes the two modes one page at
+  one address rather than two screens sharing a `:page`.
 
   Two callers deliberately do not come through here and each answers for the bar
   itself: `logout`, which is a reset rather than a navigation, and
   `sync-from-url!`, where the URL is already what it is."
   ([page] (go-to-page page nil))
-  ([page recipe-id]
-   (show-page! page recipe-id)
-   (url/push-state! (if (= :recipe page) (url/recipe-path recipe-id) "/"))))
+  ([page recipe-id] (go-to-page page recipe-id false))
+  ([page recipe-id edit?]
+   (show-page! page recipe-id edit?)
+   (url/push-state! (if (= :recipe page) (url/recipe-path recipe-id edit?) "/"))))
 
 (defn open-recipe-page
   "Open one Recipe's own page — the only button a card's footer carries, and the one
   gesture in this app that puts a thing's identity in the address bar."
   [id]
   (go-to-page :recipe id))
+
+(defn open-recipe-editor
+  "Open a Recipe's editor: the same page, at `?edit=true`.
+
+  Named beside `open-recipe-page` and not folded into it with a flag, because these
+  are two things a reader asks for and each has one button. What they share — the
+  address, the push, the state move — is `go-to-page`'s, which is where it has to
+  be."
+  [id]
+  (go-to-page :recipe id true))
 
 (defn sync-from-url!
   "Make the page match the address, without touching the address.
@@ -216,12 +263,33 @@
   index for on purpose — puts the shelf up and **corrects the bar with
   `replace-state!`**. Corrected rather than left alone, because a bar naming a
   Recipe over a shelf is a lie the reader would copy; replaced rather than pushed,
-  because there is no state to go Back to."
+  because there is no state to go Back to.
+
+  **`?edit=true` is read here and nowhere else, which is what makes the editor a
+  page rather than a mode with a URL beside it.** A cold load at the edit address
+  opens the editor because this is what the boot calls; Back and Forward move
+  between the two modes of one Recipe because this is what `popstate` calls. Neither
+  works if the flag is a thing a button sets.
+
+  **A caller who is not the owner gets the reading, and the query comes off the
+  bar.** The wildcard route serves the app to anybody who types this address —
+  `(GET \"/recipe/*\")` deliberately does not look at what follows it, and a query
+  string never affects the match — so the client is the only thing that can refuse
+  it. Two rules already in this app agree, and this is a third instance of each
+  rather than a new policy: `core/page-body` sends a visitor from an owner-only page
+  back to the shelf, and the paragraph above corrects a bar that names something the
+  app is not showing. The API refuses the PUT regardless; a form a visitor can fill
+  in and never submit is a worse lie than no form. An unpublished Recipe is still a
+  not-found for them, which is the API's answer and not this line's."
   []
   (if-let [id (url/parse-recipe-path (url/current-path))]
-    (show-page! :recipe id)
+    (let [asked-to-edit? (url/editing?)
+          edit? (and asked-to-edit? (:logged-in? @*app-state))]
+      (show-page! :recipe id edit?)
+      (when (and asked-to-edit? (not edit?))
+        (url/replace-state! (url/recipe-path id))))
     (do
-      (show-page! :shelf nil)
+      (show-page! :shelf nil false)
       (when-not (= "/" (url/current-path))
         (url/replace-state! "/")))))
 
@@ -335,6 +403,9 @@
          :recipes [] :details {} :open #{} :editing nil :publishing nil :deleting nil
          :versions {} :versions-request {} :diffing nil :diffing-proposal nil
          :page :shelf :recipe-page-id nil :recipe-page-status nil
+         ;; the editor with them: it is the owner's mode of that page, and signing
+         ;; out on it must not leave a form up over a PUT the API now refuses
+         :recipe-page-edit? false
          ;; a filing save in flight is a statement about the owner's own filing,
          ;; and its `:wanted` set is a chip row a signed-out client must not draw
          :filing nil

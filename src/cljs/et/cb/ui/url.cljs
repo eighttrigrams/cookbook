@@ -1,5 +1,5 @@
 (ns et.cb.ui.url
-  "The address bar, as four small functions — tracker's `et.tr.ui.url`, minus the
+  "The address bar, as five small functions — tracker's `et.tr.ui.url`, minus the
   part cookbook does not need.
 
   **There is no routing library in this workspace and this is not the beginning of
@@ -7,6 +7,13 @@
   secretary, accountant or pushy; the two siblings that put a thing's identity in
   the URL hand-roll it over `js/history`, and this is the same shape so that a
   reader who has met one has met all three.
+
+  It was four functions until a Recipe's page grew a second mode. `editing?` is the
+  fifth and it is **one predicate about one flag**, not a query parser returning a
+  map: there is one query param in this app, it has one value that means anything,
+  and a `params` map would be the thing the paragraph above says this is not — plus
+  a rewrite of every existing caller to take it. `recipe-path` grew an arity for the
+  same reason rather than a sibling function.
 
   **One entity, so no type prefix.** Tracker's slug carries three letters
   (`/item/tsk42`) because five kinds of thing share one route over there and the
@@ -34,8 +41,34 @@
       (when-not (js/isNaN id)
         id))))
 
-(defn recipe-path [id]
-  (str "/recipe/" id))
+(defn recipe-path
+  "A Recipe's address, reading or editing.
+
+  `?edit=true` and not `/recipe/42/edit`, because he asked for the query param —
+  *instead of an edit modal, lets go to a separate page, with ?edit=true query
+  param* — and because the path form would have to get past
+  `parse-recipe-path`'s `re-matches`, which deliberately refuses a path with
+  anything after the id. The flag says *how you are looking at* Recipe 42; the path
+  says *which Recipe*, and one of those is the thing's identity."
+  ([id] (str "/recipe/" id))
+  ([id edit?] (if edit? (str (recipe-path id) "?edit=true") (recipe-path id))))
+
+(defn editing?
+  "Whether the address is asking for a Recipe's editor rather than its reading.
+
+  `URLSearchParams` and not a regex over `.-search`: it is a browser built-in, so
+  it is not a dependency, and it gets `?a=1&edit=true` and `?edited=true` right
+  without anybody having to think about the second one.
+
+  **`edit=true` exactly**, so `?edit=1` and a bare `?edit` are not the editor. One
+  spelling, since the only thing that ever writes this is `recipe-path` — and an
+  address a person typed by hand that misses it lands on the reading, which is the
+  safe half of the two.
+
+  Reads `js/location` itself, the way `current-path` does and for its reason: one
+  function so that everything asking the question asks it the same way."
+  []
+  (= "true" (.get (js/URLSearchParams. (.-search js/location)) "edit")))
 
 (defn push-state!
   "A new entry in the history: this is a move the reader made, and Back should
