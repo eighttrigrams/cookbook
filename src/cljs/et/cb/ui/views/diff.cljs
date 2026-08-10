@@ -20,8 +20,11 @@
   two would drift, and the words are the only thing that differs between them —
   headings, a label, and which buttons are in the header.
 
-  Modelled on rhizome's `ui.main.diff`, which this follows down to the ✕ / ← / →
-  header and the Split/Unified toggle. Three places it deliberately does **not**:
+  Modelled on rhizome's `ui.main.diff`, which this follows down to the ← / → header
+  and the Split/Unified toggle. Rhizome's `✕` is the one piece of that chrome this no
+  longer has: the way off a surface is the top bar's left slot in this app, so the
+  header begins with what the reading *is* — see `back-to-origin`. Three further
+  places it deliberately does **not**:
 
   **Every version is a step.** Rhizome collapses runs of versions whose text is
   identical, because there a run of them means a pure title change with nothing to
@@ -417,16 +420,34 @@
   also what made the move out of the pages a non-event here: this reads the tree it
   is actually in.
 
-  **`.modal-backdrop` is skipped**, and that is the stylesheet's z-index argument in
-  focus terms: the dismiss confirmation is opened from this surface's own header and
-  renders at 30 over this 25, so it is not behind anything and must keep its buttons."
+  **Two siblings are skipped, and both exemptions say something.**
+
+  `.modal-backdrop` is the stylesheet's z-index argument in focus terms: the dismiss
+  confirmation is opened from this surface's own header and renders at 30 over this 25,
+  so it is not behind anything and must keep its buttons.
+
+  **`.top-bar` is the newer one, and it is only safe because of what is up there.**
+  The way off this surface is now the bar's left slot — `back-to-origin` — so a bar
+  taken out of the tab order would be a dialog whose one exit the keyboard cannot
+  reach, which is the exact failure this function was written to fix, arrived at from
+  the other side. Exempting the *whole* bar rather than that one button is right
+  because `core/focused-surface?` has already emptied it: while this surface is up the
+  bar holds the back button and the theme toggle and nothing else, so there is no
+  page selector, no Sign out and no third control hiding in there to Tab onto. The two
+  facts hold each other up — if a widget is ever added to the bar unconditionally,
+  this exemption is where it becomes reachable from a dialog, and that is the moment
+  to make the exemption narrower rather than to argue with it.
+
+  Everything else behind stays inert, which is the part not to break: the page under
+  the overlay, the error banner, the login form. Proven with real Tab presses rather
+  than argued — see the suite's house rule about keystrokes."
   [overlay-el]
   (loop [el overlay-el]
     (when-let [parent (.-parentElement el)]
       (doseq [sib (array-seq (.-children parent))]
         (when (and (not (identical? sib el))
                    (not (.-inert sib))
-                   (not (.matches sib ".modal-backdrop")))
+                   (not (.matches sib ".modal-backdrop, .top-bar")))
           (set! (.-inert sib) true)
           (.setAttribute sib inert-attr "")))
       (when-not (identical? parent (.-body js/document))
@@ -507,7 +528,7 @@
   under it.
 
   **There is one of these and there are two readings**, which is the whole shape of
-  this namespace. The chrome, the ✕, the Split/Unified toggle and the dark-mode
+  this namespace. The chrome, the Split/Unified toggle and the dark-mode
   wiring are written once, so a proposal cannot come to be read on a page that merely
   looks like the version viewer. What a reading supplies is words — a `heading`, the
   `subject` it is about, a `label` — and, in the two places where the readings really
@@ -532,7 +553,9 @@
         :aria-label (str heading (when (seq (str subject)) (str " — " subject)))}
        [:div.diff-page {:tab-index -1}
         [:div.diff-header
-         [:button.diff-close {:on-click state/stop-diff :title "Close"} "✕"]
+         ;; No `✕`. The way off this surface is `back-to-origin`, in the top bar's
+         ;; left slot, which is where every other surface's is — so the header begins
+         ;; with what this reading *is* rather than with a way to leave it.
          [:h2 heading]
          [:span.diff-recipe-title subject]
          nav

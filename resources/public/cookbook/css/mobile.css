@@ -17,6 +17,9 @@
   .modal-backdrop { padding: 12px; align-items: flex-start; }
   .modal { margin-top: 12px; }
   .diff-page { padding: 14px 12px 32px; }
+  /* The same arithmetic as the desktop rule, with this breakpoint's numbers: body's
+     14px top padding, the bar's 32px, and the 16px it keeps below itself here. */
+  .diff-overlay { top: calc(14px + 32px + 16px); }
   /* The version viewer's two sides stack rather than becoming two columns too
      narrow to read a title in — older on top, which keeps the reading order the
      wide layout has left to right. */

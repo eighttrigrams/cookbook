@@ -684,9 +684,26 @@ html.dark-mode .pending-badge { background: rgba(245, 158, 11, 0.18); }
    `background-image` over an opaque `background-color` — in dark mode
    `--body-bg`'s first stop has an alpha, and on its own it let the whole shelf
    read through. */
+/* **It clears the top bar instead of covering it**, which is *and the rest of the
+   content moves a bit downward*. The bar holds this surface's way out now, so an
+   overlay over it would be a dialog whose exit cannot be clicked either.
+
+   The top is not a guess at the bar's height — it is the arithmetic that puts every
+   other page's content where it is: `body`'s 24px padding, the bar's 32px, and the
+   24px it keeps below itself. So the viewer's first pixel is exactly the first pixel
+   of a `.card` or a `.recipe-page`, and moving between them does not shift the eye.
+
+   The one thing this cannot survive is the bar **wrapping** to two lines, which would
+   put its second row under the overlay's top edge. It does not today: on a focused
+   surface the bar is a back button and one toggle, which is the narrowest it ever is,
+   and `mobile.css` was measured at 390px. A bar that grows is the thing to re-measure,
+   not this number to fudge. */
 .diff-overlay {
   position: fixed;
-  inset: 0;
+  top: calc(24px + 32px + 24px);
+  right: 0;
+  bottom: 0;
+  left: 0;
   z-index: 25;
   overflow-y: auto;
   background-color: var(--opaque-bg);
@@ -698,9 +715,10 @@ html.dark-mode .pending-badge { background: rgba(245, 158, 11, 0.18); }
   padding: 24px;
 }
 /* It takes focus when the surface opens — `tabindex="-1"`, set in `shell` — because
-   the alternative is landing on the ✕ or on Approve, and a reader who has just opened
-   a page to read it has read nothing yet. No ring for that: the ring belongs to the
-   control the first Tab reaches, not to the page it is on. */
+   the alternative is landing on Approve, and a reader who has just opened a page to
+   read it has read nothing yet. (The example used to say "the ✕ or Approve"; the ✕ is
+   in the top bar now, and the reason holds without it.) No ring for that: the ring
+   belongs to the control the first Tab reaches, not to the page it is on. */
 .diff-page:focus { outline: none; }
 .diff-header {
   display: flex;

@@ -906,7 +906,8 @@
           (swap! *app-state assoc :diff-version-idx (step-that-produced entries version)))))))
 
 (defn stop-diff
-  "Close the viewer, whichever of the two it was showing — the ✕ is one button.
+  "Close the viewer, whichever of the two it was showing — one way out for both
+  readings, and it is `views.diff/back-to-origin` in the top bar's left slot.
 
   `:diff-unified?` deliberately survives this: which of the two layouts a reader
   can read is about the reader, not about the recipe they closed."
