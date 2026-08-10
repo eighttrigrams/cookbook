@@ -115,7 +115,7 @@ the Inbox's, and a check's number there is its name and not its position — add
 unrelated checks to it would break exactly that promise. This one has its own numbers
 and its own subject.
 
-Four of its six phases need no seed and write nothing. What they read is one Recipe
+Four of its seven phases need no seed and write nothing. What they read is one Recipe
 of the dev database, named at the top of the file:
 
     const SUBJECT = 'Sourdough starter';
@@ -126,12 +126,13 @@ visitor's case it claims to be. If that Recipe is gone, point the constant at an
 one that is both. The only trace a run leaves is the `view_count` those reads move,
 which is what reading a Recipe *is*.
 
-### Six phases, and why it is not one evaluate
+### Seven phases, and why it is not one evaluate
 
     (<contents of the file>).shelf()       — signed in, standing on /
     (<contents of the file>).coldLoad()    — after loading /recipe/<id> fresh
     (<contents of the file>).coldEdit()    — after loading /recipe/<id>?edit=true fresh
     (<contents of the file>).signedOut()   — signed in, standing on /; it signs itself out
+    (<contents of the file>).save()        — a version-making save; builds its own fixture
     (<contents of the file>).provenance()  — the provenance view; needs provenance-seed.py
     (<contents of the file>).filing()      — the Scope picker; needs the same seed
 
@@ -146,10 +147,21 @@ leaves the document, every move is a `pushState`, so `history.back()` fires a `p
 in the same context and can be waited on like any other consequence. That now covers
 Back **out of the editor** as well as Back out of the page (16, 17).
 
-`filing()` is the one phase that **writes**, so it works on the seeded fixture and not
-on `SUBJECT`: filing a Recipe is a save, and a suite that promises to leave his shelf
-alone must not start filing it. It needs two of the owner's Scopes to exist, and it puts
-the fixture back where it found it.
+**Two phases write, and neither writes to anything of his.** `filing()` works on the
+seeded fixture and not on `SUBJECT`: filing a Recipe is a save, and a suite that promises
+to leave his shelf alone must not start filing it. It needs two of the owner's Scopes to
+exist, and it puts the fixture back where it found it.
+
+`save()` is the only phase that makes a **version**, and it is the only one that builds
+its own fixture rather than reading a seeded one — for the reason the version makes: a
+save moves the ladder of cautions `provenance()` reads, so borrowing `CHECK-PROV` would
+cost the *next* run its columns rather than this one a column. It creates `CHECK-SAVE`
+through the API as a machine (three lines the API reads as `0.00` throughout, so a line
+the owner then rewrites has somewhere visible to move to), saves an edit through the UI,
+and **leaves the Recipe behind for `cleanup.py`** — deleting it through the API would
+file a `deleted` event in his queue, which is the same reason `cleanup.py` uses sqlite.
+It runs from anywhere and leaves the browser on the shelf, so the two phases after it
+still start and end where they always did.
 
 `shelf()` refuses to run from anywhere but the shelf, and says where it found itself
 instead. `:recipes` is in the atom on every page, so a suite that only checked for the
@@ -174,6 +186,8 @@ Recipe would half-run from a Recipe page and produce two false reds.
     4a  signed out, a published Recipe still has a page                (signedOut)
     4b  an address that names no readable Recipe says so, and offers a way back
     19  signed out at ?edit=true gets the reading, with the query gone
+    31  saving keeps the button, with the split of the version it wrote (save)
+    32  a filing toggle keeps the split it did not change
     7   the toggle swaps the rendered body for the source, and back    (provenance)
     8   the numbers run 1..n over the body as it is stored
     9   each line is tinted with its own caution, not its neighbour's
@@ -184,6 +198,7 @@ Recipe would half-run from a Recipe page and produce two false reds.
     27  edit mode tints the draft: a typed line is untold, its neighbours are not
     28  a line inserted on top makes the rest untold — the conservative arm
     29  Cancel leaves the reading's provenance exactly as it was
+    30  the toggle is in the panel's corner, in both modes
     20  a toggle files the Recipe, and the version does not move       (filing)
     21  two chips in one frame both land
 
@@ -217,6 +232,33 @@ person to think "a diff would fix this" meets the argument first. M35 is that mi
 
 **12 was extended rather than duplicated**, because the rule is one rule: the button
 exists when the answer does, in both modes.
+
+**31 is the owner's complaint, and the only check in either suite that a green suite
+could have hidden.** *saving made the show provenance button disappear until i went ofr
+overview and came back.* The `PUT` now answers with the split of the version it wrote —
+but `update-recipe` cached that response and dropped the split on the *very next line*,
+so the server change on its own is invisible and nothing about it looks wrong. So 31
+asserts the split as well as the button: the line he rewrote reads `1.00`, the two he
+left alone still read `0.00`, and the version has moved by exactly one. Keeping the old
+ranges would satisfy the button half while describing text that no longer exists, and
+refetching the page would satisfy both while inflating `view_count`.
+
+**32 is the other half of the same rule** — a filing save carries no split and needs
+none, because `cache-detail!` merges and the answer cannot have changed. The two
+together are what says the halves meet: the button survives a save that was told the
+split and a save that was not. Which saves are *served* it is the server's half, in
+`caution_integration_test.clj`.
+
+**30 is the corner, measured rather than looked at.** *also it should be placed in the
+top right corner of that REcipe's space.* Three claims: the toggle is the panel's first
+line and flush with its right edge; it does not collide with the title, asserted as
+*side by side or stacked* so that it holds at 390px as well as at full width; and
+`.recipe-page-body-tools` — which now only ever holds the legend — does not render at
+all while the view is off. That last one is the fifth leftover container of this run of
+work and the only one a suite catches cheaply: an empty row keeps the panel's spacing
+and reads as a rendering bug nobody can name. It measures against the **row** and not
+the title, because the title carries `margin-right: auto` and its box ends where its
+text does.
 
 **14 has now been revised three times** — off the card, into the slot, and now that
 Delete has gone to the bottom right — so its shape is built for a fourth: set equality
@@ -284,7 +326,8 @@ the owner has touched.
 
     python3 test/browser/provenance-seed.py    # prints the id and the ranges
     …run provenance() …
-    python3 test/browser/cleanup.py            # CHECK-PROV goes with the rest
+    python3 test/browser/cleanup.py            # CHECK-PROV, and the CHECK-SAVE
+                                               # each save() run leaves behind
 
 The trailing newline in that body is load-bearing rather than untidy. The API's ranges
 keep a trailing empty line and `clojure.string/split-lines` throws it away, so a view
@@ -346,6 +389,12 @@ which deletes it and any edits with it.
 | **M37** | key edit mode's toggle off `logged-in?` instead of `caution` being present |
 | **M38** | render `[delete-action recipe]` only in `found`, so the edit page loses it |
 | **M39** | drop the `when-not` from `mutating-actions`, so a published Recipe gets an empty actions row |
+| **M40** | answer the `PUT` with the row alone — `{:status 200 :body result}` in `update-recipe-handler`, without the `cond->` — the state before the server change |
+| **M41** | put `state/forget-versions!` back to dropping the split as well: `(update-in [:details id] dissoc :caution)` beside the `:versions` line |
+| **M42** | bind the split *before* the write in `update-recipe-handler`, so the response describes the version it displaced |
+| **M43** | drop the version gate — `split (caution-body ds req id)` unconditionally — so a filing `PUT` pays for a history fold too |
+| **M44** | put the toggle back over the body: render it inside `.recipe-page-body-tools` again and drop the `corner` argument from `header` |
+| **M45** | render `[provenance-legend legend]` unconditionally at both call sites, so the row is there with nothing in it |
 
 M2 is the one that reddens hardest and is worth doing at least once: with the route
 gone there is no app on the page at all — `/recipe/1` is the JSON 404 — so `coldLoad()`
@@ -410,6 +459,32 @@ because pressing Edit has the row in hand, and reddens **18** alone — the edit
 with four empty fields on a cold load, which is indistinguishable on screen from a Recipe
 that has no content. **M27** reddens 22 alone; **M26** reddens 5 and 23; **M29** reddens
 24 and nothing else.
+
+M40 to M45 are the split surviving a save, and the toggle's corner. **M40 and M41 are
+one bug from either end, and their evidence is the argument for asserting the ranges**:
+M40 — the server before the change — leaves the button on the page with `[0, 0, 0]`
+under a body whose second line he has just rewritten, and M41 takes the button away
+entirely (`toggle: false`, the complaint verbatim). Both redden 31, and a check that had
+only looked for the button would have called M40 a pass. M41 also reddens 32, as a
+cascade rather than a second sighting: 31's save has already taken the split away, so
+there is nothing left for the filing toggle to keep.
+
+**M42** is the one a carelessly placed call would have shipped: the button is there, the
+ranges are real, and they describe the version that was *displaced* — `[0, 0, 0]` again,
+plausible and wrong. 31 sees it because it asserts which lines moved; so does
+`caution_integration_test.clj`, on four assertions, one of which exists only to state the
+difference from `before`.
+
+**M43** is the honest gap in this suite. Nothing here goes red — the browser cannot
+see it, because a split recomputed on a filing save is the *same* split; the whole cost
+is a fold over the entire history per Scope chip clicked. Three assertions in
+`caution_integration_test.clj` see it, *a filing-only save carries no split* first.
+
+**M44** and **M45** are 30's, one per half. M44 — the toggle back over the body —
+reddens 30 alone. M45 — the legend row rendered unconditionally — reddens 30, **11 and
+12** as well, which is worth knowing: 11 asserts the legend goes away with the view and
+12 asserts it never appears without a `caution` to explain, so an empty row is three
+different lies at once.
 
 M21 to M25 are the filing's, and the pair worth understanding is **M23** and **M24** —
 both of them are what an unhurried reader would write, and both lose a click. M23 sends

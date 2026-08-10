@@ -497,7 +497,9 @@ are the interface, not decoration.
   the second one holds even when every version is an agent's — see *Edits that need
   approving*, and note the two different 409s that route can give, told apart by
   `reason`. `?overwrite=true` replaces a proposal already pending. On a published
-  Recipe a `tags` or `scope_ids` key makes the whole call a 403.
+  Recipe a `tags` or `scope_ids` key makes the whole call a 403. **A save that made a
+  new version answers with `caution` beside the row** — the split of the version it just
+  wrote; one that made none does not carry the key at all, and does not need to.
 - `DELETE /api/recipes/:id` — the recipe and its whole history. Its inbox entries
   survive it; a pending proposal on it is closed.
 - `GET /api/recipes/:id/versions` — every version, newest first, each with all
@@ -623,6 +625,16 @@ version carries a `source`, every superseded version keeps its own text in
 authorship, which is the only thing the library asks for. `et.cb.caution` is the
 whole of the adapter, and none of the arithmetic.
 
+**A save that made a version carries it too.** `PUT /api/recipes/:id` answers with the
+row it wrote, and when that write made a new version the answer carries `caution`
+beside it: the split of the version just written, not of the one it displaced. Not on
+every `PUT` — a save that changes only the filing or the tags makes no version, so the
+split cannot have moved, and computing one anyway would pay for a fold over the whole
+history every time a reader clicks a Scope chip. The rule is the client's problem
+stated exactly: **the response carries the split precisely when the client would
+otherwise have had to forget it.** A machine's `202` carries none, because the `recipe`
+in it is the Recipe as it *still* reads and nothing about it has moved.
+
 **A visitor gets no `caution` key at all** — legend included, at any `?detail`,
 published or not. Not an empty list: absent, the way `tags` and `scopes` are absent
 for a caller who may not have them. It is derived from the version history and the
@@ -632,9 +644,10 @@ does not publish the record of who wrote which part of it.
 
 Not cached, and there is no column for it — the same argument the counts on the card
 make: a stored split could come to disagree with the labels the version list shows.
-The cost is a second read of the history and a diff per version, on a full read only,
-which is nothing at the size of a Recipe and is the first thing to look at if that
-route ever gets slow.
+The cost is a second read of the history and a diff per version, paid on a full read
+and on a save that made a version, which is nothing at the size of a Recipe and is the
+first thing to look at if that route ever gets slow. It is the reason the writes that
+make no version are left out rather than served it for symmetry.
 
 ### Rate limiting
 

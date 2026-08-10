@@ -15,6 +15,7 @@
 //     (<contents of this file>).coldLoad()    — after loading /recipe/<id> fresh
 //     (<contents of this file>).coldEdit()    — after loading /recipe/<id>?edit=true
 //     (<contents of this file>).signedOut()   — signed in, on /; it signs itself out
+//     (<contents of this file>).save()        — a version-making save; builds its own
 //     (<contents of this file>).provenance()  — the provenance view; needs its seed
 //     (<contents of this file>).filing()      — the Scope picker; needs the same seed
 //
@@ -22,12 +23,14 @@
 // directory for the run and for the mutation each check was watched to fail
 // against, and for what this suite reads out of the dev database.
 //
-// **Four of the six phases write nothing.** `SUBJECT` is read and the only trace
+// **Four of the seven phases write nothing.** `SUBJECT` is read and the only trace
 // those reads leave is the `view_count` they move — which is the number the shelf is
 // ranked by, and moving it is what reading a Recipe *is*. The editor is opened,
-// prefilled and left by Cancel, never saved. `filing()` is the exception and it says
-// so at length: filing *is* a write, so it works on the seeded `CHECK-PROV` rather
-// than on anything of his, and puts it back.
+// prefilled and left by Cancel, never saved. The two that write say so at length and
+// neither writes to anything of his: `filing()` files and unfiles the seeded
+// `CHECK-PROV`, and `save()` — the only phase that makes a *version* — builds a
+// `CHECK-SAVE` of its own to make it on, because a save moves the ladder of cautions
+// the provenance phase reads.
 //
 // Every check is isolated and every evidence object is lazy, for the reason
 // `checks.js` gives at length: a mutation that makes one selector return null must
@@ -91,6 +94,16 @@
     if (!el) throw new Error('nothing to type into');
     Object.getOwnPropertyDescriptor(el.constructor.prototype, 'value').set.call(el, v);
     el.dispatchEvent(new Event('input', {bubbles: true}));
+  };
+  // A `caution` answer spread out per line. The ranges are 1-based and inclusive on
+  // both ends, so this is the one place in the file that arithmetic lives — read by
+  // the provenance phase, which compares it against what the view drew, and by
+  // `save()`, which compares one of them against another.
+  const perLine = caution => {
+    const out = [];
+    for (const r of ((caution || {}).ranges || []))
+      for (let n = r.from; n <= r.to; n++) out[n - 1] = r.caution;
+    return out;
   };
 
   const runner = () => {
@@ -317,10 +330,17 @@
       });
 
       // and back onto the Recipe page, which is where 16 and 17 start and where the
-      // next phase wants the browser left
+      // next phase wants the browser left.
+      //
+      // **Waited on the reading and not merely on the panel**, which is the house rule
+      // about the visible consequence and it cost check 14 a red: `.recipe-page` exists
+      // while the detail is still in flight, so `shot()` read a panel that had its
+      // header and not yet its Delete — but only on the *first* run after a load, since
+      // a second run finds the row cached and paints it in one frame. An intermittent
+      // red about a control that is there.
       await step('go back to the Recipe page', () =>
         clickIn(cardFor(SUBJECT), '.card-actions button', 'Page'));
-      await until(() => page());
+      await until(() => page() && document.querySelector('.recipe-page-body'), 8000);
 
       // 14. **the four actions are reachable, across three containers now.** Still the
       //     other half of 13 — stripping the card's footer would have made all four
@@ -877,7 +897,180 @@
       return done({});
     },
 
-    // ---- phase four: the provenance view -----------------------------------
+    // ---- phase five: the save, which is the one that makes a version --------
+    // **The only phase that makes a version, and the only one that builds its own
+    // fixture rather than reading a seeded one.** Both follow from what it is about:
+    //
+    //   > saving made the show provenance button disappear until i went ofr overview
+    //   > and came back
+    //
+    // The split is derived from the version history, so the only save that can stale it
+    // is one that writes a version — and the fix is that the `PUT` now carries the new
+    // split (`update-recipe-handler`) while the client forgets only the version list
+    // (`forget-versions!`). Asserting that needs a Recipe it may write to twice, and it
+    // must not be `CHECK-PROV`: the provenance phase's checks want a body whose lines
+    // read 1.00, 0.00 and one in between, and a save would move that ladder under them.
+    // A phase that spent another phase's fixture would cost the *next* run its columns,
+    // which is the cascade check 21 already taught this file about.
+    //
+    // So it makes `CHECK-SAVE`, through the API and as a machine — three lines nobody
+    // has touched, which the API reads as 0.00 throughout, so a line the owner then
+    // rewrites has somewhere visible to move to. It **leaves the Recipe behind** for
+    // `cleanup.py`, for the reason that script gives about its own choice of sqlite:
+    // `DELETE /api/recipes/:id` files a `deleted` event, and a suite must not put one
+    // in his queue.
+    //
+    // Runs from anywhere and leaves the browser on the shelf, so the two phases after
+    // it still start and end where they always did.
+    save: async () => {
+      const {check, step, done, notes} = runner();
+      const api = async (p, {method, body, token} = {}) => {
+        const r = await fetch('/api/' + p, {
+          method: method || (body ? 'POST' : 'GET'),
+          headers: Object.assign({'Content-Type': 'application/json'},
+                                 token ? {Authorization: 'Bearer ' + token} : {}),
+          body: body === undefined ? undefined : JSON.stringify(body)});
+        let parsed = null;
+        try { parsed = JSON.parse((await r.text()) || 'null'); } catch (e) { parsed = null; }
+        return {status: r.status, body: parsed};
+      };
+      // Three lines and no trailing newline: this fixture is about a line *changing*,
+      // and the trailing-empty-line case is CHECK-PROV's, asserted by check 8.
+      const AGENTS = 'The agent wrote this line.\n'
+                     + 'And this second one, which the owner is about to rewrite.\n'
+                     + 'And this third one, which he leaves alone.';
+      const login = await api('auth/login',
+                             {body: {username: 'machine-user', password: 'pw'}});
+      const token = (login.body || {}).token;
+      if (!token) throw new Error('no machine token: ' + JSON.stringify(login));
+      const made = await api('recipes', {token, body: {
+        title: 'CHECK-SAVE a body the agent wrote and the owner edits',
+        useful_when: 'the provenance button must survive a save',
+        description: AGENTS}});
+      if (made.status !== 201)
+        throw new Error('could not build the fixture: ' + JSON.stringify(made));
+      const id = made.body.id;
+      notes.push('built CHECK-SAVE recipe ' + id + ' and left it for cleanup.py');
+      const row = () => (stateGet('details') || {})[id] || {};
+      const toggle = () => document.querySelector('.recipe-page-provenance-toggle');
+
+      await step('open the fixture at its own address', () => st.open_recipe_page(id));
+      await until(() => page() && document.querySelector('.recipe-page-body') && toggle(),
+                  8000);
+      if (!toggle())
+        throw new Error('no provenance toggle on the fresh fixture — is the API sending'
+                        + ' caution on the full read?');
+      // The fixture's own property, guaranteed where it is built rather than asserted
+      // in a check, exactly as `provenance-seed.py` does with its trailing newline: a
+      // check that went red because a *fixture* was not what it thought would be
+      // blaming the app for something the setup did.
+      const started = perLine(row().caution);
+      if (!(started.length === 3 && started.every(v => v === 0)))
+        throw new Error('a machine-written v1 should read 0.00 on every line, got '
+                        + JSON.stringify(started));
+
+      // 31. **the owner's complaint, and the only proof of it.** Save a content edit
+      //     while looking at provenance and the button is still there, describing what
+      //     was just written.
+      //
+      //     Three things could satisfy the first half and only one of them is right, so
+      //     the split is asserted as well as the button: a client that kept the *old*
+      //     ranges would show a button describing text that no longer exists, and a
+      //     client that refetched the page would inflate `view_count`. What is asserted
+      //     is the third: the rewritten line reads 1.00 — his — while the two lines he
+      //     left alone are still 0.00, and the version has moved by exactly one.
+      //
+      //     **This is the check the server change alone would not have turned green.**
+      //     `update-recipe` ran `cache-detail!` and then dropped the split on the next
+      //     line, so a `PUT` carrying a fresh one was thrown away a microsecond after it
+      //     arrived, with nothing anywhere looking wrong.
+      await check('31 saving keeps the button, with the split of the version it just wrote',
+        async () => {
+          const before = {version: row().version, perLine: perLine(row().caution)};
+          const lines = AGENTS.split('\n');
+          const edited = lines.slice();
+          edited[1] = 'The owner rewrote this second line himself.';
+          st.open_recipe_editor(id);
+          await until(() => document.querySelector('.recipe-page-edit-body'));
+          type(document.querySelector('.recipe-page-edit-body'), edited.join('\n'));
+          await until(() => (stateGet('recipe-draft') || {}).description
+                            === edited.join('\n'));
+          // **looking at provenance at the moment Save is pressed**, which is the
+          // gesture the complaint is about and not an incidental starting state
+          toggle().click();
+          await until(() => document.querySelector('.provenance-source'));
+          const whileSaving = {source: true, label: toggle().textContent.trim()};
+          clickIn(document.querySelector('.top-bar-left'), '.recipe-edit-save');
+          // the visible consequence and the cached row together: the reading comes back
+          // from the row the response cached, so both have to have landed
+          await until(() => document.querySelector('.recipe-page-body')
+                            && row().version === before.version + 1, 8000);
+          await wait(150);
+          const after = {version: row().version, perLine: perLine(row().caution),
+                         toggle: !!toggle(), label: toggle()?.textContent?.trim(),
+                         description: row().description};
+          return {pass: after.toggle
+                        && after.version === before.version + 1
+                        && after.perLine.length === 3
+                        && after.perLine[1] === 1
+                        && after.perLine[0] === 0 && after.perLine[2] === 0
+                        && after.description === edited.join('\n')
+                        && !stateGet('error'),
+                  evidence: {before, whileSaving, after,
+                             theLineHeRewrote: edited[1],
+                             // the label reads *Show* again because a save is a page
+                             // move and `show-page!` drops the view; the button being
+                             // there is the claim, the view resetting is his open
+                             // question and deliberately not asserted
+                             error: stateGet('error')}};
+        });
+
+      // 32. **the other half of the rule: a filing save carries no split and needs
+      //     none.** `caution-body` costs a second read and a fold over the whole
+      //     history, and a filing `PUT` fires on every Scope chip click — so paying for
+      //     it there would be a real cost for an answer that cannot have changed. What
+      //     makes that safe is `cache-detail!` merging: a response that does not carry
+      //     `caution` leaves the one the client holds alone. This check is what says the
+      //     two halves meet — the button survives a save that *was* told the split and a
+      //     save that was not.
+      await check('32 a filing toggle keeps the split it did not change', async () => {
+        const chips = [...document.querySelectorAll('.scope-picker.recipe-page-filing'
+                                                    + ' .scope-chip')];
+        if (!chips.length)
+          return {pass: false, evidence: {why: 'no Scope chips on the page — this needs '
+                                               + 'one of his Scopes to exist'}};
+        const before = {version: row().version, perLine: perLine(row().caution),
+                        toggle: !!toggle()};
+        const name = chips[0].textContent.trim();
+        chips[0].click();
+        await until(() => !stateGet('filing') && (row().scopes || []).length === 1
+                          && chips[0].classList.contains('on'), 8000);
+        const after = {version: row().version, perLine: perLine(row().caution),
+                       toggle: !!toggle(),
+                       // `title` and not `name`: a Scope is titled like everything else
+                       // in this API, and reading the wrong key gives a green-looking
+                       // `[null]` rather than an error
+                       scopes: (row().scopes || []).map(s => s.title)};
+        return {pass: after.toggle && before.toggle
+                      && after.version === before.version
+                      && JSON.stringify(after.perLine) === JSON.stringify(before.perLine)
+                      && after.scopes.length === 1 && after.scopes[0] === name
+                      && !stateGet('error'),
+                evidence: {filedUnder: name, before, after, error: stateGet('error')}};
+      });
+
+      // Back to the shelf, and refetch it: the listing in hand never had CHECK-SAVE in
+      // it and now names a Recipe that has moved twice, so the phases after this one
+      // read a listing that agrees with the database.
+      await step('back to the shelf', () => st.go_to_page(kw('shelf')));
+      await until(() => shelf());
+      await step('refetch the listing', () => st.fetch_recipes());
+      await until(() => (stateGet('recipes') || []).some(r => r.id === id), 8000);
+      notes.push('left on ' + path() + '; CHECK-SAVE ' + id + ' is for cleanup.py');
+      return done({fixture: {id, url: '/recipe/' + id}});
+    },
+
+    // ---- phase six: the provenance view -------------------------------------
     // **The only phase in this file that needs a fixture**, and the only one that
     // reads a Recipe it did not find already there. `provenance-seed.py` explains
     // what CHECK-PROV has that nothing in the dev database is guaranteed to have;
@@ -903,12 +1096,7 @@
       // What the API said, per line, worked out here from the ranges rather than from
       // the view — so check 9 is comparing two independent readings of one answer and
       // not the view against itself.
-      const expectedPerLine = () => {
-        const out = [];
-        for (const r of ((row().caution || {}).ranges || []))
-          for (let n = r.from; n <= r.to; n++) out[n - 1] = r.caution;
-        return out;
-      };
+      const expectedPerLine = () => perLine(row().caution);
 
       // `open_recipe_page` and not a click, for the reason `signedOut` calls it: this
       // phase does not care how a reader got here, and it may be started from a page
@@ -1085,6 +1273,70 @@
                            buttonBackAfterRestoring: !!toggle()}};
       });
 
+      // 30. **the toggle is in the panel's top-right corner, and the row it used to
+      //     live in does not render without it.** *also it should be placed in the top
+      //     right corner of that REcipe's space* — the panel, level with the title.
+      //
+      //     Three claims, and the second is the one worth a check rather than an eye:
+      //     the toggle sits in the title row and its right edge is the panel's content
+      //     edge, which is what "the corner" means in a measurement; the toggle and
+      //     the title **do not overlap**, which has to hold in both layouts, so it is
+      //     asserted as *side by side or stacked* rather than as one line; and
+      //     `.recipe-page-body-tools` — which now only ever holds the legend — is
+      //     absent while the view is off. That last one is the fifth leftover-container
+      //     of this run of work and the only one a suite can catch cheaply: an empty
+      //     row keeps the panel's spacing and reads as a rendering bug nobody can name.
+      await check('30 the toggle is in the panel\'s corner, in both modes', async () => {
+        const corner = () => {
+          const t = toggle().getBoundingClientRect();
+          const row = toggle().parentElement;
+          const panel = document.querySelector('.recipe-page');
+          const title = document.querySelector('.recipe-page-title')
+                          .getBoundingClientRect();
+          const body = document.querySelector('.recipe-page-body, .provenance-source,'
+                                              + ' .recipe-page-edit-body');
+          return {inTheTitleRow: row.classList.contains('recipe-page-title-row'),
+                  // **against the row and not against the title**: the title carries
+                  // `margin-right: auto`, so its box ends where its text does and is
+                  // nowhere near the panel's edge. The row is what spans the content
+                  // box, so the row's right edge is what "the corner" means in a
+                  // measurement.
+                  flushRight: Math.abs(t.right - row.getBoundingClientRect().right) <= 1,
+                  // the panel's *first line*: the row is the first thing in the header
+                  // and the header is the first thing in the panel, which says "top"
+                  // without this check having to know the header's class
+                  atTheTop: panel.firstElementChild === row.parentElement
+                            && row.parentElement.firstElementChild === row,
+                  aboveTheBody: !body || t.bottom <= body.getBoundingClientRect().top,
+                  clearOfTheTitle: t.left >= title.right - 1 || t.bottom <= title.top + 1,
+                  toolsRow: !!document.querySelector('.recipe-page-body-tools')};
+        };
+        const readingOff = corner();
+        toggle().click();                         // and with the view on, the legend
+        await until(() => document.querySelector('.provenance-source'));
+        const readingOn = Object.assign(corner(), {
+          toolsRowHolds: [...document.querySelectorAll('.recipe-page-body-tools > *')]
+                           .map(e => e.className)});
+        toggle().click();
+        await until(() => document.querySelector('.recipe-page-body'));
+
+        st.open_recipe_editor(id);
+        await until(() => document.querySelector('.recipe-page-edit-body'));
+        await wait(150);                          // the row is laid out a frame later
+        const editing = corner();
+        st.cancel_recipe_edit();
+        await until(() => document.querySelector('.recipe-page-body'));
+
+        const cornered = s => s.inTheTitleRow && s.flushRight && s.atTheTop
+                              && s.aboveTheBody && s.clearOfTheTitle;
+        return {pass: cornered(readingOff) && cornered(readingOn) && cornered(editing)
+                      // the row is the legend's alone, and only when there is a legend
+                      && !readingOff.toolsRow && !editing.toolsRow
+                      && readingOn.toolsRow
+                      && readingOn.toolsRowHolds.join(',') === 'provenance-legend',
+                evidence: {readingOff, readingOn, editing}};
+      });
+
       // ---- the draft's provenance, in edit mode -----------------------------
       // *show provenance button should be avilable in both edit and view modes. and in
       // edit modes it should reflect the volatile state.* Four checks, and the fixture
@@ -1238,7 +1490,7 @@
       return done({subject: {id, title: subject.title, url: '/recipe/' + id}});
     },
 
-    // ---- phase five: the filing, which is the one that writes ----------------
+    // ---- phase seven: the filing, which writes without making a version ------
     // **The only phase in this file that changes a Recipe**, which is why it works on
     // the seeded `CHECK-PROV` and not on `SUBJECT`: filing is a write, and a suite
     // that promised to write nothing must not start writing to his shelf. It puts the
