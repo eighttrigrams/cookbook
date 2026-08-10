@@ -52,7 +52,8 @@
   *listing*, and from this page it would be a filter over a page the reader is not
   looking at. A chip's plain click already means something here, which is the other
   half of why there is nothing for a modifier to add."
-  (:require [clojure.string :as str]
+  (:require [reagent.core :as r]
+            [clojure.string :as str]
             [et.cb.ui.markdown :as markdown]
             [et.cb.ui.provenance :as provenance]
             [et.cb.ui.recipe-badges :as recipe-badges]
@@ -193,7 +194,10 @@
     [:div.recipe-page-actions
      (when-not published?
        [:button.secondary {:on-click #(state/start-publishing id)} "Publish"])
-     [:button.secondary {:on-click #(state/start-editing id)} "Edit"]
+     ;; A navigation and not an overlay: same Recipe, same page, `?edit=true`. The
+     ;; address is `go-to-page`'s to write, which is why this calls a named move
+     ;; rather than assembling one.
+     [:button.secondary {:on-click #(state/open-recipe-editor id)} "Edit"]
      ;; Named for what it shows rather than for the merge view inside it: a
      ;; one-version Recipe has nothing to diff and this still answers the question,
      ;; which is what the `v1` badge above it is pointing at.
@@ -338,6 +342,85 @@
        showing? [source-view body ranges]
        :else [:div.recipe-page-body [markdown/render body]])]))
 
+(defn- editor
+  "The Recipe's four content fields, behind a Save — this page's other mode, at
+  `?edit=true`.
+
+  *instead of an edit modal, lets go to a separate page, with ?edit=true query
+  param*. It was `views.recipe-modals/edit-modal` and it is gone: a form over a page
+  that had to be a fixed overlay outside every containing block, and that could not
+  be linked to, reloaded or left with Back. Here it is the same Recipe at the same
+  address in a second mode, so all three of those come for free from
+  `state/sync-from-url!`.
+
+  **The header is drawn above the form, and the version subtitle the modal had is
+  gone with it.** The modal said *version 3* because it had no header of its own to
+  say it; this page's header wears the version badge already, and a second copy is
+  the same fact twice. Read the two halves as *what is saved* over *what you are
+  about to save* — that is also why the title is an `h1` above a title field rather
+  than a redundancy: the heading is the Recipe as it stands, the field is what you
+  are proposing to make of it, and they are allowed to differ until you press Save.
+  It is the same `header` the reading draws, which is what makes the two modes one
+  page rather than two screens.
+
+  **No Scope picker, and that is the whole point of the split.** Filing happens on
+  the reading, saves as it is toggled and makes no version; putting a picker here too
+  would be one control on two surfaces disagreeing about when it saves. It follows
+  that this form must **omit `scope_ids` entirely** — *a field you leave out keeps
+  its current value* — so a content save cannot disturb the filing. The modal sent
+  the key on every save and had to, because it carried a picker whose set the owner
+  might just have emptied on purpose; with the picker gone, sending it would be the
+  bug and omitting it is the fix.
+
+  Local ratoms and one `update-recipe` at the end, as the modal had: a keystroke is
+  not a save, and this page's other control is the one that saves per gesture. Save
+  is dead on a blank title, which is the 400 this route answers — refusing it here
+  is the client agreeing with the server rather than guessing.
+
+  Cancel and a successful Save both go through `state/go-to-page :recipe id`, so the
+  bar loses `?edit=true` either way. Nothing is discarded by Cancel that was not
+  already only in this form."
+  [recipe _logged-in?]
+  (let [title (r/atom (or (:title recipe) ""))
+        useful-when (r/atom (or (:useful_when recipe) ""))
+        tags (r/atom (or (:tags recipe) ""))
+        description (r/atom (or (:description recipe) ""))]
+    (fn [recipe logged-in?]
+      (let [id (:id recipe)
+            leave #(state/go-to-page :recipe id)]
+        [:<>
+         [header recipe logged-in?]
+         [:div.recipe-page-edit
+          [:input.recipe-page-edit-title
+           {:type "text" :placeholder "Title"
+            :value @title
+            :on-change #(reset! title (-> % .-target .-value))}]
+          [:input
+           {:type "text" :placeholder "Useful when…"
+            :value @useful-when
+            :on-change #(reset! useful-when (-> % .-target .-value))}]
+          [:input.recipe-page-edit-tags
+           {:type "text" :placeholder recipe-fields/tags-placeholder
+            :value @tags
+            :on-change #(reset! tags (-> % .-target .-value))}]
+          [:textarea.recipe-page-edit-body
+           {:placeholder "The recipe itself"
+            :rows 16
+            :value @description
+            :on-change #(reset! description (-> % .-target .-value))}]
+          [:div.recipe-page-edit-actions
+           [:button {:disabled (str/blank? @title)
+                     ;; No `:scope_ids`. The filing is the reading's and an omitted
+                     ;; key keeps it — see the docstring.
+                     :on-click #(state/update-recipe id
+                                                     {:title @title
+                                                      :useful_when @useful-when
+                                                      :tags @tags
+                                                      :description @description}
+                                                     leave)}
+            "Save"]
+           [:button.secondary {:on-click leave} "Cancel"]]]]))))
+
 (defn- not-found
   "What an address that names no readable Recipe gets.
 
@@ -391,23 +474,41 @@
     recipe))
 
 (defn recipe-page
-  "The page, chosen by the status `state/fetch-recipe-page!` last wrote.
+  "The page, chosen by the status `state/fetch-recipe-page!` last wrote — and, when
+  the Recipe is there, by which of the two modes the address asks for.
 
   `:loading` is a state and not a default: `nil` cannot arrive here, because
   `show-page!` writes `:loading` in the same `swap!` that puts `:page` on
   `:recipe`, so there is no moment in which this page is up and nothing has been
   said about the fetch. The `nil` branch below therefore renders the spinner and
   not a blank, on the principle that a surprise should look like the honest state
-  nearest to it."
+  nearest to it.
+
+  **The mode only ever chooses between the two things a *found* Recipe can be shown
+  as.** Loading and not-found have one rendering each: there is nothing to edit
+  until the Recipe is there, and an editor over a 404 would be a form pointed at a
+  Recipe that does not exist. `?edit=true` on a missing id therefore gets the same
+  sentence as without it, which is also the answer that leaks nothing.
+
+  **`logged-in?` gates the editor here as well as in `sync-from-url!`**, and the
+  second half is the one that does not depend on remembering. It is `page-body`'s
+  argument exactly: that function sends a visitor off an owner-only page rather than
+  trusting `logout` to have reset the state, and this is the same guarantee for a
+  mode. A visitor cannot reach `:recipe-page-edit? true` today — the flag is
+  derived from the address by a function that ands it with the session — so this
+  clause is unreachable and stays anyway, because 'unreachable' is a property of
+  today's callers and a rendered form is a promise to somebody the API will refuse."
   []
-  (let [{:keys [logged-in? recipe-page-id recipe-page-status details recipes
-                showing-provenance?]}
+  (let [{:keys [logged-in? recipe-page-id recipe-page-status recipe-page-edit? details
+                recipes showing-provenance?]}
         @state/*app-state]
     [:div.recipe-page
      [back-to-shelf]
      (case recipe-page-status
        :found (if-let [recipe (get details recipe-page-id)]
-                [found (with-provenance recipe recipes) logged-in? showing-provenance?]
+                (if (and recipe-page-edit? logged-in?)
+                  [editor (with-provenance recipe recipes) logged-in?]
+                  [found (with-provenance recipe recipes) logged-in? showing-provenance?])
                 ;; The status says the fetch landed and the cache says otherwise,
                 ;; which nothing produces today — `fetch-recipe-page!` caches before
                 ;; it writes the status, and `state/delete-recipe`, which is the one

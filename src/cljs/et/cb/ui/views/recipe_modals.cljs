@@ -1,6 +1,13 @@
 (ns et.cb.ui.views.recipe-modals
-  "The overlays that change one Recipe: the Edit form, and the two confirmations
-  in front of Publish and Delete.
+  "The two confirmations that stand in front of an irreversible change to one
+  Recipe: Publish, and Delete.
+
+  **Both of them ask a question, and that is now the whole of what is in here.** The
+  Edit form was the third and it has become a page — `views.recipe`'s second mode, at
+  `?edit=true` — which leaves this namespace one idea rather than two: a dialog is for
+  a step that cannot be taken back, and everything that can be is a control on the
+  page it is about. The filing needs no dialog either and never had one; it saves per
+  chip on the reading.
 
   **A namespace of its own because two views ask for them.** They were `defn-`s in
   `views.recipes` while the shelf's card footer was the only thing that opened them;
@@ -15,10 +22,10 @@
   - `core/page-body` renders **exactly one of five pages** — the shelf is not a
     backdrop the others are laid over, and its docstring is emphatic about it. A
     modal mounted inside `recipes-tab` is therefore not on the page at all while
-    `/recipe/<id>` is up, so a button there wired to `state/start-editing` would set
-    the state and render nothing. These three are overlays keyed off global state
-    (`:editing`, `:publishing`, `:deleting`), so the root is where they belong: they
-    are over whichever page is up, not part of one.
+    `/recipe/<id>` is up, so a button there wired to `state/start-deleting` would set
+    the state and render nothing. Both of these are overlays keyed off global state
+    (`:publishing`, `:deleting`), so the root is where they belong: they are over
+    whichever page is up, not part of one.
   - It is also more of the containing-block argument that kept them outside the
     cards. A card's `backdrop-filter` makes it the containing block for a
     `position: fixed` overlay, which would pin a modal to that one card instead of
@@ -27,63 +34,8 @@
 
   The version viewer comes with them for both reasons at once — see `overlays`."
   (:require [reagent.core :as r]
-            [clojure.string :as str]
-            [et.cb.ui.recipe-fields :as recipe-fields]
             [et.cb.ui.state :as state]
             [et.cb.ui.views.diff :as diff]))
-
-(defn- edit-modal
-  "Tags and Scopes sit in here with the three content fields even though a save
-  that touches only them makes no version — the modal is where you edit a Recipe,
-  and which of its fields the version ladder is about is the API's business. The
-  subtitle says the version this is editing, and a filing-only save deliberately
-  leaves that number where it is.
-
-  The Scopes are prefilled from the Recipe's own `:scopes`, which came in with the
-  body when the card was expanded. Sending them on every save is what makes the
-  server's rule work for this client: an omitted `scope_ids` would keep the filing,
-  and this form has a picker showing a set that the owner may just have emptied
-  on purpose."
-  [recipe]
-  (let [title (r/atom (or (:title recipe) ""))
-        useful-when (r/atom (or (:useful_when recipe) ""))
-        tags (r/atom (or (:tags recipe) ""))
-        description (r/atom (or (:description recipe) ""))
-        scope-ids (r/atom (set (map :id (:scopes recipe))))]
-    (fn [recipe]
-      [:div.modal-backdrop {:on-click state/stop-editing}
-       [:div.modal {:on-click #(.stopPropagation %)}
-        [:h2 "Edit"]
-        [:div.modal-subtitle (str "version " (:version recipe))]
-        [:input {:type "text" :placeholder "Title"
-                 :value @title
-                 :on-change #(reset! title (-> % .-target .-value))}]
-        [:input {:type "text" :placeholder "Useful when…"
-                 :value @useful-when
-                 :on-change #(reset! useful-when (-> % .-target .-value))}]
-        [:input.modal-tags {:type "text" :placeholder recipe-fields/tags-placeholder
-                            :value @tags
-                            :on-change #(reset! tags (-> % .-target .-value))}]
-        [:textarea.modal-description
-         {:placeholder "The recipe itself"
-          :rows 8
-          :value @description
-          :on-change #(reset! description (-> % .-target .-value))}]
-        [recipe-fields/scope-picker
-         {:selected @scope-ids
-          :on-toggle #(swap! scope-ids
-                             (fn [s] (if (contains? s %) (disj s %) (conj s %))))}]
-        [:div.modal-actions
-         [:button {:disabled (str/blank? @title)
-                   :on-click #(state/update-recipe (:id recipe)
-                                                   {:title @title
-                                                    :useful_when @useful-when
-                                                    :tags @tags
-                                                    :description @description
-                                                    :scope_ids (vec @scope-ids)}
-                                                   state/stop-editing)}
-          "Save"]
-         [:button.secondary {:on-click state/stop-editing} "Cancel"]]]])))
 
 (defn- publish-modal
   "The latch is one-way: nothing in the API takes it back off, so this asks
@@ -142,33 +94,31 @@
          [:button.secondary {:on-click state/stop-deleting} "Cancel"]]]])))
 
 (defn overlays
-  "The four surfaces that stand over whichever page is up, mounted once at the app
+  "The three surfaces that stand over whichever page is up, mounted once at the app
   root — the ns docstring says why that is the root and not a page.
 
-  **The version viewer is in here with the three modals rather than beside them**,
-  and it was mounted twice before this: once in `recipes-tab` and once in
+  **The version viewer is in here with the two confirmations rather than beside
+  them**, and it was mounted twice before this: once in `recipes-tab` and once in
   `inbox-page`, because those were the two pages a reader could open it from and
   `page-body` renders only one of them. That is the same duplication this whole
   namespace removes — a second copy is a second thing to remember when a third page
-  gets a Versions button, which is exactly what has just happened.
+  gets a Versions button, which is exactly what happened.
 
   The Inbox's dismiss confirmation deliberately stays where it is. It is keyed to an
   entry in `:inbox` rather than to a Recipe, and the only place it can be opened from
   is the one page that draws that list, so it is that page's and not a Recipe's."
   []
-  (let [{:keys [details editing publishing deleting diffing]} @state/*app-state]
+  (let [{:keys [details publishing deleting diffing]} @state/*app-state]
     [:<>
-     ;; **All three from `:details`, which is the one map holding a full Recipe
-     ;; row.** The two confirmations used to be looked up in `:recipes` instead, on
-     ;; the argument that each of them needs only short fields the listing already
-     ;; carries — a title, a version count — so neither had to wait for a body. True
-     ;; of the shelf and false of everywhere else: arrive at `/recipe/<id>` by URL and
-     ;; the listing was never fetched, so that lookup found nil and the modal
-     ;; silently did not render. `state/open-on-detail!` is the one place each of
-     ;; these is latched open and it answers for the row being there, so this is one
-     ;; source rather than three modals each knowing where its Recipe comes from.
-     (when-let [recipe (get details editing)]
-       [edit-modal recipe])
+     ;; **Both from `:details`, which is the one map holding a full Recipe row.**
+     ;; They used to be looked up in `:recipes` instead, on the argument that each
+     ;; needs only short fields the listing already carries — a title, a version
+     ;; count — so neither had to wait for a body. True of the shelf and false of
+     ;; everywhere else: a Recipe the listing does not contain has a working page and
+     ;; a confirmation that silently did not render. `state/open-on-detail!` is the
+     ;; one place each of these is latched open and it answers for the row being
+     ;; there, so this is one source rather than each modal knowing where its Recipe
+     ;; comes from.
      (when-let [recipe (get details publishing)]
        [publish-modal recipe])
      (when-let [recipe (get details deleting)]

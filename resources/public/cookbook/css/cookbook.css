@@ -1116,6 +1116,32 @@ html.dark-mode .inbox-kind.kind-proposed { background: rgba(245, 158, 11, 0.18);
   font-size: 1em;
 }
 
+/* The editor — the same page at `?edit=true`, under the same header.
+
+   A column of full-width fields and nothing else: no panel of its own, because it
+   is already inside `.recipe-page`'s, and a box inside a box would only make the
+   form narrower than the body it is replacing. `.compose`'s shape, deliberately —
+   the two are the only forms that write a Recipe's fields, and a reader who has
+   used one should not have to learn the other — while the base `input` and
+   `textarea` rules do the actual styling, so a field here cannot come to look
+   different from a field anywhere else.
+
+   The body gets 16 rows where the modal's had 8. A modal had to leave the page
+   visible around it and this does not: it is the page, so the field the Recipe is
+   mostly made of gets the room. */
+.recipe-page-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
+}
+.recipe-page-edit input, .recipe-page-edit textarea { width: 100%; }
+/* The title reads as the title, at the weight the `h1` above it has — this is the
+   one field whose value is also the heading, and a save changes both. */
+.recipe-page-edit-title { font-size: 1.05em; font-weight: 600; }
+.recipe-page-edit-body { line-height: 1.55; }
+.recipe-page-edit-actions { display: flex; gap: 8px; margin-top: 4px; }
+
 /* The owner's four actions, under the header and above the body — `views/recipe`'s
    `found` argues the placement. Left-aligned, where `.card-actions` is pushed right
    by a `margin-left: auto` inside the card's footer: on a card the footer is shared

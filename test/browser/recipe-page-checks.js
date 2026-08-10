@@ -1,27 +1,33 @@
 // The check suite for a Recipe's own page and the address it lives at.
 //
-// **Three phases, because two of these properties cannot be observed from inside
-// one `evaluate`.** A cold load of `/recipe/<id>` replaces the JS context, so the
-// check that the *server* route works has to run in the context that load created;
-// and being signed out is a state the page has to be put into first. Back and
-// Forward are the opposite case and belong together in one phase: nothing here ever
-// leaves the document — every move is a `pushState` — so `history.back()` fires a
-// `popstate` in the same context and can be waited on like any other consequence.
+// **Phases, because several of these properties cannot be observed from inside one
+// `evaluate`.** A cold load replaces the JS context, so a check that the *server*
+// route works has to run in the context that load created — and there are two such
+// loads now, one per mode of the page. Being signed out is a state the page has to be
+// put into first. Back and Forward are the opposite case and belong inside one phase:
+// nothing there ever leaves the document — every move is a `pushState` — so
+// `history.back()` fires a `popstate` in the same context and can be waited on like
+// any other consequence.
 //
 // The file evaluates to an object of phases. Run one at a time:
 //
 //     (<contents of this file>).shelf()       — signed in, on /
 //     (<contents of this file>).coldLoad()    — after loading /recipe/<id> fresh
+//     (<contents of this file>).coldEdit()    — after loading /recipe/<id>?edit=true
 //     (<contents of this file>).signedOut()   — signed in, on /; it signs itself out
+//     (<contents of this file>).provenance()  — the provenance view; needs its seed
+//     (<contents of this file>).filing()      — the Scope picker; needs the same seed
 //
 // Each returns `{passed, of, failed, results, notes}`. See README.md in this
 // directory for the run and for the mutation each check was watched to fail
 // against, and for what this suite reads out of the dev database.
 //
-// It writes nothing. `SUBJECT` is read, twice, and the only trace a run leaves is
-// the `view_count` those reads move — which is the number the shelf is ranked by,
-// and moving it is what reading a Recipe *is*. Nothing is created and nothing is
-// deleted, so there is no cleanup script beside this one.
+// **Four of the six phases write nothing.** `SUBJECT` is read and the only trace
+// those reads leave is the `view_count` they move — which is the number the shelf is
+// ranked by, and moving it is what reading a Recipe *is*. The editor is opened,
+// prefilled and left by Cancel, never saved. `filing()` is the exception and it says
+// so at length: filing *is* a write, so it works on the seeded `CHECK-PROV` rather
+// than on anything of his, and puts it back.
 //
 // Every check is isolated and every evidence object is lazy, for the reason
 // `checks.js` gives at length: a mutation that makes one selector return null must
@@ -47,6 +53,9 @@
     return null;
   };
   const st = window.et.cb.ui.state, c = window.cljs.core;
+  // `urls` and not `url`: `shelf()` binds a local `url` to the Recipe's address, and
+  // a module alias it shadowed would be a very quiet failure.
+  const urls = window.et.cb.ui.url;
   const kw = k => c.keyword(k);
   const stateGet = k => c.clj__GT_js(c.get(c.deref(st._STAR_app_state), kw(k)));
   const path = () => location.pathname;
@@ -262,11 +271,88 @@
                            {path: path(), shelf: !!shelf()}}};
       });
 
-      // and leave the browser where the next phase needs it
+      // and back onto the Recipe page, which is where 16 and 17 start and where the
+      // next phase wants the browser left
       await step('go back to the Recipe page', () =>
         clickIn(cardFor(SUBJECT), '.card-actions button', 'Page'));
       await until(() => page());
-      notes.push('reload ' + location.origin + url + ' and run coldLoad()');
+
+      // 16. **Edit is a navigation now, not an overlay.** It was a modal, and the
+      //     modal is gone: *instead of an edit modal, lets go to a separate page,
+      //     with ?edit=true query param*. So the assertion is about the **address**
+      //     as much as the form — a version of this that rendered the fields without
+      //     moving the bar would look identical on screen and would not be linkable,
+      //     reloadable or leavable by Back, which is the whole reason it is a page.
+      //
+      //     After 3a/3b/5 and not before, on purpose: those three read a history
+      //     stack of exactly [/, /recipe/<id>], and an editor pushed into the middle
+      //     of it would make `history.back()` land somewhere else and redden them for
+      //     a reason that has nothing to do with what they assert.
+      await check('16 Edit goes to ?edit=true, prefilled, and Cancel comes back', async () => {
+        const editUrl = url + '?edit=true';
+        clickIn(document, '.recipe-page-actions button', 'Edit');
+        const form = await until(() => document.querySelector('.recipe-page-edit'));
+        const inEditor = {
+          bar: path() + location.search,
+          flag: stateGet('recipe-page-edit?'),
+          title: form?.querySelector('.recipe-page-edit-title')?.value,
+          fields: [...(form?.querySelectorAll('input, textarea') || [])].length,
+          // the two things that must NOT be here: the filing is the reading's, and
+          // the modal's `version N` subtitle is the header's badge now
+          picker: !!document.querySelector('.scope-picker'),
+          subtitle: !!document.querySelector('.modal-subtitle'),
+          modal: !!document.querySelector('.modal-backdrop'),
+          versionBadgeInTheHeader: text('.version-badge'),
+          readingGone: !document.querySelector('.recipe-page-body')};
+        clickIn(form.querySelector('.recipe-page-edit-actions'), 'button.secondary', 'Cancel');
+        await until(() => document.querySelector('.recipe-page-body'));
+        const afterCancel = {bar: path() + location.search,
+                             flag: stateGet('recipe-page-edit?'),
+                             formGone: !document.querySelector('.recipe-page-edit')};
+        return {pass: inEditor.bar === editUrl && inEditor.flag === true
+                      && (inEditor.title || '').includes(SUBJECT)
+                      && inEditor.fields === 4
+                      && !inEditor.picker && !inEditor.subtitle && !inEditor.modal
+                      && !!inEditor.versionBadgeInTheHeader && inEditor.readingGone
+                      && afterCancel.bar === url && afterCancel.flag === false
+                      && afterCancel.formGone,
+                evidence: {expectedEditUrl: editUrl, inEditor, afterCancel}};
+      });
+
+      // 17. **and it is in the history, which is what makes it a page and not a
+      //     mode.** Back out of the editor is the gesture a reader will use before
+      //     they find Cancel, and it only works because `sync-from-url!` re-derives
+      //     the whole view from the address — the same function 3a and 3b are about,
+      //     one level finer. A `?edit=true` that were only pushed and never read back
+      //     leaves this red while 16 stays green.
+      await check('17 Back leaves the editor and Forward returns to it', async () => {
+        const editUrl = url + '?edit=true';
+        clickIn(document, '.recipe-page-actions button', 'Edit');
+        await until(() => document.querySelector('.recipe-page-edit'));
+        history.back();
+        await until(() => document.querySelector('.recipe-page-body') && path() + location.search === url);
+        const afterBack = {bar: path() + location.search, flag: stateGet('recipe-page-edit?'),
+                           reading: !!document.querySelector('.recipe-page-body'),
+                           form: !!document.querySelector('.recipe-page-edit')};
+        history.forward();
+        await until(() => document.querySelector('.recipe-page-edit'));
+        const afterForward = {bar: path() + location.search, flag: stateGet('recipe-page-edit?'),
+                              form: !!document.querySelector('.recipe-page-edit'),
+                              title: document.querySelector('.recipe-page-edit-title')?.value};
+        clickIn(document.querySelector('.recipe-page-edit-actions'), 'button.secondary', 'Cancel');
+        await until(() => document.querySelector('.recipe-page-body'));
+        return {pass: afterBack.bar === url && afterBack.flag === false
+                      && afterBack.reading && !afterBack.form
+                      && afterForward.bar === editUrl && afterForward.flag === true
+                      && afterForward.form
+                      && (afterForward.title || '').includes(SUBJECT)
+                      && path() + location.search === url,
+                evidence: {afterBack, afterForward, expectedEditUrl: editUrl,
+                           leftOn: path() + location.search}};
+      });
+
+      notes.push('reload ' + location.origin + url + ' and run coldLoad(), then '
+                 + location.origin + url + '?edit=true and run coldEdit()');
       return done({subject: {id: subject.id, title: subject.title, url}});
     },
 
@@ -293,14 +379,15 @@
                            cachedTitle: row.title}};
       });
 
-      // 15. **the overlays draw on a page the shelf's listing had nothing to do
-      //     with**, and this is the one check that could have caught the bug the
-      //     actions were moved *into*. `publish-modal` and `delete-modal` used to
-      //     find their Recipe with a filter over `:recipes`; that is a narrowed,
-      //     ranked answer to a question this page never asked, so a Recipe missing
-      //     from it — hidden Scope, active search, or simply a listing that has not
-      //     landed yet — got a confirmation that silently did not render. They read
-      //     `:details` now, which is where this page's own fetch put the row.
+      // 15. **the confirmation and the editor draw on a page the shelf's listing had
+      //     nothing to do with**, and this is the one check that could have caught
+      //     the bug the actions were moved *into*. `publish-modal` and
+      //     `delete-modal` used to find their Recipe with a filter over `:recipes`;
+      //     that is a narrowed, ranked answer to a question this page never asked,
+      //     so a Recipe missing from it — hidden Scope, active search, or simply a
+      //     listing that has not landed yet — got a confirmation that silently did
+      //     not render. Both read `:details` now, which is where this page's own
+      //     fetch put the row, and so does the editor's prefill.
       //
       //     Here rather than in `shelf()` for the reason this phase exists at all: a
       //     click through from the shelf cannot see it, because the shelf's fetch has
@@ -310,9 +397,12 @@
       //     `checks.js` 12's technique: build the exact condition the failure needs
       //     and leave the rest of the session alone.
       //
-      //     Only Cancel is ever pressed. This file writes nothing and that stays
-      //     true — a Delete confirmation opened and dismissed is two renders.
-      await check('15 the confirmations draw from the page\'s own row, not the listing',
+      //     Nothing is ever saved. Delete is opened and dismissed, and the editor is
+      //     entered and left by Cancel — this file writes nothing and that stays
+      //     true. Edit is a **navigation** now, not a modal, so the two halves are
+      //     waited on differently: `.modal-backdrop` for the one that is still a
+      //     dialog, `.recipe-page-edit` for the one that is a page.
+      await check('15 the confirmation and the editor draw from the page\'s own row',
         async () => {
           const before = (stateGet('recipes') || []).length;
           c.swap_BANG_(st._STAR_app_state, m => c.assoc(m, kw('recipes'), c.vector()));
@@ -320,6 +410,7 @@
           const act = label => [...document.querySelectorAll('.recipe-page-actions button')]
             .find(b => b.textContent.trim() === label);
           const modal = () => document.querySelector('.modal-backdrop');
+          const form = () => document.querySelector('.recipe-page-edit');
           const evidence = {rowsInTheListing: (stateGet('recipes') || []).length,
                             rowsBefore: before};
 
@@ -332,19 +423,22 @@
           await until(() => !modal());
 
           act('Edit').click();
-          const em = await until(() => modal());
-          evidence.editForm = {shown: !!em,
-            subtitle: em?.querySelector('.modal-subtitle')?.textContent?.trim(),
-            prefilledTitle: em?.querySelector('input')?.value};
-          em && clickIn(em.querySelector('.modal-actions'), 'button.secondary', 'Cancel');
-          await until(() => !modal());
+          const em = await until(() => form());
+          evidence.editor = {shown: !!em,
+            prefilledTitle: em?.querySelector('.recipe-page-edit-title')?.value,
+            prefilledBody: (em?.querySelector('.recipe-page-edit-body')?.value || '')
+              .slice(0, 24)};
+          em && clickIn(em.querySelector('.recipe-page-edit-actions'),
+                        'button.secondary', 'Cancel');
+          await until(() => !form());
 
-          const d = evidence.deleteConfirmation, e = evidence.editForm;
+          const d = evidence.deleteConfirmation, e = evidence.editor;
           return {pass: evidence.rowsInTheListing === 0
                         && !!d.shown && (d.subtitle || '').includes(SUBJECT)
                         && /version/.test(d.note || '')
                         && !!e.shown && (e.prefilledTitle || '').includes(SUBJECT)
-                        && !modal(),
+                        && !!e.prefilledBody
+                        && !modal() && !form(),
                   evidence};
         });
 
@@ -353,6 +447,46 @@
       await step('refetch the listing', async () => {
         st.fetch_recipes();
         await until(() => (stateGet('recipes') || []).length > 0);
+      });
+      return done({});
+    },
+
+    // ---- phase two and a half: after a cold load of /recipe/<id>?edit=true --
+    // **A phase of its own for the reason `coldLoad` is one**: the load it is about
+    // replaces the JS context. `shelf()` 16 and 17 assert that the editor's address
+    // is pushed and read back *inside* one document; this asserts that an address
+    // arriving from outside opens the editor at all — the case where nothing has
+    // been pushed and the only thing the client has to go on is the bar.
+    //
+    // It is the half that `sync-from-url!` alone can answer. Everything 16 and 17
+    // assert still passes if the boot never looks at `.-search`.
+    coldEdit: async () => {
+      const {check, step, done} = runner();
+      await check('18 a cold load of ?edit=true opens the editor, not the reading',
+        async () => {
+          const form = await until(() => document.querySelector('.recipe-page-edit'), 8000);
+          const id = Number(path().split('/')[2]);
+          return {pass: !!form && !!page() && !shelf()
+                        && location.search === '?edit=true'
+                        && stateGet('recipe-page-edit?') === true
+                        && stateGet('recipe-page-id') === id
+                        && stateGet('recipe-page-status') === 'found'
+                        && !document.querySelector('.recipe-page-body')
+                        && !!form.querySelector('.recipe-page-edit-title')?.value,
+                  evidence: {bar: path() + location.search,
+                             editorRendered: !!form,
+                             readingRendered: !!document.querySelector('.recipe-page-body'),
+                             flag: stateGet('recipe-page-edit?'),
+                             status: stateGet('recipe-page-status'),
+                             recipePageId: stateGet('recipe-page-id'), askedFor: id,
+                             prefilledTitle:
+                               form?.querySelector('.recipe-page-edit-title')?.value}};
+        });
+      // leave the reading up rather than a form nobody asked to fill in
+      await step('leave the editor', async () => {
+        const actions = document.querySelector('.recipe-page-edit-actions');
+        actions && clickIn(actions, 'button.secondary', 'Cancel');
+        await until(() => document.querySelector('.recipe-page-body'));
       });
       return done({});
     },
@@ -423,10 +557,43 @@
                              status: stateGet('recipe-page-status')}};
         });
 
+      // 19. **a visitor at `?edit=true` gets the reading, and the bar stops saying
+      //     otherwise.** `(GET "/recipe/*")` deliberately does not look at what
+      //     follows it and a query string never affects the match, so the app is
+      //     served to anybody who types this address and the **client** is the only
+      //     thing that can refuse it. The API refuses the PUT regardless; a form a
+      //     visitor can fill in and never submit is a worse lie than no form.
+      //
+      //     Driven by putting the address in the bar and calling `sync-from-url!`,
+      //     which is exactly what a `popstate` and the boot both do with an address
+      //     nobody in this document chose. `replace-state!` and not a push, so the
+      //     stack this phase was handed is the stack it hands back.
+      await check('19 signed out at ?edit=true gets the reading, with the query gone',
+        async () => {
+          const editUrl = '/recipe/' + subject.id + '?edit=true';
+          urls.replace_state_BANG_(editUrl);
+          const barBefore = path() + location.search;
+          st.sync_from_url_BANG_();
+          await until(() => stateGet('recipe-page-status') === 'found');
+          await until(() => document.querySelector('.recipe-page-body'));
+          await wait(200);          // long enough for an editor to have appeared
+          return {pass: barBefore === editUrl
+                        && path() + location.search === '/recipe/' + subject.id
+                        && stateGet('recipe-page-edit?') === false
+                        && stateGet('logged-in?') === false
+                        && !document.querySelector('.recipe-page-edit')
+                        && !!document.querySelector('.recipe-page-body'),
+                  evidence: {barBefore, barAfter: path() + location.search,
+                             flag: stateGet('recipe-page-edit?'),
+                             loggedIn: stateGet('logged-in?'),
+                             editorRendered: !!document.querySelector('.recipe-page-edit'),
+                             readingRendered: !!document.querySelector('.recipe-page-body')}};
+        });
+
       // Put the client back the way it was found. The shelf **first**, and then the
       // sign-in: `fetch_auth_required` ends in `sync-from-url!`, which re-derives
-      // the page from the bar — and the bar still names 999999 at this point, so
-      // the other order signs back in and lands straight back on the not-found.
+      // the page from the bar — and the bar still names a Recipe at this point, so
+      // the other order signs back in and lands straight back on it.
       await step('back to the shelf', () => st.go_to_page(kw('shelf')));
       await until(() => shelf());
       // dev signs itself in, so this is the call the page makes on boot, not a fake
@@ -629,6 +796,144 @@
         await until(() => document.querySelector('.provenance-source'));
       });
       notes.push('left on ' + path() + ' with the provenance view showing');
+      return done({subject: {id, title: subject.title, url: '/recipe/' + id}});
+    },
+
+    // ---- phase five: the filing, which is the one that writes ----------------
+    // **The only phase in this file that changes a Recipe**, which is why it works on
+    // the seeded `CHECK-PROV` and not on `SUBJECT`: filing is a write, and a suite
+    // that promised to write nothing must not start writing to his shelf. It puts the
+    // fixture back where it found it — filed under nothing — and `cleanup.py` removes
+    // the fixture anyway.
+    //
+    // Needs **two** of the owner's Scopes to exist for check 21. Dev has three.
+    //
+    // What these two are about is the split the whole change turns on: *yeah, we dont
+    // need no version bump on this and can go to the read page*. The API agrees —
+    // `update-recipe-handler`: *Changing it makes no version either — a Scope is a
+    // way back to a Recipe, not part of it* — and nothing else in either suite
+    // asserts it.
+    filing: async () => {
+      const {check, step, done, notes} = runner();
+      const subject = rowFor(MIXED);
+      if (!subject) throw new Error('no ' + MIXED + ' Recipe on the shelf — run '
+                                    + 'test/browser/provenance-seed.py first, see README');
+      const id = subject.id;
+      const row = () => (stateGet('details') || {})[id] || {};
+      const picker = () => document.querySelector('.scope-picker.recipe-page-filing');
+      const chips = () => [...(picker()?.querySelectorAll('.scope-chip') || [])];
+      const lit = () => chips().filter(b => b.classList.contains('on'))
+                               .map(b => b.textContent.trim());
+      const filedIds = () => (row().scopes || []).map(s => s.id).sort();
+
+      await step('open the fixture at its own address', () => st.open_recipe_page(id));
+      await until(() => page() && stateGet('recipe-page-status') === 'found');
+      // On the picker and not on the page: `fetch-scopes` is a second request and the
+      // chips are what these checks press.
+      await until(() => chips().length > 0, 8000);
+      if (chips().length < 2)
+        throw new Error('this phase needs two of the owner\'s Scopes and found '
+                        + chips().length + ' — make one on the Scopes page');
+      const startedFiledUnder = filedIds();
+      if (startedFiledUnder.length)
+        notes.push('the fixture arrived filed under ' + startedFiledUnder.length
+                   + ' Scope(s); it is put back that way at the end');
+
+      // 20. **filing writes, and the version does not move.** Two claims that only
+      //     make sense together: a toggle really does reach the server — the receipt
+      //     comes back and says so — *and* the version badge is the same number
+      //     afterwards. A filing save routed through `update-recipe` would pass the
+      //     first half and fail the second, which is exactly the mistake the state
+      //     fn exists to not make.
+      //
+      //     It toggles a chip **on and then off again**, so the second half is the
+      //     empty-array case: the API keeps the filing for an omitted `scope_ids` and
+      //     clears it for `[]`, and a picker that sent what was selected rather than
+      //     always sending an array would silently do the first at exactly the moment
+      //     the owner unfiled his last Scope.
+      await check('20 a toggle files the Recipe, and the version does not move', async () => {
+        const versionBefore = text('.version-badge');
+        const rowVersionBefore = row().version;
+        const stampBefore = row().modified_at;
+        const first = chips()[0], firstName = first.textContent.trim();
+
+        // **Both conditions, and the DOM one is not redundant.** `:filing` going nil
+        // says the receipt landed; the chips repaint a frame later, so a wait on the
+        // state alone reads the *previous* paint and reddens this about the app. That
+        // is this directory's first house rule — wait on the visible consequence —
+        // and it cost a red to remember here.
+        first.click();
+        await until(() => !stateGet('filing') && lit().includes(firstName));
+        const filed = {lit: lit(), ids: filedIds(), version: text('.version-badge'),
+                       rowVersion: row().version, stamp: row().modified_at};
+
+        // and off again, which is the `[]` request
+        chips().find(b => b.textContent.trim() === firstName).click();
+        await until(() => !stateGet('filing') && lit().length === 0);
+        const cleared = {lit: lit(), ids: filedIds(), version: text('.version-badge'),
+                         rowVersion: row().version};
+
+        return {pass: filed.ids.length === 1 && filed.lit.includes(firstName)
+                      && filed.version === versionBefore
+                      && filed.rowVersion === rowVersionBefore
+                      && cleared.ids.length === 0 && cleared.lit.length === 0
+                      && cleared.version === versionBefore
+                      && cleared.rowVersion === rowVersionBefore
+                      // the write really happened, which is the other half
+                      && filed.stamp !== stampBefore
+                      && !stateGet('error'),
+                evidence: {versionBefore, rowVersionBefore, filed, cleared,
+                           stampMoved: filed.stamp !== stampBefore,
+                           stampBefore, stampAfter: filed.stamp,
+                           error: stateGet('error')}};
+      });
+
+      // 21. **two chips pressed in one frame both land**, which is two failures at
+      //     once and neither is visible from the outside:
+      //
+      //     - the save moves `modified_at` and the PUT carries it as the 409 guard,
+      //       so a second request sent while the first is out is refused and a chip
+      //       springs back. `state/toggle-recipe-scope` queues instead — the evidence
+      //       below reads `:filing` straight after the two clicks, where `:wanted`
+      //       differing from `:sent` *is* the queue.
+      //     - and the next set has to be computed from the live one rather than from
+      //       what was rendered, or the second click overwrites the first's intent
+      //       and one chip he pressed is simply not filed. That is the shape this
+      //       check was written against, having happened.
+      await check('21 two chips in one frame both land', async () => {
+        const a = chips()[0], b = chips()[1];
+        const names = [a.textContent.trim(), b.textContent.trim()].sort();
+        a.click();
+        b.click();                                   // same frame: no await between
+        const queued = stateGet('filing');
+        await until(() => !stateGet('filing'), 8000);
+        await until(() => filedIds().length === 2);
+        const after = {lit: lit().sort(), ids: filedIds(),
+                       version: text('.version-badge')};
+        return {pass: after.lit.join(',') === names.join(',')
+                      && after.ids.length === 2
+                      && !!queued && JSON.stringify(queued.wanted) !== JSON.stringify(queued.sent)
+                      && !stateGet('error'),
+                evidence: {pressed: names, rightAfterBothClicks: queued, after,
+                           theQueueIsWhatWantedDifferingFromSentMeans: true,
+                           error: stateGet('error')}};
+      });
+
+      // Put the fixture back the way it was found — one gesture per Scope, through
+      // the same control, so the tidy-up is itself the thing under test.
+      await step('unfile what these checks filed', async () => {
+        // chip → id through the owner's own Scope list, because a chip carries its
+        // title and not its id, and adding one to the markup for a check's benefit
+        // would be the suite reaching into the app
+        const idOf = name => ((stateGet('scopes') || []).find(s => s.title === name) || {}).id;
+        for (const chip of chips())
+          if (chip.classList.contains('on')
+              && !startedFiledUnder.includes(idOf(chip.textContent.trim()))) chip.click();
+        await until(() => !stateGet('filing'), 8000);
+        await until(() => filedIds().length === startedFiledUnder.length);
+      });
+      notes.push('left on ' + path() + ', ' + MIXED + ' filed under '
+                 + filedIds().length + ' Scope(s)');
       return done({subject: {id, title: subject.title, url: '/recipe/' + id}});
     },
   };

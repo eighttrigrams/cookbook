@@ -124,7 +124,7 @@
 
   **The overlays are the app's and not a page's**, which is the last thing
   `page-body` needed to be able to keep its promise. They are keyed off global state
-  — `:editing`, `:publishing`, `:deleting`, `:diffing` — and exactly one page is
+  — `:publishing`, `:deleting`, `:diffing` — and exactly one page is
   mounted at a time, so a modal mounted inside a page is absent from every other
   one: a Recipe page's Edit button would have set the state and rendered nothing.
   Mounted here they stand over whichever page is up, and there is one copy of each

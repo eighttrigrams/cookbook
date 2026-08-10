@@ -18,8 +18,9 @@ a file nothing unrelated is appended to.
     focus-probe.js one line, evaluated between *real* Tab presses
     cleanup.py     takes every CHECK- Recipe back out again
 
-    recipe-page-checks.js   a second suite: a Recipe's own page, and its address
-    provenance-seed.py      the one Recipe that suite's fourth phase cannot find
+    recipe-page-checks.js   a second suite: a Recipe's own page, its address and
+                            its two modes
+    provenance-seed.py      the one Recipe two of that suite's phases cannot find
 
 ## Running it
 
@@ -92,7 +93,7 @@ the Inbox's, and a check's number there is its name and not its position — add
 unrelated checks to it would break exactly that promise. This one has its own numbers
 and its own subject.
 
-Three of its four phases need no seed and write nothing. What they read is one Recipe
+Four of its six phases need no seed and write nothing. What they read is one Recipe
 of the dev database, named at the top of the file:
 
     const SUBJECT = 'Sourdough starter';
@@ -103,18 +104,30 @@ visitor's case it claims to be. If that Recipe is gone, point the constant at an
 one that is both. The only trace a run leaves is the `view_count` those reads move,
 which is what reading a Recipe *is*.
 
-### Four phases, and why it is not one evaluate
+### Six phases, and why it is not one evaluate
 
     (<contents of the file>).shelf()       — signed in, standing on /
     (<contents of the file>).coldLoad()    — after loading /recipe/<id> fresh
+    (<contents of the file>).coldEdit()    — after loading /recipe/<id>?edit=true fresh
     (<contents of the file>).signedOut()   — signed in, standing on /; it signs itself out
     (<contents of the file>).provenance()  — the provenance view; needs provenance-seed.py
+    (<contents of the file>).filing()      — the Scope picker; needs the same seed
 
-`coldLoad` cannot share a context with the others: the load it is about replaces the
-JS context, which is the whole point of it. Back and Forward are the opposite case and
-stay inside `shelf()` — nothing here ever leaves the document, every move is a
-`pushState`, so `history.back()` fires a `popstate` in the same context and can be
-waited on like any other consequence.
+The two cold loads cannot share a context with the others, or with each other: the load
+each is about replaces the JS context, which is the whole point of them. There are two
+because the page has two modes and a load is the only way to arrive at one from outside
+— `coldEdit` is the half that `sync-from-url!` alone can answer, and everything
+`shelf()` asserts about the editor still passes if the boot never looks at `.-search`.
+
+Back and Forward are the opposite case and stay inside `shelf()` — nothing there ever
+leaves the document, every move is a `pushState`, so `history.back()` fires a `popstate`
+in the same context and can be waited on like any other consequence. That now covers
+Back **out of the editor** as well as Back out of the page (16, 17).
+
+`filing()` is the one phase that **writes**, so it works on the seeded fixture and not
+on `SUBJECT`: filing a Recipe is a save, and a suite that promises to leave his shelf
+alone must not start filing it. It needs two of the owner's Scopes to exist, and it puts
+the fixture back where it found it.
 
 `shelf()` refuses to run from anywhere but the shelf, and says where it found itself
 instead. `:recipes` is in the atom on every page, so a suite that only checked for the
@@ -127,16 +140,22 @@ Recipe would half-run from a Recipe page and produce two false reds.
     3a  Back returns to the shelf, and the bar says so
     3b  Forward returns to the Recipe, at the same address
     5   a top-bar button leaves the page and puts / back in the bar
+    16  Edit goes to ?edit=true, prefilled, and Cancel comes back
+    17  Back leaves the editor and Forward returns to it
     2   a cold load of the address lands on the Recipe, not on a 404   (coldLoad)
-    15  the confirmations draw from the page's own row, not the listing
+    15  the confirmation and the editor draw from the page's own row
+    18  a cold load of ?edit=true opens the editor, not the reading    (coldEdit)
     4a  signed out, a published Recipe still has a page                (signedOut)
     4b  an address that names no readable Recipe says so, and offers a way back
+    19  signed out at ?edit=true gets the reading, with the query gone
     7   the toggle swaps the rendered body for the source, and back    (provenance)
     8   the numbers run 1..n over the body as it is stored
     9   each line is tinted with its own caution, not its neighbour's
     10  a line between the ends is a third colour, not rounded to one
     11  the legend on the page is the string the API sent
     12  no caution in the response, no button — even signed in
+    20  a toggle files the Recipe, and the version does not move       (filing)
+    21  two chips in one frame both land
 
 6 is out of sequence for the reason 11 is in `checks.js`: it is about a page that is
 *open*, and that is where one is. It was written after the fact — the first version of
@@ -230,6 +249,15 @@ which deletes it and any edits with it.
 | **M14** | put Publish, Edit, Versions and Delete back in `views/recipes`' card footer |
 | **M15** | delete `(when logged-in? [actions recipe])` from `views/recipe/found` — the removal from the card without its replacement, which is the reading the work order for that change refused |
 | **M16** | source `publish-modal` and `delete-modal` from `:recipes` again, as they were: `(first (filter #(= publishing (:id %)) recipes))` |
+| **M17** | make `views/recipe/actions`' Edit set a plain flag instead of navigating — `(swap! state/*app-state assoc :recipe-page-edit? true)` — so the editor renders and the bar never moves |
+| **M18** | drop the `?edit=true` half of `url/recipe-path`'s two-arity: `([id edit?] (recipe-path id))` |
+| **M19** | stop reading the flag in `state/sync-from-url!`: `(show-page! :recipe id false)` |
+| **M20** | let a visitor keep it — `edit? (url/editing?)` in `sync-from-url!`, without the `logged-in?` conjunct |
+| **M21** | route the filing through `update-recipe` with a one-key map instead of `toggle-recipe-scope` |
+| **M22** | send only what is selected: `(cond-> {} (seq ids) (assoc :scope_ids (vec ids)))` in `put-filing!`, so unfiling the last Scope omits the key |
+| **M23** | hand the picker the next set again — `:on-toggle #(state/set-scopes id (if (contains? selected id) …))` — computed from `:selected` in the render |
+| **M24** | disable the chips while a save is out instead of queueing: `:disabled? (= id (:id (:filing @state/*app-state)))` |
+| **M25** | `assoc-in` in `cache-detail!` instead of `merge` |
 
 M2 is the one that reddens hardest and is worth doing at least once: with the route
 gone there is no app on the page at all — `/recipe/1` is the JSON 404 — so `coldLoad()`
@@ -251,7 +279,28 @@ to re-run: the index is served, the app boots, and it puts the shelf up under an
 address naming a Recipe.
 
 M16 is this file's second `checks.js`-11 case: a mutation that only one check can see.
-With the confirmations reading `:recipes` again, `shelf()` stays 7/7 and 2 stays green —
-clicking Page from the shelf works because the listing is already in the atom — and 15
+With the confirmations reading `:recipes` again, `shelf()` stays green and 2 stays green
+— clicking Page from the shelf works because the listing is already in the atom — and 15
 goes red on its own, which is the whole reason it lives in `coldLoad()` and empties the
 listing before it presses anything.
+
+M17 to M20 are the same lesson about the address, and they redden in four different
+places on purpose. **M17** leaves 16 red and 18 green: the form is on screen either way,
+so only the check that reads the bar can see it. **M18** reddens 16 and 17 and leaves 18
+green, because a cold load still reads a flag the app never writes. **M19** is the
+opposite — 18 goes red and 16 stays green, since the push still happens and the render
+still follows it in the same context; **17** catches it too, which is the reason it is
+not folded into 16. **M20** reddens 19 alone, and it is the one worth looking at: a
+visitor gets a form, fills it in, presses Save, and the API answers 403.
+
+M21 to M25 are the filing's, and the pair worth understanding is **M23** and **M24** —
+both of them are what an unhurried reader would write, and both lose a click. M23 sends
+two saves that succeed with one chip missing from the result; M24 swallows the second
+click outright. Only 21 sees either. **M22** reddens 20's second half alone — everything
+about filing looks right until the moment he unfiles his last Scope, and then the key is
+omitted and the Recipe stays where it was. **M21** reddens 20 on the version badge,
+which is the whole point of the split. **M25** is the quietest of all of them: nothing in
+either suite went red when it shipped, because the key it drops is `caution` and the
+only thing that notices is the provenance toggle disappearing on a page nobody was
+looking at — run `filing()` and then `provenance()`, in that order and in one context,
+and 7 throws for want of a button.

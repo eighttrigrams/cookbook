@@ -29,7 +29,6 @@
            :versions {}          ;; id -> every version of it, fetched when the viewer opens
            :versions-request {}  ;; id -> the number of the newest /versions request for it
            :open #{}             ;; ids of the expanded cards
-           :editing nil          ;; id of the recipe whose Edit modal is open
            :publishing nil       ;; id of the recipe awaiting a publish confirmation
            :deleting nil         ;; id of the recipe awaiting a delete confirmation
            :diffing nil          ;; id of the recipe whose viewer is open — nil is closed
@@ -400,7 +399,7 @@
   (url/replace-state! "/")
   (swap! *app-state assoc
          :logged-in? false :token nil :current-user nil
-         :recipes [] :details {} :open #{} :editing nil :publishing nil :deleting nil
+         :recipes [] :details {} :open #{} :publishing nil :deleting nil
          :versions {} :versions-request {} :diffing nil :diffing-proposal nil
          :page :shelf :recipe-page-id nil :recipe-page-status nil
          ;; the editor with them: it is the owner's mode of that page, and signing
@@ -664,8 +663,29 @@
         (when (= request (:recipes-request @*app-state))
           (swap! *app-state assoc :recipes (vec recipes)))))))
 
-(defn- cache-detail! [recipe]
-  (swap! *app-state assoc-in [:details (:id recipe)] recipe))
+(defn- cache-detail!
+  "One fetched or returned row into `:details`, **merged over what is there rather
+  than replacing it**.
+
+  **Because the write endpoints answer with less than the read one does.** `GET
+  /api/recipes/:id?detail=full` carries `caution` — the per-line provenance split —
+  and `PUT /api/recipes/:id` and the publish POST do not: they return the row, and
+  the split is a *derived* answer the read endpoint computes. An `assoc-in` therefore
+  dropped the key on every write, and `views.recipe/found` keys the *Show provenance*
+  button off the key being there — correctly, since a client that has not been told
+  the split must not offer to draw it. So filing a Scope took the button off the page
+  until the next full read, and nothing said so.
+
+  A merge keeps it, and keeping it is right for exactly the writes that reach here
+  without it: a filing save and a publish both leave the version history alone, so the
+  split this client holds is still the answer. **A save that makes a new version does
+  not**, and that is `forget-derived!`'s job — it drops the split in the same breath
+  as the cached history, for the same reason.
+
+  So: keys a response carries win, keys it does not carry survive, and the one key
+  that can go stale is dropped explicitly by the one thing that stales it."
+  [recipe]
+  (swap! *app-state update-in [:details (:id recipe)] merge recipe))
 
 (defn fetch-detail
   "The body of one recipe. The only place the client ever asks for a
@@ -764,18 +784,33 @@
              (swap! *app-state assoc-in [:versions id] versions)
              (when on-landed (on-landed versions)))))))))
 
-(defn- forget-versions!
-  "Anything that makes a new version makes the cached list short by one, and a
-  history one version behind the count on the card is exactly the contradiction
-  the viewer exists not to show. Dropped rather than refetched: nothing is
-  looking at it — the viewer covers the footer the Edit button sits in — so the
-  next open pays for it.
+(defn- forget-derived!
+  "Everything this client holds that a **new version** makes untrue: the cached
+  history, and the cached per-line provenance split.
 
-  Publishing is not one of those things. It writes no history row and no version
-  bump, and it touches none of the three fields a version is made of, so the
-  cached list is still true after one."
+  The history first, which is what this was originally for. Anything that makes a
+  new version makes the cached list short by one, and a history one version behind
+  the count on the card is exactly the contradiction the viewer exists not to show.
+  Dropped rather than refetched: nothing is looking at it — the editor is a page and
+  the viewer is over it — so the next open pays for it.
+
+  **And `caution` with it**, for the same reason one step along: the split is derived
+  from the version history, so a save that adds a version changes who wrote which
+  line. `cache-detail!` merges, precisely so that the writes which *cannot* change
+  the split — a filing save, a publish — keep it; this is the one that can, so it
+  says so here rather than leaving a stale answer to be tinted onto the source view.
+  Dropped and not refetched, and the consequence is worth stating: *Show provenance*
+  is absent on that page until the Recipe is read in full again, because the button
+  exists exactly when the answer does. That is the rule the page already has, met
+  honestly rather than papered over with a stale one.
+
+  Publishing is not one of these things. It writes no history row and no version
+  bump, and it touches none of the three fields a version is made of, so both the
+  cached list and the cached split are still true after one."
   [id]
-  (swap! *app-state update :versions dissoc id))
+  (swap! *app-state (fn [s] (-> s
+                                (update :versions dissoc id)
+                                (update-in [:details id] dissoc :caution)))))
 
 (defn- open-viewer!
   "The **only** writer of `:diffing` and `:diffing-proposal`, which is why they are
@@ -965,7 +1000,7 @@
                   (auth-headers)
       (fn [recipe]
         (cache-detail! recipe)
-        (forget-versions! id)
+        (forget-derived! id)
         (fetch-recipes)
         ;; a save may have refiled the Recipe, so the per-Scope counts moved
         (fetch-scopes)
@@ -1070,13 +1105,16 @@
   version:
 
   - `cache-detail!` — the response is the full row, carrying the receipt and the
-    new `modified_at` the next save will need.
+    new `modified_at` the next save will need. It **merges**, which matters here
+    more than anywhere: this response has no `caution` key, and an `assoc-in` took
+    the *Show provenance* button off the page on every chip. That is written up
+    where the merge is.
   - `fetch-recipes` — the badges on the shelf's cards moved.
   - `fetch-scopes` — the per-Scope counts moved, which is the reason
     `update-recipe` refetches them too.
-  - **not `forget-versions!`**: no version was made, so the cached history is
-    still true. Dropping it would make every chip a Recipe's whole history to
-    re-fetch the next time the viewer opened.
+  - **not `forget-derived!`**: no version was made, so the cached history is still
+    true and so is the cached provenance split. Dropping them would make every chip
+    a Recipe's whole history to re-fetch and a button to disappear.
   - **not `fetch-inbox`**: filing makes no version and no proposal, so there is
     nothing new for the queue to be about.
 
@@ -1177,36 +1215,31 @@
 ;; view state
 
 (defn- open-on-detail!
-  "Latch one of the three Recipe overlays open — and not before the Recipe's **full
-  row is in `:details`**, which is the only place all three of them read.
+  "Latch one of the two Recipe confirmations open — and not before the Recipe's
+  **full row is in `:details`**, which is the only place either of them reads.
 
-  **One source, and the guarantee for it in one place.** Publish and Delete used to
-  find their Recipe in `:recipes`, on the argument that the listing already carries
-  the short fields their question needs; that was true of the shelf and false of
-  everywhere else, and `views.recipe-modals/overlays` records what it cost. Making
-  `:details` the source for all three is what lets any surface open them, and this is
-  where that is paid for rather than in each modal.
+  **One source, and the guarantee for it in one place.** Both used to find their
+  Recipe in `:recipes`, on the argument that the listing already carries the short
+  fields their question needs; that was true of the shelf and false of everywhere
+  else, and `views.recipe-modals/overlays` records what it cost. Making `:details`
+  the source is what lets any surface open them, and this is where that is paid for
+  rather than in each modal.
 
   On a Recipe's own page nothing is ever fetched here: `fetch-recipe-page!` caches
   the row *before* it writes `:found`, so the cached branch always wins. The fetch is
   for a caller holding no row at all — a collapsed card on the shelf is one — and it
-  is the fetch `start-editing` always had to make anyway, since the Edit form needs
-  the body the listing deliberately never carried. It is `?detail=full`, so it counts
-  as a read the way expanding a card does; that is the honest price of asking a
-  question about a Recipe whose text this client has not got."
+  is the fetch the Edit modal always had to make when it lived there, since a form
+  needs the body the listing deliberately never carried. It is `?detail=full`, so it
+  counts as a read the way expanding a card does; that is the honest price of asking
+  a question about a Recipe whose text this client has not got.
+
+  It took a third caller until the Edit modal became a page. The editor needs the
+  same row and gets it the same way — `show-page!`'s fetch — which is the whole
+  difference between a mode of a page and an overlay over one."
   [id k]
   (if (get-in @*app-state [:details id])
     (swap! *app-state assoc k id)
     (fetch-detail id (fn [_] (swap! *app-state assoc k id)))))
-
-(defn start-editing
-  "The modal edits all three fields, so it needs the body — which the listing
-  deliberately did not carry."
-  [id]
-  (open-on-detail! id :editing))
-
-(defn stop-editing []
-  (swap! *app-state assoc :editing nil))
 
 ;; Publishing asks first. The latch is one-way — nothing in the API takes it
 ;; back off — so a misplaced click is not something an undo could repair.

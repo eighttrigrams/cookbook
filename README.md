@@ -327,10 +327,11 @@ anywhere. A card also wears a `proposal` badge while an agent is waiting for
 approval on it — see *Edits that need approving* — and that one is a badge and
 not a control: the deciding happens in the inbox, against the agent's text.
 
-**The shelf's cards carry one button, *Page*.** Publishing, editing, deleting
-and reading a version history are all on the Recipe's own page: a card is a
-retrieval index and the page is the one surface that is about one Recipe, so
-that is where the things you can do to it are. See *A Recipe's own address*.
+**The shelf's cards carry one button, *Page*.** Publishing, editing, deleting,
+reading a version history and **filing under Scopes** are all on the Recipe's own
+page: a card is a retrieval index and the page is the one surface that is about one
+Recipe, so that is where the things you can do to it are. Editing has an address of
+its own — see *A Recipe's own address*.
 
 The shelf narrows three ways at once, all of them the endpoint's own clauses
 rather than anything the browser filters: the search box, the human-edited
@@ -353,12 +354,29 @@ The page is also where the owner's four actions are — **Publish, Edit, Version
 and Delete**, in one row under the header, the same four words the card used to
 carry. Deleting from there lands you back on the shelf.
 
-The point of it is the address. `/recipe/1` can be linked to, bookmarked, sent to
-somebody and **reloaded**: the server answers every `/recipe/…` with the index,
-so a cold load of one lands on the Recipe and not on a 404. Back and Forward
-work, because the browser's history is what the page is derived from rather than
-something the app writes into and then ignores. Everywhere else in the app is
-`/` — there is one addressable thing here and the rest is the app.
+**And it is where a Recipe is filed.** The Scopes sit under the header as a row of
+chips over the owner's whole Scope list, the ones this Recipe carries lit, and a
+click **saves immediately** — no Save, no confirmation. That is not impatience: the
+API makes no version for a filing change, because *a Scope is a way back to a
+Recipe, not part of it*, so there is nothing for a form to batch and nothing an undo
+would have to unwind. Unfiling the last one clears the set rather than leaving it
+alone, which is `[]` and not an omitted key on the wire.
+
+**Editing is a second address: `/recipe/<id>?edit=true`.** The four content fields
+— title, useful-when, tags, body — behind a Save, on a page rather than in a modal,
+so it can be linked to, reloaded and left with Back like everything else here. It
+carries **no** Scope picker: filing belongs to the reading, and a save from here
+omits `scope_ids` entirely, so changing the text cannot disturb where the Recipe is
+filed. A visitor who types that address gets the reading, and the query comes off
+the bar.
+
+The point of all of it is the address. `/recipe/1` can be linked to, bookmarked,
+sent to somebody and **reloaded**: the server answers every `/recipe/…` with the
+index, so a cold load of one lands on the Recipe and not on a 404. Back and Forward
+work — between the shelf and a Recipe, and between a Recipe's two modes — because
+the browser's history is what the page is derived from rather than something the app
+writes into and then ignores. Everywhere else in the app is `/` — there is one
+addressable thing here and the rest is the app.
 
 The wildcard deliberately does not look at the id. Which Recipes exist, and which
 of them the caller may see, is the API's answer; so `/recipe/999999` and a
