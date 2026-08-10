@@ -469,6 +469,20 @@
   `scopes` is the receipt; 400 if `scope_ids` is not an array of integers. Renaming
   or deleting a Scope is not done here — see PUT and DELETE /api/scopes/:id.
 
+  **A save that makes a version answers with `caution` — the same line-level split a
+  `?detail=full` read carries, recomputed over the history including this save.** It is
+  there exactly when a version was made, which is exactly when the split you were
+  holding stopped being true: the lines just moved, so an answer about the old ones
+  would be worse than none. A filing-only save and a no-op make no version and carry no
+  `caution`, because the split you have is still the answer — and computing one costs a
+  fold over the whole history, which is not a thing to pay per Scope chip. `legend` and
+  `ranges` ride in the one key here as they do on a read.
+
+  A **202** carries none either, and that is a decision: its `:recipe` is the Recipe as
+  it *still* reads, nothing was applied, so the split you hold is unchanged. It is not
+  that agents have no use for it — a machine is served the split on a read and on a
+  direct save, being the number that says which lines to leave alone.
+
   A save from a caller without a machine token also sets `has_human_edit`, which
   is what ?human=true on the listing narrows by. Like `published` it cannot be
   carried in the body, and unlike `published` a machine may write over the
@@ -628,7 +642,30 @@
                                                (select-keys body writable-fields)
                                                modified_at
                                                {:human? (human-write? req)})]
-        {:status 200 :body result}
+        ;; **`caution` rides back exactly when the save made a version**, which is the
+        ;; same thing as saying: exactly when the split the caller was holding has just
+        ;; died. A client that is not sent one must not draw one, so without this a save
+        ;; left the reader with a correct refusal and no way to get past it but a second
+        ;; read.
+        ;;
+        ;; Not on every PUT, and the reason is `caution-body`'s own docstring: it costs
+        ;; a second read and a fold over the whole history. A filing PUT is what a Scope
+        ;; chip sends, one per click, and it changes no version — so paying for that
+        ;; fold there would buy an answer the caller already has. Same for a no-op.
+        ;;
+        ;; **Two rows the handler is already holding answer the question**, so there is
+        ;; nothing new to track: `current` was read before the write and `result` comes
+        ;; back from it, and the content branch is the only one that increments
+        ;; `:version`. A flag threaded out of `update-recipe` would be a second answer
+        ;; to a question these two already settle.
+        ;;
+        ;; **After the write, necessarily.** `caution-body` re-reads `list-versions`, so
+        ;; being called here is the whole of what 'reflects the new version' requires —
+        ;; and a call moved above the write would hand back the displaced version's
+        ;; split and look entirely plausible doing it. There is a test that can tell.
+        (let [split (when (not= (:version result) (:version current))
+                      (caution-body ds req id))]
+          {:status 200 :body (cond-> result split (assoc :caution split))})
         (stale-write-response ds user-id id)))))
 
 (defn delete-recipe-handler

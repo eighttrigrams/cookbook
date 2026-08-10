@@ -1,6 +1,7 @@
 (ns et.cb.caution-integration-test
-  "The line-level provenance split over HTTP: which read carries it, who is served
-  it, and that the numbers on it are about the text and not about the versions.
+  "The line-level provenance split over HTTP: which read carries it, **which write
+  carries it**, who is served it, and that the numbers on it are about the text and
+  not about the versions.
 
   The adapter's own unit test covers what the three statements are; what is only
   testable here is where the answer is attached — a `?detail=full` read of one
@@ -10,7 +11,16 @@
 
   It is also where the legend is a testable claim rather than a def: the point of it
   is that it travels *with* every set of ranges, to a reader that may have fetched
-  one Recipe and read no documentation at all."
+  one Recipe and read no documentation at all.
+
+  **The write half came later and for a reported reason:** *saving made the show
+  provenance button disappear until i went ofr overview and came back.* A client that
+  is not sent the split must not draw one, and a save that makes a version stales the
+  split it holds — so the two correct halves left a gap where nothing handed it a fresh
+  one. The rule is narrow on purpose and the tests below are what hold it there: the
+  response carries the split **exactly when the save made a version**, because
+  `caution-body` costs a fold over the whole history and a filing PUT now fires on
+  every Scope chip click."
   (:require [clojure.test :refer [deftest testing is use-fixtures]]
             [et.cb.caution :as caution]
             [et.cb.integration-helpers :as h :refer [GET-json POST-json PUT-json]]))
@@ -133,3 +143,111 @@
     (is (= [{:from 1 :to 2 :caution 1.0}] (ranges body)))
     (testing "legend and all — it is the reader the legend was added for"
       (is (= caution/legend (:legend (:caution body)))))))
+
+;; ---------------------------------------------------------------------------
+;; which write carries it
+;;
+;; The rule in one line: **a PUT's response carries `caution` exactly when the save
+;; made a version.** Which is the same as saying it carries it exactly when the client
+;; would otherwise have had to forget the split it was holding.
+
+(deftest a-content-save-carries-the-split-of-the-version-it-just-wrote
+  ;; **The assertion that a call placed before the write would pass wrongly.** The
+  ;; ladder is built so the two answers differ in shape and not merely in numbers: an
+  ;; agent writes two lines, then the owner's save adds a third. Before the save the
+  ;; split is one range; after it, two. A `caution-body` computed on the way in would
+  ;; hand back the one-range answer and look perfectly plausible doing it.
+  (let [{:keys [id]} (:body (machine :post "/api/recipes"
+                                     {:title "Written by an agent"
+                                      :description "line one\nline two"}))
+        before (ranges (full id))
+        {:keys [status body]} (PUT-json (str "/api/recipes/" id)
+                                        {:description "line one\nline two\nline three"})]
+    (is (= 200 status))
+    (is (= [{:from 1 :to 2 :caution 0.0}] before)
+        "the displaced version's split: two lines, all the agent's")
+    (testing "the response carries the split, and it is the new version's"
+      (is (contains? body :caution))
+      (is (= [{:from 1 :to 2 :caution 0.0}
+              {:from 3 :to 3 :caution 1.0}]
+             (ranges body))
+          "three lines now, the third his — which is what a fold over the history
+           *including* this save says, and what one taken before it could not")
+      (is (not= before (ranges body))
+          "stated as a difference too, so a helper that silently answered the old
+           question cannot pass this"))
+    (testing "and it agrees with what the next full read says, since both are the
+              same fold over the same history"
+      (is (= (ranges (full id)) (ranges body))))
+    (testing "the legend rides along, as it does on a read — one key, both halves"
+      (is (= caution/legend (:legend (:caution body)))))))
+
+(deftest a-filing-only-save-carries-no-split
+  ;; **The half that is about cost rather than correctness.** Filing makes no version,
+  ;; so the split the client holds is still the answer and `cache-detail!`'s merge keeps
+  ;; it. Computing one here would be a fold over the whole history per Scope chip, for
+  ;; an answer that did not change.
+  (let [{:keys [id]} (:body (POST-json "/api/recipes"
+                                       {:title "Filed" :description "one\ntwo"}))
+        {:keys [status body]} (PUT-json (str "/api/recipes/" id) {:tags "alpha beta"})]
+    (is (= 200 status))
+    (is (= "alpha beta" (:tags body)) "the filing landed")
+    (is (= 1 (:version body)) "and made no version")
+    (is (not (contains? body :caution))
+        "so no split — absent, not empty, like every other key this app withholds")))
+
+(deftest a-scope-only-save-carries-no-split
+  ;; The other half of the filing, and the one the owner's chips actually send.
+  (let [{:keys [id]} (:body (POST-json "/api/recipes"
+                                       {:title "Filed" :description "one\ntwo"}))
+        {:keys [id scope-id]} {:id id :scope-id (:id (:body (POST-json "/api/scopes"
+                                                             {:title "Baking"})))}
+        {:keys [status body]} (PUT-json (str "/api/recipes/" id) {:scope_ids [scope-id]})]
+    (is (= 200 status))
+    (is (= ["Baking"] (mapv :title (:scopes body))) "the filing landed")
+    (is (= 1 (:version body)) "and made no version")
+    (is (not (contains? body :caution)))))
+
+(deftest a-no-op-save-carries-no-split
+  ;; A save that changes nothing makes no version either, so the same rule answers it
+  ;; — and it is worth its own test because it reaches the write path and returns the
+  ;; row unchanged, which is a third shape and not either of the two above.
+  (let [{:keys [id]} (:body (POST-json "/api/recipes"
+                                       {:title "Unchanged" :description "one\ntwo"}))
+        {:keys [status body]} (PUT-json (str "/api/recipes/" id)
+                                        {:description "one\ntwo"})]
+    (is (= 200 status))
+    (is (= 1 (:version body)) "no version was made")
+    (is (not (contains? body :caution)))))
+
+(deftest a-machine-content-save-carries-it-too
+  ;; The audience decision is `caution-body`'s and is unchanged: a machine reads in the
+  ;; owner's audience and *is* served the split, because it is the number that tells an
+  ;; agent which lines to leave alone. So the write rule is about versions and not about
+  ;; who is writing, and a machine's direct save carries it for the same reason his does.
+  (let [{:keys [id]} (:body (machine :post "/api/recipes"
+                                     {:title "All the agent's" :description "one\ntwo"}))
+        {:keys [status body]} (machine :put (str "/api/recipes/" id)
+                                       {:description "one\ntwo\nthree"})]
+    (is (= 200 status) "an all-machine unpublished Recipe is still the agents' to write")
+    (is (= 2 (:version body)))
+    (is (= [{:from 1 :to 3 :caution 0.0}] (ranges body)))))
+
+(deftest a-proposal-carries-no-split
+  ;; **The 202 is a decision and not an oversight.** Its `:recipe` is the Recipe as it
+  ;; *still* reads — nothing was applied — so the split is unchanged and the client's
+  ;; merge keeps the one it has. Sending it would be paying for a fold to hand back an
+  ;; answer the caller already had, and would also invite the reading that a 202 changed
+  ;; the text: the whole point of the status is that it did not.
+  ;;
+  ;; Note what the argument is *not*: 'machines do not need it'. A machine is served the
+  ;; split on a read and on a direct save, by the two tests above.
+  (let [{:keys [id]} (:body (POST-json "/api/recipes"
+                                       {:title "His" :description "one\ntwo"}))
+        {:keys [status body]} (machine :put (str "/api/recipes/" id)
+                                       {:description "an agent would rewrite it"})]
+    (is (= 202 status) "his Recipe, so a machine's content edit is filed")
+    (is (not (contains? (:recipe body) :caution))
+        "and the Recipe it hands back is the unchanged one, whose split the caller
+         is already holding")
+    (is (= "one\ntwo" (:description (:recipe body))) "unchanged, as the status says")))
