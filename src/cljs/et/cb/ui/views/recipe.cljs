@@ -261,6 +261,22 @@
                 "instead of the rendered text")}
    (if showing? "Hide provenance" "Show provenance")])
 
+(defn- provenance-tools
+  "The toggle, and the legend while it is on — the row that sits over the body in
+  **both** of this page's modes.
+
+  One component and not one per mode, because the two are the same control saying the
+  same thing about the same field: the reading tints the stored body and the editor
+  tints the draft, and a reader who has met one has met the other. Which of the two
+  bodies is being described is `source-view`'s caller's business, not this row's.
+
+  The legend is the API's own string in both modes. It explains the *scale*, and the
+  scale does not change because the text is unsaved."
+  [showing? legend]
+  [:div.recipe-page-body-tools
+   [provenance-toggle showing?]
+   (when showing? [:div.provenance-legend legend])])
+
 (defn- source-line
   "One source line: its number, its provenance, and the text exactly as it is stored.
 
@@ -299,13 +315,25 @@
 
   No markdown parsing at all, therefore, and the text goes in as a string: a body is
   full of `#`, `*` and `[]` that mean something to a parser, and this view's entire
-  claim is that what you are looking at is what is stored."
-  [description ranges]
-  (let [lines (provenance/split-lines description)
-        cautions (provenance/line-cautions ranges (count lines))]
+  claim is that what you are looking at is what is stored — or, in edit mode, what you
+  have typed.
+
+  **`cautions` is handed in rather than derived here, because the two modes align
+  differently.** The reading's lines *are* the lines the ranges index, so its caller
+  passes `provenance/line-cautions`; the editor's are a draft the server has never
+  seen, so its caller passes `provenance/draft-cautions`, which is where that rule is
+  written down. This function renders one number per line and holds no opinion about
+  where the numbers came from.
+
+  It used to derive them, which guaranteed that the rows and the numbers came from one
+  string. `nth` with a nil default is what replaces that guarantee: a `cautions` shorter
+  than the body draws the tail **untold** rather than throwing, which is the same honest
+  nothing every other unanswered line gets."
+  [description cautions]
+  (let [lines (provenance/split-lines description)]
     [:div.provenance-source
      (map-indexed (fn [i line]
-                    ^{:key i} [source-line (inc i) line (nth cautions i)])
+                    ^{:key i} [source-line (inc i) line (nth cautions i nil)])
                   lines)]))
 
 (defn- found
@@ -376,12 +404,13 @@
      (when logged-in?
        [mutating-actions recipe])
      (when offered?
-       [:div.recipe-page-body-tools
-        [provenance-toggle showing?]
-        (when showing? [:div.provenance-legend legend])])
+       [provenance-tools showing? legend])
      (cond
        blank? [:div.card-body-empty "No body yet."]
-       showing? [source-view body ranges]
+       ;; The reading's lines *are* the lines the ranges index, so the alignment is the
+       ;; identity one — see `source-view` for why the caller chooses it.
+       showing? [source-view body (provenance/line-cautions
+                                   ranges (count (provenance/split-lines body)))]
        :else [:div.recipe-page-body [markdown/render body]])]))
 
 (defn- editor
@@ -425,9 +454,29 @@
   current value* — so a content save cannot disturb the filing. The modal sent the
   key on every save and had to, because it carried a picker whose set the owner might
   just have emptied on purpose; with the picker gone, sending it would be the bug and
-  omitting it is the fix."
+  omitting it is the fix.
+
+  **The provenance toggle is here too, and here it describes the draft.** *show
+  provenance button should be avilable in both edit and view modes. and in edit modes
+  it should reflect the volatile state.* So it swaps the textarea for the tinted source
+  of what is in the editor, exactly as the reading swaps its rendered body — the same
+  control, the same row, the same legend, and `provenance/draft-cautions` for the one
+  thing that differs: which line of a draft may keep a stored line's number.
+
+  **It is a look and not an edit**, so there is nothing to guard: while the source is up
+  the textarea is not on the page, and you cannot type into a `div`. Turning it off
+  brings the field back with the draft still in it, because the draft is in app-state
+  and was never in the textarea.
+
+  The toggle is keyed off `caution` being in the response, as the reading's is — so a
+  Recipe the client has no split for offers the button in **neither** mode rather than
+  in one. Blankness is read off the *draft*: a body you have just emptied has nothing to
+  number, which is the same sentence the reading makes about a stored one."
   [recipe logged-in?]
-  (let [{:keys [title useful_when tags description]} (state/recipe-edit-fields)]
+  (let [{:keys [title useful_when tags description]} (state/recipe-edit-fields)
+        {:keys [legend ranges]} (:caution recipe)
+        offered? (and (seq ranges) (not (str/blank? description)))
+        showing? (and offered? (:showing-provenance? @state/*app-state))]
     [:<>
      [header recipe logged-in?]
      [:div.recipe-page-edit
@@ -443,11 +492,18 @@
        {:type "text" :placeholder recipe-fields/tags-placeholder
         :value tags
         :on-change #(state/set-recipe-draft-field :tags (-> % .-target .-value))}]
-      [:textarea.recipe-page-edit-body
-       {:placeholder "The recipe itself"
-        :rows 16
-        :value description
-        :on-change #(state/set-recipe-draft-field :description (-> % .-target .-value))}]]]))
+      (when offered?
+        [provenance-tools showing? legend])
+      (if showing?
+        ;; The **stored** body is what the ranges are about, so it is what the draft is
+        ;; aligned against — `(:description recipe)` and not the draft's own text.
+        [source-view description
+         (provenance/draft-cautions (:description recipe) ranges description)]
+        [:textarea.recipe-page-edit-body
+         {:placeholder "The recipe itself"
+          :rows 16
+          :value description
+          :on-change #(state/set-recipe-draft-field :description (-> % .-target .-value))}])]]))
 
 (defn- not-found
   "What an address that names no readable Recipe gets.

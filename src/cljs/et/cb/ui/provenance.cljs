@@ -76,3 +76,48 @@
                         {}
                         ranges)]
     (mapv #(get by-line (inc %)) (range line-count))))
+
+(defn draft-cautions
+  "The same one-number-per-line, for a body **being edited** — a draft the server has
+  never seen — aligned against the ranges it has.
+
+  *show provenance button should be avilable in both edit and view modes. and in edit
+  modes it should reflect the volatile state.* The volatile state is the difficulty:
+  `caution`'s ranges index the **stored** description's lines, and a draft's lines are
+  not those lines. The rule, and it is one sentence on purpose:
+
+  > A draft line keeps its stored caution when it is at the **same index** and has the
+  > **same text**. Anything else is untold.
+
+  **What matters more than the rule is that it can only ever under-claim.** Insert a
+  line at the top and every line below shifts, so all of them fall to untold — which
+  reads as *we do not know*, and we do not. The other failure, a confident tint against
+  the wrong line, would be the view lying about who wrote something, which is the one
+  thing this whole feature exists not to do. So the conservative arm is the feature and
+  not a limitation to be apologised for, and a reader tempted to sharpen it should read
+  the next two paragraphs first.
+
+  **A real diff is not the fix.** `views.diff` looks like a source of one and is not:
+  it is CodeMirror's merge view, so the alignment lives inside the library and behind
+  an editor mount, not in a function you can call on two strings. Pulling a line-diff
+  in would be new machinery in aid of a *guess* — and a guess the server overrules the
+  moment the draft is saved, because the next real read brings ranges computed from the
+  text that actually landed.
+
+  **A text-keyed lookup is worse than it looks.** Matching a draft line to any stored
+  line with the same text mis-attributes a body with two identical lines — an empty
+  line, `---`, `## Notes` — and trades a conservative wrong for a confident one. Index
+  *and* text, therefore, and nothing cleverer.
+
+  A line past the end of the stored body has no counterpart at its index and is untold
+  by the same rule, with no special case: `nth` with a nil default sees to it. Which is
+  also what makes a brand-new line at the end read correctly, and it is the commonest
+  edit there is."
+  [stored-description ranges draft-description]
+  (let [stored (split-lines stored-description)
+        stored-cautions (line-cautions ranges (count stored))]
+    (into []
+          (map-indexed (fn [i line]
+                         (when (= line (nth stored i nil))
+                           (nth stored-cautions i nil))))
+          (split-lines draft-description))))
