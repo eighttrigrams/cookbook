@@ -14,6 +14,14 @@
   API gives them: a published Recipe in full, and the same 404 for an unpublished
   one as for an id nobody ever wrote.
 
+  **And it is where the owner's four actions live.** Publish, Edit, Versions and
+  Delete were the shelf card's footer, beside the button that comes here; he asked for
+  a card that carries nothing but *Page* and said where the rest were to go — *all the
+  buttons go to that page then*. So the shelf is the retrieval index it says it is,
+  and the one surface that is about one Recipe is the one that can change it. See
+  `actions`, and `views.recipe-modals` for why the overlays they open are mounted at
+  the app root rather than by whichever page opened them.
+
   Three states, and all three are real:
 
   - **loading** — the fetch is out. Always passed through, even when the card for
@@ -94,6 +102,48 @@
       [:span.card-date (recipe-badges/day modified_at)]]
      (when (and logged-in? (seq tags))
        [recipe-badges/tags tags {:class "recipe-page-tags"}])]))
+
+(defn- actions
+  "Publish, Edit, Versions and Delete — the four the shelf's card footer used to
+  carry, on the page they are about. *all the buttons go to that page then*, which
+  is the half of his ask that is not a removal.
+
+  **The same four words, deliberately.** `header` argues that a reader who knows the
+  shelf can read this page without learning anything, and it is about the six facts;
+  it holds at least as strongly for four controls. A page that called them *Publish
+  changes*, *Modify*, *History* and *Remove* would be four things to learn about a
+  Recipe he has already learnt on the card.
+
+  `secondary` for all four, which is this page's word for a control that is not the
+  point of the page — `recipe-page-back` and `provenance-toggle` are both that, and
+  `provenance-toggle`'s docstring says that a second word invented for the same idea
+  is how two things drift. Delete keeps `.danger`, the one distinction the card made.
+  Full-size buttons rather than the card's smaller ones, for the reason the title is
+  an `h1`: a card is one of thirteen and this is the Recipe, alone.
+
+  **Publish only while there is something to publish.** The latch is one way — the
+  API has no unpublish — so a published Recipe loses the button and wears the badge
+  in the header instead. Same rule as the card's, and the same reading of the JSON:
+  `published` arrives as 0 or 1 and 0 is truthy in cljs, so it is a comparison.
+
+  Owner-only at the call site, and here the gate is **not** merely cosmetic the way
+  the header's three are: these are four writes, and the server refuses every one of
+  them to anybody else — including Versions, which answers a visitor 404 for every
+  id. What the gate prevents is a row of controls that could only produce errors."
+  [{:keys [id published]}]
+  (let [published? (= 1 published)]
+    [:div.recipe-page-actions
+     (when-not published?
+       [:button.secondary {:on-click #(state/start-publishing id)} "Publish"])
+     [:button.secondary {:on-click #(state/start-editing id)} "Edit"]
+     ;; Named for what it shows rather than for the merge view inside it: a
+     ;; one-version Recipe has nothing to diff and this still answers the question,
+     ;; which is what the `v1` badge above it is pointing at.
+     [:button.secondary
+      {:on-click #(state/start-diff id)
+       :title "Step through every version and see what each save changed"}
+      "Versions"]
+     [:button.secondary.danger {:on-click #(state/start-deleting id)} "Delete"]]))
 
 (defn- provenance-toggle
   "The control, in an editor's register — *Show line numbers*, except that the
@@ -177,7 +227,25 @@
 
   The legend is the API's own string and is not retyped here. It is in the response
   for this, and a second wording of a scale is how two surfaces come to explain it
-  differently."
+  differently.
+
+  **The owner's four actions go under the header and above the body**, and both
+  halves of that are on purpose:
+
+  - Under the header rather than beside `recipe-page-back`, because leaving the page
+    is not one of the things you can do to the Recipe. That button is on all three
+    states and these exist only where there is a Recipe to act on, so they are not
+    the same row — and keeping them apart is what leaves the way off first in the
+    tab order, with Delete not one stop from the top of the page.
+  - Above the body, which is *not* where the card puts them. A card's footer sits
+    under a body that is a paragraph or two between twelve neighbours; a page's body
+    is the Recipe in full and has no length at all — a footer under it would put Edit
+    below the fold and Delete at the end of a scroll. So the controls that change the
+    Recipe sit with the facts that say which Recipe it is, and the body follows them.
+
+  Above `recipe-page-body-tools` for the same reading: this row is what you can *do*
+  to the Recipe, that one is how you want to *look* at it, and the doing is not a
+  property of the text the way the provenance view is."
   [recipe logged-in? showing-provenance?]
   (let [{:keys [legend ranges]} (:caution recipe)
         body (:description recipe)
@@ -188,6 +256,8 @@
      [header recipe logged-in?]
      (when (seq (:useful_when recipe))
        [:div.recipe-page-useful-when [markdown/render-inline (:useful_when recipe)]])
+     (when logged-in?
+       [actions recipe])
      (when offered?
        [:div.recipe-page-body-tools
         [provenance-toggle showing?]

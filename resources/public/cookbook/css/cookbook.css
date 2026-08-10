@@ -1110,6 +1110,25 @@ html.dark-mode .inbox-kind.kind-proposed { background: rgba(245, 158, 11, 0.18);
   font-size: 1em;
 }
 
+/* The owner's four actions, under the header and above the body — `views/recipe`'s
+   `found` argues the placement. Left-aligned, where `.card-actions` is pushed right
+   by a `margin-left: auto` inside the card's footer: on a card the footer is shared
+   with the date and the buttons are the far end of a line, and here they are a row
+   of their own at the start of the text column, under the useful-when line they read
+   on from.
+
+   No padding or font-size of their own, which is the density argument the panel
+   itself makes: a card's buttons are shrunk to 6px/0.9em because a card is one of
+   thirteen, and these are the same size as this page's other two controls — the way
+   back and the provenance toggle. Wrapping, for the same reason the badges above
+   them wrap: four buttons and a narrow window is a phone. */
+.recipe-page-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 18px;
+}
+
 /* No inner panel, unlike `.card-body`. On a card the tinted block is what
    separates the body from the twelve cards around it; here there is nothing to
    separate it from, and a box inside a box would only make the page narrower. */
