@@ -136,15 +136,18 @@ Recipe would half-run from a Recipe page and produce two false reds.
     13  a card carries Page and nothing else
     1   the Page button opens the Recipe at its own address, and the body is the card's
     6   the page wears the same header facts as the card
-    14  the Recipe page carries the four actions, Publish by the latch
+    14  the four actions are reachable across the slot and the panel
+    22  a Recipe page keeps the theme toggle and no page selectors
     3a  Back returns to the shelf, and the bar says so
     3b  Forward returns to the Recipe, at the same address
     5   a top-bar button leaves the page and puts / back in the bar
     16  Edit goes to ?edit=true, prefilled, and Cancel comes back
     17  Back leaves the editor and Forward returns to it
+    23  the slot is ← Shelf while reading and Save+Cancel while editing
+    24  Cancel abandons the draft, and the next visit shows the Recipe
     2   a cold load of the address lands on the Recipe, not on a 404   (coldLoad)
     15  the confirmation and the editor draw from the page's own row
-    18  a cold load of ?edit=true opens the editor, not the reading    (coldEdit)
+    18  a cold load of ?edit=true opens the editor, prefilled          (coldEdit)
     4a  signed out, a published Recipe still has a page                (signedOut)
     4b  an address that names no readable Recipe says so, and offers a way back
     19  signed out at ?edit=true gets the reading, with the query gone
@@ -164,6 +167,28 @@ a **listing** aggregate that `GET /api/recipes/:id` does not carry, and `source-
 reads a count it was not sent as a fact it has not been told. Nothing failed. Comparing
 the two surfaces is the only assertion that could have caught it, because each of them
 on its own looked complete.
+
+22, 23 and 24 came with the change that moved the page's **chrome into the top bar**:
+the left slot holds `← Shelf` while reading and Save and Cancel while editing, and the
+right-hand side keeps the theme toggle and nothing else. They are three claims about one
+move — what is *not* up there any more, what stands in the slot in each mode, and that
+the draft the slot's Save reads does not outlive a Cancel. The last of those is the one
+with teeth: the draft used to be four component-local ratoms that went out of scope with
+the component, and is now app-state that has to be *cleared*.
+
+**14 was rewritten rather than re-listed.** The four actions live in *two* containers
+now — the top bar's left slot carries `← Shelf`, Edit and Versions, and the panel keeps
+Publish and Delete, by the page's own rule that the slot holds ways of *looking* at a
+Recipe and the panel keeps what *changes* it. So the check spans both, with set equality
+in each half: one that looked at a single container would go green with the other empty,
+which is precisely the unreachability it exists to catch.
+
+**5 changed its mechanism and kept its number**, because the route it asserted stopped
+existing: it pressed `.inbox-toggle` from the Recipe page, and that button is not there
+any more. It presses the left slot's `← Shelf` instead, which is now the only way out of
+the page the bar offers — so the check is more nearly about its own name than it was. And
+**18 gained the prefill assertion** it was always half-making: it compared the title
+against nothing, and now compares all four fields against the stored row.
 
 13, 14 and 15 came with the change that took **Publish, Edit, Versions and Delete off
 the card and put them on the page**, and they are three claims about one move: the card
@@ -258,6 +283,13 @@ which deletes it and any edits with it.
 | **M23** | hand the picker the next set again — `:on-toggle #(state/set-scopes id (if (contains? selected id) …))` — computed from `:selected` in the render |
 | **M24** | disable the chips while a save is out instead of queueing: `:disabled? (= id (:id (:filing @state/*app-state)))` |
 | **M25** | `assoc-in` in `cache-detail!` instead of `merge` |
+| **M26** | render `[recipe/back-to-shelf]` inside `.recipe-page` again, above the `case`, and drop it from `core/left-slot` |
+| **M27** | make `core/focused-surface?` answer `false` always — the selectors and Sign out come back to the Recipe page |
+| **M28** | draw `← Shelf` in the slot while editing too, beside Save and Cancel |
+| **M29** | drop `:recipe-draft {}` from `show-page!`'s `swap!`, so a draft survives a Cancel |
+| **M30** | seed the draft instead of resolving it: have `views/recipe/editor` `swap!` the row's four fields into `:recipe-draft` on its first render, and make `recipe-edit-fields` read the draft alone |
+| **M31** | put Edit and Versions back in `.recipe-page-actions` and drop `[recipe/navigation-actions …]` from `core/left-slot` |
+| **M32** | move Delete up into the slot with them — `navigation-actions` renders it too |
 
 M2 is the one that reddens hardest and is worth doing at least once: with the route
 gone there is no app on the page at all — `/recipe/1` is the JSON 404 — so `coldLoad()`
@@ -292,6 +324,22 @@ opposite — 18 goes red and 16 stays green, since the push still happens and th
 still follows it in the same context; **17** catches it too, which is the reason it is
 not folded into 16. **M20** reddens 19 alone, and it is the one worth looking at: a
 visitor gets a form, fills it in, presses Save, and the API answers 403.
+
+M31 and M32 are the amendment's, and they are the pair that shows why 14 spans two
+containers rather than one: **M31** empties the slot's half and fills the panel's, so a
+check that only counted the panel would go green on it — 14 reddens because it asserts
+both, and 23 reddens on the slot. **M32** is the one the rule exists to prevent: Delete
+in a row of navigation, where a mis-aimed click costs a Recipe rather than a step. It
+reddens 14 on both halves at once and is worth doing to see what it looks like.
+
+M26 to M30 are the chrome's. **M28** is the one that looks harmless and is not: three
+buttons where the middle one is Cancel and the first means *leave without asking* is the
+arrangement a hurried reader gets wrong, and only 23 says so. **M30** is the one to run
+if you want to see Part 3.3's trap for yourself: it passes everything in `shelf()`,
+because pressing Edit has the row in hand, and reddens **18** alone — the editor comes up
+with four empty fields on a cold load, which is indistinguishable on screen from a Recipe
+that has no content. **M27** reddens 22 alone; **M26** reddens 5 and 23; **M29** reddens
+24 and nothing else.
 
 M21 to M25 are the filing's, and the pair worth understanding is **M23** and **M24** —
 both of them are what an unhurried reader would write, and both lose a click. M23 sends

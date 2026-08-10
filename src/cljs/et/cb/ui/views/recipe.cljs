@@ -18,9 +18,14 @@
   Delete were the shelf card's footer, beside the button that comes here; he asked for
   a card that carries nothing but *Page* and said where the rest were to go — *all the
   buttons go to that page then*. So the shelf is the retrieval index it says it is,
-  and the one surface that is about one Recipe is the one that can change it. See
-  `actions`, and `views.recipe-modals` for why the overlays they open are mounted at
-  the app root rather than by whichever page opened them.
+  and the one surface that is about one Recipe is the one that can change it.
+
+  They live in **two** places on it, and the line between them is the page's own rule:
+  the ways of *looking* at this Recipe — `← Shelf`, Edit, Versions — are in the top
+  bar's left slot, and what *changes* it stays in the panel. See `navigation-actions`
+  for the argument and `mutating-actions` for the other half, and
+  `views.recipe-modals` for why the overlays they open are mounted at the app root
+  rather than by whichever page opened them.
 
   Three states, and all three are real:
 
@@ -174,49 +179,72 @@
     :on-toggle #(state/toggle-recipe-scope id %)
     :class "recipe-page-filing"}])
 
-(defn- actions
-  "Publish, Edit, Versions and Delete — the four the shelf's card footer used to
-  carry, on the page they are about. *all the buttons go to that page then*, which
-  is the half of his ask that is not a removal.
+(defn navigation-actions
+  "**Edit and Versions, in the top bar's left slot beside `← Shelf`.** *edit and
+  versions can now move to the top, next to the back to shelf button.*
 
-  **The same four words, deliberately.** `header` argues that a reader who knows the
-  shelf can read this page without learning anything, and it is about the six facts;
-  it holds at least as strongly for four controls. A page that called them *Publish
-  changes*, *Modify*, *History* and *Remove* would be four things to learn about a
-  Recipe he has already learnt on the card.
+  **The rule the split makes, because it answers where the next button goes: the slot
+  carries ways of *looking* at this Recipe, and the panel keeps what *changes* it.**
+  `← Shelf` leaves the Recipe, Edit switches which mode you are reading it in,
+  Versions opens its history — none of the three touches it. Publish is a one-way
+  latch with no unpublish in the API, and Delete takes the Recipe and its whole
+  history with it, so both stay down in `mutating-actions` where a mis-aimed click
+  costs a step rather than a Recipe. That is the same argument the publish and delete
+  confirmations are already making one layer down, one layer up.
 
-  `secondary` for all four, which is this page's word for a control that is not the
-  point of the page — `recipe-page-back` and `provenance-toggle` are both that, and
-  `provenance-toggle`'s docstring says that a second word invented for the same idea
-  is how two things drift. Delete keeps `.danger`, the one distinction the card made.
-  Full-size buttons rather than the card's smaller ones, for the reason the title is
-  an `h1`: a card is one of thirteen and this is the Recipe, alone.
+  `secondary` for both, which is `back-to-shelf`'s register and therefore the slot's:
+  three controls that sit in a row have to look like three of a kind, and this page
+  already has one word for *a control that is not the point of the page*.
 
-  **Publish only while there is something to publish.** The latch is one way — the
-  API has no unpublish — so a published Recipe loses the button and wears the badge
-  in the header instead. Same rule as the card's, and the same reading of the JSON:
-  `published` arrives as 0 or 1 and 0 is truthy in cljs, so it is a comparison.
+  Owner-only at the call site. The gate is not cosmetic — both of these lead somewhere
+  the server refuses anybody else, Versions with a 404 from `/versions` for every id."
+  [{:keys [id]}]
+  [:<>
+   ;; A navigation and not an overlay: same Recipe, same page, `?edit=true`. The
+   ;; address is `go-to-page`'s to write, which is why this calls a named move rather
+   ;; than assembling one.
+   [:button.secondary {:on-click #(state/open-recipe-editor id)} "Edit"]
+   ;; Named for what it shows rather than for the merge view inside it: a one-version
+   ;; Recipe has nothing to diff and this still answers the question, which is what
+   ;; the `v1` badge in the header is pointing at.
+   [:button.secondary
+    {:on-click #(state/start-diff id)
+     :title "Step through every version and see what each save changed"}
+    "Versions"]])
+
+(defn- mutating-actions
+  "**Publish and Delete: what changes the Recipe, kept in the panel.** It was four
+  buttons here and is two — Edit and Versions went up into the bar's left slot, and
+  `navigation-actions` writes down the rule that decided which went where.
+
+  A destructive control does not belong in a row of navigation. `← Shelf`, Edit and
+  Versions are all one click from being pressed by mistake and all three cost a step;
+  Delete costs the Recipe and every version of it, and Publish is a latch the API has
+  no way to undo. Keeping them a row apart from the chrome is the cheap half of the
+  same care the two confirmations take.
+
+  **The same words as the card's footer, deliberately.** `header` argues that a reader
+  who knows the shelf can read this page without learning anything, about the six
+  facts; it holds for the controls too. *Publish changes* and *Remove* would be things
+  to learn about a Recipe he has already learnt on the card.
+
+  `secondary`, and Delete keeps `.danger` — the one distinction the card drew. Full-size
+  buttons rather than the card's smaller ones, for the reason the title is an `h1`: a
+  card is one of thirteen and this is the Recipe, alone.
+
+  **Publish only while there is something to publish.** The latch is one way, so a
+  published Recipe loses the button and wears the badge in the header instead. Same
+  rule as the card's, and the same reading of the JSON: `published` arrives as 0 or 1
+  and 0 is truthy in cljs, so it is a comparison.
 
   Owner-only at the call site, and here the gate is **not** merely cosmetic the way
-  the header's three are: these are four writes, and the server refuses every one of
-  them to anybody else — including Versions, which answers a visitor 404 for every
-  id. What the gate prevents is a row of controls that could only produce errors."
+  the header's two are: these are writes, and the server refuses them to anybody else.
+  What the gate prevents is a row of controls that could only produce errors."
   [{:keys [id published]}]
   (let [published? (= 1 published)]
     [:div.recipe-page-actions
      (when-not published?
        [:button.secondary {:on-click #(state/start-publishing id)} "Publish"])
-     ;; A navigation and not an overlay: same Recipe, same page, `?edit=true`. The
-     ;; address is `go-to-page`'s to write, which is why this calls a named move
-     ;; rather than assembling one.
-     [:button.secondary {:on-click #(state/open-recipe-editor id)} "Edit"]
-     ;; Named for what it shows rather than for the merge view inside it: a
-     ;; one-version Recipe has nothing to diff and this still answers the question,
-     ;; which is what the `v1` badge above it is pointing at.
-     [:button.secondary
-      {:on-click #(state/start-diff id)
-       :title "Step through every version and see what each save changed"}
-      "Versions"]
      [:button.secondary.danger {:on-click #(state/start-deleting id)} "Delete"]]))
 
 (defn- provenance-toggle
@@ -303,29 +331,31 @@
   for this, and a second wording of a scale is how two surfaces come to explain it
   differently.
 
-  **The owner's four actions go under the header and above the body**, and both
-  halves of that are on purpose:
+  **What the owner can *do* to the Recipe is split across two containers now, by the
+  rule `navigation-actions` writes down**: the ways of looking at it are in the top
+  bar's left slot beside `← Shelf`, and the two that change it stay in this panel.
+  `mutating-actions` is that row, and it goes under the header and above the body:
 
-  - Under the header rather than beside `recipe-page-back`, because leaving the page
-    is not one of the things you can do to the Recipe. That button is on all three
-    states and these exist only where there is a Recipe to act on, so they are not
-    the same row — and keeping them apart is what leaves the way off first in the
-    tab order, with Delete not one stop from the top of the page.
-  - Above the body, which is *not* where the card puts them. A card's footer sits
-    under a body that is a paragraph or two between twelve neighbours; a page's body
-    is the Recipe in full and has no length at all — a footer under it would put Edit
-    below the fold and Delete at the end of a scroll. So the controls that change the
-    Recipe sit with the facts that say which Recipe it is, and the body follows them.
+  - Under the header, because a control that changes the Recipe belongs with the facts
+    that say which Recipe it is. It is also a row apart from the chrome, which is the
+    cheap half of keeping a Delete out of a row of navigation.
+  - Above the body, which is *not* where the card puts them. A card's footer sits under
+    a body that is a paragraph or two between twelve neighbours; a page's body is the
+    Recipe in full and has no length at all — a footer under it would put Delete at the
+    end of a scroll.
 
   Above `recipe-page-body-tools` for the same reading: this row is what you can *do*
   to the Recipe, that one is how you want to *look* at it, and the doing is not a
   property of the text the way the provenance view is.
 
+  The tab order comes out right without being arranged here: the bar precedes the
+  panel in the document, so `← Shelf`, Edit and Versions all come before Delete.
+
   **The Scope picker sits between the header and the useful-when line**, where the
   card's header wears the badges it replaces — the filing is part of what says which
   Recipe this is, and it reads with the tags row above it, which is the other half of
-  the same filing. It is above the four actions rather than among them because it is
-  not one: those four are things you ask for and this one is already saved by the time
+  the same filing. It is above the actions row rather than among it because it is not
+  one of them: those are things you ask for, and this one is already saved by the time
   your finger is off it.
 
   It is drawn by this mode only. The editor has no picker — `editor` says why — so
@@ -344,7 +374,7 @@
      (when (seq (:useful_when recipe))
        [:div.recipe-page-useful-when [markdown/render-inline (:useful_when recipe)]])
      (when logged-in?
-       [actions recipe])
+       [mutating-actions recipe])
      (when offered?
        [:div.recipe-page-body-tools
         [provenance-toggle showing?]
@@ -514,8 +544,10 @@
                 ;; it writes the status, and `state/delete-recipe`, which is the one
                 ;; thing that takes a row back out of `:details`, leaves this page in
                 ;; the same breath. Rendered as the not-found rather than as a blank,
-                ;; because a page with only a Back button on it is the one outcome
-                ;; this file exists to never produce.
+                ;; because an empty panel under a bar offering nothing but the way out
+                ;; is the one outcome this file exists to never produce. That reading
+                ;; got sharper when the way out moved into the bar: the panel really
+                ;; would be empty now, where before it at least had a button in it.
                 [not-found])
        :missing [not-found]
        [:div.card-body-loading "Loading…"])]))

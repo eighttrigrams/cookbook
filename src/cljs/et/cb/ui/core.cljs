@@ -65,21 +65,35 @@
   what it was and gets rendered *into* here. A `.brand` that sometimes held a button
   would have made every rule keyed off that class a question.
 
+  **Reading a Recipe, it holds three: `← Shelf`, Edit and Versions.** *edit and
+  versions can now move to the top, next to the back to shelf button.* And the rule
+  that decides what may join them — **the slot carries ways of *looking* at the thing,
+  the surface keeps what *changes* it** — is `views.recipe/navigation-actions`', because
+  it is that page's rule about its own controls. Publish and Delete stay down in the
+  panel: a destructive control in a row of navigation is a mis-aimed click that costs a
+  Recipe rather than a step.
+
   **And while a Recipe is being edited it holds Save and Cancel, with no way back.**
   *when we go to edit, the save and cancel buttons should go where the back button
   sits and the back button should not be there.* No `← Shelf` is the interesting half
   and it is right: leaving an editor is a question with two answers, and a third
   button that quietly meant *the first one* would be the one a hurried reader pressed.
-  Cancel is the way out, and it lands on the reading, where `← Shelf` is again.
+  Cancel is the way out, and it lands on the reading, where the three are again.
 
-  The two are `state/save-recipe-edit` and `state/cancel-recipe-edit` — the bar holds
-  no editing knowledge at all, not even which field a save may not blank.
+  Save and Cancel are `state/save-recipe-edit` and `state/cancel-recipe-edit` — the bar
+  holds no editing knowledge at all, not even which field a save may not blank — and
+  the reading's three are `views.recipe`'s own components. The slot **places** things;
+  it does not know what any of them do.
 
   Keyed off the page and the mode, not off `focused-surface?`, deliberately: that
   predicate answers *whether* the app's chrome steps aside, and this answers *what
   stands there instead*, which is a different answer for every surface that ever does
-  it — and here, for every mode of one."
-  [page edit?]
+  it — and here, for every mode of one.
+
+  It needs the Recipe's id and gets it from `:recipe-page-id`, which is the same value
+  the page itself is drawn from, so the slot cannot come to be about a different
+  Recipe than the panel under it."
+  [page edit? recipe-id logged-in?]
   [:div.top-bar-left
    (cond
      (and (= :recipe page) edit?)
@@ -95,7 +109,13 @@
        "Cancel"]]
 
      (= :recipe page)
-     [recipe/back-to-shelf]
+     [:<>
+      [recipe/back-to-shelf]
+      ;; Owner-only, and the gate is the panel's: both of these lead somewhere the
+      ;; server refuses anybody else. A visitor keeps `← Shelf` alone, which is the
+      ;; one control on this page that is theirs.
+      (when logged-in?
+        [recipe/navigation-actions {:id recipe-id}])]
 
      :else
      [:div.brand
@@ -105,7 +125,7 @@
 (defn- top-bar []
   (let [app-state @state/*app-state
         {:keys [auth-required? logged-in? show-login? dark-mode page
-                recipe-page-edit?]} app-state
+                recipe-page-edit? recipe-page-id]} app-state
         ;; **On a focused surface the right-hand side keeps the theme toggle and
         ;; nothing else.** *a couple of widgets on the right hand side, of which only
         ;; dark light mode is shown in every view* — so this gates every one of the
@@ -131,7 +151,7 @@
         ;; right-hand side is widgets, and only the theme toggle is in every view.
         chrome? (not (focused-surface? app-state))]
     [:div.top-bar
-     [left-slot page recipe-page-edit?]
+     [left-slot page recipe-page-edit? recipe-page-id logged-in?]
      [:div.top-bar-right
       ;; The Inbox. Owner-only like the other two, and it is the one of the three
       ;; that carries a number: how many of his agents' changes are waiting. The

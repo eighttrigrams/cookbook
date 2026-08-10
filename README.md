@@ -350,9 +350,12 @@ prefix and no title in the slug. The **Page** button in a card's footer goes
 there, and it is the only button that footer has; it is called *Page* rather than
 *Open* because expanding a card is what "open" already means on the shelf.
 
-The page is also where the owner's four actions are — **Publish, Edit, Versions
-and Delete**, in one row under the header, the same four words the card used to
-carry. Deleting from there lands you back on the shelf.
+The page is also where the owner's four actions are — **Publish, Edit, Versions and
+Delete**, the same four words the card used to carry. They sit in two places, by a
+rule worth knowing: **the top bar carries the ways of *looking* at a Recipe and the
+panel keeps what *changes* it.** So ← Shelf, Edit and Versions are up in the bar, and
+Publish and Delete stay in the page, a row away from any button whose worst outcome
+is a wasted step. Deleting lands you back on the shelf.
 
 **And it is where a Recipe is filed.** The Scopes sit under the header as a row of
 chips over the owner's whole Scope list, the ones this Recipe carries lit, and a
@@ -369,6 +372,16 @@ carries **no** Scope picker: filing belongs to the reading, and a save from here
 omits `scope_ids` entirely, so changing the text cannot disturb where the Recipe is
 filed. A visitor who types that address gets the reading, and the query comes off
 the bar.
+
+**A Recipe page is a focused surface, and the top bar says so.** Its left-hand
+slot — the app's name everywhere else — holds that page's own chrome instead:
+**← Shelf**, **Edit** and **Versions** while reading, and **Save** and **Cancel**
+while editing, with no way back offered, since leaving an editor is a question with
+two answers. And the
+right-hand side keeps the **theme toggle and nothing else**: no Inbox, Scopes or
+Settings selector, and no Sign in or Sign out. The owner's configuration surfaces
+are reached from the global view, not from a page about one Recipe — so a visitor
+reading a published Recipe goes through ← Shelf to find Sign in.
 
 The point of all of it is the address. `/recipe/1` can be linked to, bookmarked,
 sent to somebody and **reloaded**: the server answers every `/recipe/…` with the

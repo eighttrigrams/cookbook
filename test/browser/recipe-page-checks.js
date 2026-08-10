@@ -76,6 +76,22 @@
     el.click();
     return el;
   };
+  // What the top bar is holding, by class and by label. A **set** and not a
+  // presence test per control, because the claim these checks make is about what is
+  // and is not up there — a fourth widget appearing on a focused surface has to
+  // redden something.
+  const barSlots = sel => [...document.querySelectorAll(sel + ' > *')]
+    .map(e => (typeof e.className === 'string' && e.className ? e.className.split(' ')[0]
+                                                              : e.tagName.toLowerCase())
+              + (e.textContent ? ':' + e.textContent.trim() : ''));
+  // Typing into a controlled input. React tracks the value on the node, so setting
+  // `.value` directly is not seen — the prototype's setter plus an `input` event is
+  // what a keystroke looks like from in here.
+  const type = (el, v) => {
+    if (!el) throw new Error('nothing to type into');
+    Object.getOwnPropertyDescriptor(el.constructor.prototype, 'value').set.call(el, v);
+    el.dispatchEvent(new Event('input', {bubbles: true}));
+  };
 
   const runner = () => {
     const R = [], notes = [];
@@ -127,6 +143,11 @@
       const badgesIn = root => [...(root?.querySelectorAll(BADGES) || [])]
         .map(e => e.className.split(' ')[0]).sort();
       const cardBadges = badgesIn(cardFor(SUBJECT)?.querySelector('.card-header'));
+      // and what the top bar holds *here*, for check 22 — captured on the shelf
+      // because that is the surface it is being compared against, the way check 6
+      // captures the card's badges before it leaves for the page
+      const barOnTheShelf = {left: barSlots('.top-bar-left'),
+                             right: barSlots('.top-bar-right')};
       await step('collapse it again', () => clickIn(cardFor(SUBJECT), '.card-header'));
 
       // 13. **the card's footer is one button.** Publish, Edit, Versions and Delete
@@ -197,25 +218,78 @@
       // 14. **and the four are here instead**, which is the other half of 13: the
       //     removal alone would have made publishing, editing, version-viewing and
       //     deleting unreachable in the whole UI, since the card footer was the only
-      //     caller of all four `state/start-*` fns. Asserted as the *set* of labels,
-      //     so a fifth control appearing in the row reddens this too.
+      //     caller of all four `state/start-*` fns. That is still the point.
       //
-      //     SUBJECT is published, so the expected set is the three: Publish is
-      //     conditional on the latch, exactly as it was on the card. The row's own
-      //     `published` flag is in the evidence, so a run against an unpublished
-      //     SUBJECT says why it wants four rather than looking arbitrary.
-      await check('14 the Recipe page carries the four actions, Publish by the latch', () => {
-        const labels = [...document.querySelectorAll('.recipe-page-actions button')]
+      //     **They live in two containers now, and this check has to span both.** The
+      //     page's own rule put the ways of *looking* at a Recipe in the top bar's
+      //     left slot — `← Shelf`, Edit, Versions — and kept what *changes* it in the
+      //     panel: Publish, Delete. A set assertion that looked at one container would
+      //     go green with the other one empty, which is precisely the unreachability
+      //     this check exists to catch. So: set equality in **each** half, so a fifth
+      //     control appearing in either reddens it, plus the four-across-two as the
+      //     claim that survives however they are arranged next.
+      //
+      //     SUBJECT is published, so Publish is absent — conditional on the latch,
+      //     exactly as it was on the card. The row's own flag is in the evidence, so a
+      //     run against an unpublished SUBJECT says why it wanted four rather than
+      //     looking arbitrary.
+      await check('14 the four actions are reachable across the slot and the panel', () => {
+        const labelsIn = sel => [...document.querySelectorAll(sel + ' button')]
           .map(b => b.textContent.trim());
         const published = subject.published === 1;
-        const expected = published ? ['Edit', 'Versions', 'Delete']
-                                   : ['Publish', 'Edit', 'Versions', 'Delete'];
+        const inTheSlot = labelsIn('.top-bar-left');
+        const inThePanel = labelsIn('.recipe-page-actions');
+        const expectedSlot = ['← Shelf', 'Edit', 'Versions'];
+        const expectedPanel = published ? ['Delete'] : ['Publish', 'Delete'];
         const danger = [...document.querySelectorAll('.recipe-page-actions button.danger')]
           .map(b => b.textContent.trim());
-        return {pass: labels.join(',') === expected.join(',') && danger.join(',') === 'Delete',
-                evidence: {onThePage: labels, expected, published,
-                           wearingDanger: danger,
+        // the claim that outlives any rearranging of the two containers
+        const allFour = ['Publish', 'Edit', 'Versions', 'Delete']
+          .filter(l => published && l === 'Publish' ? true
+                                                   : inTheSlot.concat(inThePanel).includes(l));
+        return {pass: inTheSlot.join(',') === expectedSlot.join(',')
+                      && inThePanel.join(',') === expectedPanel.join(',')
+                      && danger.join(',') === 'Delete'
+                      && allFour.length === 4,
+                evidence: {inTheSlot, expectedSlot, inThePanel, expectedPanel,
+                           published, wearingDanger: danger,
+                           publishAbsentBecausePublished: published && !inThePanel.includes('Publish'),
                            ownerOnly: stateGet('logged-in?')}};
+      });
+
+      // 22. **on a focused surface the right-hand side keeps the theme toggle and
+      //     nothing else**, and the left slot holds the page's own way out instead of
+      //     the brand. *a couple of widgets on the right hand side, of which only
+      //     dark light mode is shown in every view.*
+      //
+      //     Asserted as the **set** on both sides, against what the same bar held on
+      //     the shelf a moment ago, so that a fourth widget appearing here reddens
+      //     this rather than passing three presence tests. The shelf's own set is
+      //     asserted too — a bar that lost the selectors *everywhere* would otherwise
+      //     look like a pass.
+      //
+      //     Sign in / Sign out is not in either list, and cannot be: dev runs with
+      //     `:dangerously-skip-logins?`, so `auth-required?` is false and that button
+      //     is never rendered on any surface. The rule that it goes with the
+      //     selectors is asserted in check 23's evidence by making the condition, the
+      //     way check 12 does for `caution`.
+      await check('22 a Recipe page keeps the theme toggle and no page selectors', () => {
+        const here = {left: barSlots('.top-bar-left'), right: barSlots('.top-bar-right')};
+        const selectorsHere = ['.inbox-toggle', '.scopes-toggle', '.settings-toggle']
+          .filter(s => !!document.querySelector(s));
+        return {pass: !!page()
+                      && here.right.length === 1
+                      && here.right[0].startsWith('dark-mode-toggle')
+                      && selectorsHere.length === 0
+                      // the slot holds the reading's three and no brand
+                      && here.left.length === 3
+                      && here.left[0].startsWith('secondary')       // ← Shelf
+                      && !document.querySelector('.top-bar-left .brand')
+                      // the shelf had all three, so this is a narrowing and not a loss
+                      && barOnTheShelf.right.length === 4
+                      && barOnTheShelf.left.some(s => s.startsWith('brand')),
+                evidence: {onTheShelf: barOnTheShelf, onTheRecipePage: here,
+                           selectorsStillHere: selectorsHere}};
       });
 
       // 3. Back and Forward. Nothing reloads — every move so far was a pushState —
@@ -258,17 +332,30 @@
       //    one addressable thing in this app; everything else is `/`, and a page
       //    that changed under an address that did not would be the whole point of
       //    this change undone.
+      //
+      //    **Its mechanism changed and its point did not.** It used to press
+      //    `.inbox-toggle` here, twice, and that button is not on a Recipe page any
+      //    more — the page selectors were taken off it deliberately, so the route
+      //    this was asserting no longer exists. The route that replaced it is the
+      //    left slot: `← Shelf` stands where the brand stands everywhere else, and
+      //    it is now the only way out of the page that the bar offers. Which makes
+      //    this check more nearly about its own name than it was.
       await check('5 a top-bar button leaves the page and puts / back in the bar', async () => {
-        clickIn(document, '.inbox-toggle');
-        await until(() => document.querySelector('.inbox'));
-        const onInbox = {path: path(), inbox: !!document.querySelector('.inbox'),
-                         recipePage: !!page()};
-        clickIn(document, '.inbox-toggle');          // the toggle goes back to the shelf
-        await until(() => shelf());
-        return {pass: onInbox.path === '/' && onInbox.inbox && !onInbox.recipePage
-                      && path() === '/' && !!shelf(),
-                evidence: {afterTheInboxButton: onInbox, afterTogglingBack:
-                           {path: path(), shelf: !!shelf()}}};
+        const before = {path: path(), recipePage: !!page(),
+                        inTheSlot: text('.top-bar-left'),
+                        // the button this used to press, gone from here on purpose
+                        inboxToggle: !!document.querySelector('.inbox-toggle')};
+        clickIn(document.querySelector('.top-bar-left'), '.recipe-page-back');
+        await until(() => shelf() && path() === '/');
+        return {pass: before.recipePage && before.inboxToggle === false
+                      && path() === '/' && !!shelf() && !page()
+                      // and the slot is the brand again, which is the other half of
+                      // the same move
+                      && !!document.querySelector('.top-bar-left .brand'),
+                evidence: {onThePage: before,
+                           afterTheSlotsButton: {path: path(), shelf: !!shelf(),
+                                                 recipePage: !!page(),
+                                                 inTheSlot: text('.top-bar-left')}}};
       });
 
       // and back onto the Recipe page, which is where 16 and 17 start and where the
@@ -290,7 +377,7 @@
       //     a reason that has nothing to do with what they assert.
       await check('16 Edit goes to ?edit=true, prefilled, and Cancel comes back', async () => {
         const editUrl = url + '?edit=true';
-        clickIn(document, '.recipe-page-actions button', 'Edit');
+        clickIn(document.querySelector('.top-bar-left'), 'button', 'Edit');
         const form = await until(() => document.querySelector('.recipe-page-edit'));
         const inEditor = {
           bar: path() + location.search,
@@ -304,7 +391,8 @@
           modal: !!document.querySelector('.modal-backdrop'),
           versionBadgeInTheHeader: text('.version-badge'),
           readingGone: !document.querySelector('.recipe-page-body')};
-        clickIn(form.querySelector('.recipe-page-edit-actions'), 'button.secondary', 'Cancel');
+        // Cancel is in the top bar's left slot now, not under the form
+        clickIn(document.querySelector('.top-bar-left'), '.recipe-edit-cancel');
         await until(() => document.querySelector('.recipe-page-body'));
         const afterCancel = {bar: path() + location.search,
                              flag: stateGet('recipe-page-edit?'),
@@ -327,7 +415,7 @@
       //     leaves this red while 16 stays green.
       await check('17 Back leaves the editor and Forward returns to it', async () => {
         const editUrl = url + '?edit=true';
-        clickIn(document, '.recipe-page-actions button', 'Edit');
+        clickIn(document.querySelector('.top-bar-left'), 'button', 'Edit');
         await until(() => document.querySelector('.recipe-page-edit'));
         history.back();
         await until(() => document.querySelector('.recipe-page-body') && path() + location.search === url);
@@ -339,7 +427,7 @@
         const afterForward = {bar: path() + location.search, flag: stateGet('recipe-page-edit?'),
                               form: !!document.querySelector('.recipe-page-edit'),
                               title: document.querySelector('.recipe-page-edit-title')?.value};
-        clickIn(document.querySelector('.recipe-page-edit-actions'), 'button.secondary', 'Cancel');
+        clickIn(document.querySelector('.top-bar-left'), '.recipe-edit-cancel');
         await until(() => document.querySelector('.recipe-page-body'));
         return {pass: afterBack.bar === url && afterBack.flag === false
                       && afterBack.reading && !afterBack.form
@@ -349,6 +437,97 @@
                       && path() + location.search === url,
                 evidence: {afterBack, afterForward, expectedEditUrl: editUrl,
                            leftOn: path() + location.search}};
+      });
+
+      // 23. **the slot holds the mode's controls, and only them.** Reading: `← Shelf`,
+      //     Edit and Versions — *edit and versions can now move to the top, next to
+      //     the back to shelf button*. Editing: Save and Cancel, and *the back button
+      //     should not be there*. The absent `← Shelf` is the
+      //     half worth asserting: leaving an editor is a question with two answers,
+      //     and a third button quietly meaning one of them is the one a hurried
+      //     reader presses.
+      //
+      //     Both directions, in one check, because either half alone passes for a bar
+      //     that never changes: a slot stuck on `← Shelf` fails the second reading and
+      //     a slot stuck on Save fails the first.
+      await check('23 the slot is ← Shelf while reading and Save+Cancel while editing',
+        async () => {
+          const slotLabels = () => [...document.querySelectorAll('.top-bar-left button')]
+            .map(b => b.textContent.trim());
+          const reading = {slot: slotLabels(),
+                           back: !!document.querySelector('.recipe-page-back'),
+                           save: !!document.querySelector('.recipe-edit-save'),
+                           cancel: !!document.querySelector('.recipe-edit-cancel')};
+          clickIn(document.querySelector('.top-bar-left'), 'button', 'Edit');
+          await until(() => document.querySelector('.recipe-page-edit'));
+          const editing = {slot: slotLabels(),
+                           back: !!document.querySelector('.recipe-page-back'),
+                           save: !!document.querySelector('.recipe-edit-save'),
+                           cancel: !!document.querySelector('.recipe-edit-cancel'),
+                           saveEnabled: !document.querySelector('.recipe-edit-save').disabled,
+                           // and no actions row left under the form
+                           actionsUnderTheForm:
+                             !!document.querySelector('.recipe-page-edit-actions')};
+          clickIn(document.querySelector('.top-bar-left'), '.recipe-edit-cancel');
+          await until(() => document.querySelector('.recipe-page-body'));
+          const backToReading = {slot: slotLabels(),
+                                 back: !!document.querySelector('.recipe-page-back')};
+          return {pass: reading.back && !reading.save && !reading.cancel
+                        && reading.slot.join(',') === '← Shelf,Edit,Versions'
+                        && editing.save && editing.cancel && !editing.back
+                        && editing.slot.join(',') === 'Save,Cancel'
+                        // and the ways of looking at it go with the way out: an
+                        // editor is not a place to press Versions from
+                        && !editing.slot.includes('Edit')
+                        && !editing.slot.includes('Versions')
+                        && editing.saveEnabled && !editing.actionsUnderTheForm
+                        && backToReading.back
+                        && backToReading.slot.join(',') === '← Shelf,Edit,Versions',
+                  evidence: {reading, editing, backToReading}};
+        });
+
+      // 24. **Cancel does not keep the draft.** The draft is app-state now, so
+      //     abandoning an edit is a thing that has to be *undone* rather than a
+      //     closure going out of scope with the component — and it is undone in
+      //     `show-page!`, on every page move, beside the Scopes page's dialogs.
+      //
+      //     Typed into and then abandoned, and the assertion is what the *second*
+      //     visit shows: a draft that survived would put the abandoned title back in
+      //     the field, and a reader would save it without ever having meant to. It
+      //     also asserts the heading did not move while typing, which is the
+      //     "what is saved over what you are about to save" reading.
+      //
+      //     Nothing is saved, so `shelf()` still writes nothing.
+      await check('24 Cancel abandons the draft, and the next visit shows the Recipe',
+        async () => {
+          const stored = (stateGet('details') || {})[subject.id] || {};
+          clickIn(document.querySelector('.top-bar-left'), 'button', 'Edit');
+          await until(() => document.querySelector('.recipe-page-edit'));
+          const typed = 'ABANDONED — this must not survive a Cancel';
+          type(document.querySelector('.recipe-page-edit-title'), typed);
+          await until(() => (stateGet('recipe-draft') || {}).title === typed);
+          const whileTyping = {draft: stateGet('recipe-draft'),
+                               field: document.querySelector('.recipe-page-edit-title').value,
+                               headingStillStored:
+                                 text('.recipe-page-title') === (stored.title || '').trim()};
+          clickIn(document.querySelector('.top-bar-left'), '.recipe-edit-cancel');
+          await until(() => document.querySelector('.recipe-page-body'));
+          const afterCancel = {draft: stateGet('recipe-draft'),
+                               title: text('.recipe-page-title')};
+          clickIn(document.querySelector('.top-bar-left'), 'button', 'Edit');
+          await until(() => document.querySelector('.recipe-page-edit'));
+          const secondVisit = {field: document.querySelector('.recipe-page-edit-title').value,
+                               draft: stateGet('recipe-draft')};
+          clickIn(document.querySelector('.top-bar-left'), '.recipe-edit-cancel');
+          await until(() => document.querySelector('.recipe-page-body'));
+          return {pass: whileTyping.field === typed
+                        && whileTyping.headingStillStored
+                        && Object.keys(afterCancel.draft || {}).length === 0
+                        && secondVisit.field === stored.title
+                        && Object.keys(secondVisit.draft || {}).length === 0
+                        && text('.recipe-page-title') === (stored.title || '').trim(),
+                  evidence: {storedTitle: stored.title, typed, whileTyping, afterCancel,
+                             secondVisit}};
       });
 
       notes.push('reload ' + location.origin + url + ' and run coldLoad(), then '
@@ -407,7 +586,10 @@
           const before = (stateGet('recipes') || []).length;
           c.swap_BANG_(st._STAR_app_state, m => c.assoc(m, kw('recipes'), c.vector()));
           await until(() => (stateGet('recipes') || []).length === 0);
-          const act = label => [...document.querySelectorAll('.recipe-page-actions button')]
+          // Delete is the panel's and Edit is the bar's — the split this page makes
+          // between what changes the Recipe and what only looks at it
+          const act = label => [...document.querySelectorAll(
+              '.recipe-page-actions button, .top-bar-left button')]
             .find(b => b.textContent.trim() === label);
           const modal = () => document.querySelector('.modal-backdrop');
           const form = () => document.querySelector('.recipe-page-edit');
@@ -428,8 +610,7 @@
             prefilledTitle: em?.querySelector('.recipe-page-edit-title')?.value,
             prefilledBody: (em?.querySelector('.recipe-page-edit-body')?.value || '')
               .slice(0, 24)};
-          em && clickIn(em.querySelector('.recipe-page-edit-actions'),
-                        'button.secondary', 'Cancel');
+          em && clickIn(document.querySelector('.top-bar-left'), '.recipe-edit-cancel');
           await until(() => !form());
 
           const d = evidence.deleteConfirmation, e = evidence.editor;
@@ -462,30 +643,52 @@
     // assert still passes if the boot never looks at `.-search`.
     coldEdit: async () => {
       const {check, step, done} = runner();
-      await check('18 a cold load of ?edit=true opens the editor, not the reading',
+      //     **And it comes up prefilled, asserted field by field against the stored
+      //     row.** That half was `!!title` and is now an equality on all four,
+      //     because this is the case where a draft *seeded* from the Recipe breaks:
+      //     seeding needs a moment when the row is present and the page is in edit
+      //     mode, and at this address the navigation happens first and the row lands
+      //     a round trip later. A seed that fired too early leaves the fields empty,
+      //     and an empty editor looks exactly like a Recipe with no content — which
+      //     `!!title` would have caught and `title === ''` on a blank Recipe would
+      //     not. The draft is a *diff* over the row instead, so there is no seed to
+      //     fire at all; `:recipe-draft` being `{}` here is that, observed.
+      await check('18 a cold load of ?edit=true opens the editor, prefilled',
         async () => {
           const form = await until(() => document.querySelector('.recipe-page-edit'), 8000);
           const id = Number(path().split('/')[2]);
+          const row = (stateGet('details') || {})[id] || {};
+          const onScreen = {
+            title: form?.querySelector('.recipe-page-edit-title')?.value,
+            useful_when: form?.querySelectorAll('input')[1]?.value,
+            tags: form?.querySelector('.recipe-page-edit-tags')?.value,
+            description: form?.querySelector('.recipe-page-edit-body')?.value};
+          const stored = {title: row.title || '', useful_when: row.useful_when || '',
+                          tags: row.tags || '', description: row.description || ''};
+          const matches = Object.keys(stored).filter(k => onScreen[k] === stored[k]);
           return {pass: !!form && !!page() && !shelf()
                         && location.search === '?edit=true'
                         && stateGet('recipe-page-edit?') === true
                         && stateGet('recipe-page-id') === id
                         && stateGet('recipe-page-status') === 'found'
                         && !document.querySelector('.recipe-page-body')
-                        && !!form.querySelector('.recipe-page-edit-title')?.value,
+                        && matches.length === 4
+                        && !!stored.title
+                        && Object.keys(stateGet('recipe-draft') || {}).length === 0,
                   evidence: {bar: path() + location.search,
                              editorRendered: !!form,
                              readingRendered: !!document.querySelector('.recipe-page-body'),
                              flag: stateGet('recipe-page-edit?'),
                              status: stateGet('recipe-page-status'),
                              recipePageId: stateGet('recipe-page-id'), askedFor: id,
-                             prefilledTitle:
-                               form?.querySelector('.recipe-page-edit-title')?.value}};
+                             onScreen, stored, fieldsThatMatch: matches,
+                             draftIsEmptyBecauseNothingIsSeeded:
+                               stateGet('recipe-draft')}};
         });
       // leave the reading up rather than a form nobody asked to fill in
       await step('leave the editor', async () => {
-        const actions = document.querySelector('.recipe-page-edit-actions');
-        actions && clickIn(actions, 'button.secondary', 'Cancel');
+        const slot = document.querySelector('.top-bar-left');
+        slot?.querySelector('.recipe-edit-cancel') && clickIn(slot, '.recipe-edit-cancel');
         await until(() => document.querySelector('.recipe-page-body'));
       });
       return done({});
