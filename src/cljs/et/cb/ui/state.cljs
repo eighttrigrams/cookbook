@@ -69,6 +69,17 @@
            ;; address**, never toggled: `sync-from-url!` is what reads it, which is
            ;; what makes Back and Forward move between the two modes.
            :recipe-page-edit? false
+           ;; What the owner has **changed** in the editor, and only that: a map of
+           ;; the content fields he has touched, `{}` when he has touched none. The
+           ;; four fields used to be component-local `r/atom`s, which a Save button in
+           ;; the top bar cannot see — so the draft is here, where `:publishing`,
+           ;; `:diffing` and `:showing-provenance?` already are.
+           ;;
+           ;; **Changes and not a copy**, which is `recipe-edit-fields`' whole point:
+           ;; an untouched field is not in here at all and resolves to what is stored,
+           ;; so there is no seeding step to run at the wrong moment. Cleared on every
+           ;; page move by `show-page!`, beside the Scopes page's two dialogs.
+           :recipe-draft {}
            ;; A filing save that is out on the wire, and what the owner has asked
            ;; for since — `nil`, or `{:id :wanted :sent}`. One value and not three
            ;; keys, for the reason `:diffing`/`:diffing-proposal` are written
@@ -152,6 +163,14 @@
                           (= recipe-id recipe-page-id)
                           (= :found recipe-page-status))]
     (swap! *app-state assoc :page page :editing-scope nil :deleting-scope nil
+           ;; **And the editor's draft, for the Scopes dialogs' reason exactly.** The
+           ;; only thing that fills it is a form on one page, so a draft that outlived
+           ;; a move would be an edit nobody could see waiting to reappear — and this
+           ;; is *every* way edit mode can end, in one place: Cancel, a successful
+           ;; Save, a top-bar button, Back, Forward and a fresh load all come through
+           ;; here. Three handlers remembering to clear it would have been three
+           ;; chances not to.
+           :recipe-draft {}
            :showing-provenance? false
            :recipe-page-id (when (= :recipe page) recipe-id)
            :recipe-page-edit? (and (= :recipe page) (boolean edit?))
@@ -992,7 +1011,7 @@
   "Sends `modified_at` from the row we last read, so a save that raced somebody
   else comes back 409 instead of quietly winning. That guard covers the Scope
   associations too — the server moves `modified_at` when the filing changes,
-  precisely so this one field still speaks for everything the modal sends."
+  precisely so this one field still speaks for everything the form sends."
   [id fields on-success]
   (let [known (get-in @*app-state [:details id])]
     (api/put-json (str "/api/recipes/" id)
@@ -1007,6 +1026,88 @@
         (fetch-inbox)
         (when on-success (on-success)))
       (err-handler "Could not save"))))
+
+;; ---------------------------------------------------------------------------
+;; the editor's draft
+;;
+;; The four content fields of the Recipe page's `?edit=true` mode. They were
+;; component-local `r/atom`s, which was fine while Save was inside the form and
+;; impossible once Save moved into the top bar: the bar cannot see a closure in a
+;; page. So the draft is app-state, like every other piece of view state here.
+
+(def ^:private editable-fields
+  "The four the editor writes, in the order the form shows them. Named once, because
+  three things read this list — what the form draws, what `recipe-edit-fields`
+  resolves and what a save sends — and a fourth field added to two of the three would
+  be a field you could type into and not save.
+
+  `scope_ids` is deliberately **not** among them. The filing is the reading's, saved
+  per chip, and an omitted key keeps it: see `views.recipe/editor`."
+  [:title :useful_when :tags :description])
+
+(defn recipe-edit-fields
+  "What the editor is showing: **the stored Recipe under whatever he has changed.**
+
+  `:recipe-draft` holds only touched fields, so this is one `merge` and there is
+  **no seeding step at all** — which is the point, and it is what makes the cold load
+  work. Seeding a copy of the row into the draft needs a moment when the row is
+  present *and* the page is in edit mode, and those two arrive in either order:
+  pressing Edit has the row already and never fetches, while `/recipe/<id>?edit=true`
+  typed into the bar navigates first and gets the row from `fetch-recipe-page!` a
+  round trip later. One writer that covers both is possible but fiddly; a draft that
+  is a *diff* has nothing to run at the wrong moment, and an editor whose fields came
+  up empty because a seed fired too early looks exactly like a Recipe with no content.
+
+  `get` with a default and not `or`, because the default has to lose to an empty
+  string: clearing the title puts `\"\"` in the draft and that is a value he typed, not
+  an absence. Only a key that is *not there* falls through to the row.
+
+  The row is normalised to `\"\"` here rather than at four inputs — a controlled input
+  handed nil is React's uncontrolled-input warning, and the API leaves `tags` empty
+  rather than absent, so this is belt and braces on one line."
+  []
+  (let [{:keys [details recipe-page-id recipe-draft]} @*app-state
+        recipe (get details recipe-page-id)]
+    (into {} (map (fn [k] [k (get recipe-draft k (or (get recipe k) ""))]))
+          editable-fields)))
+
+(defn set-recipe-draft-field
+  "One keystroke. Only touched fields go in, which is what `recipe-edit-fields`
+  reads back out."
+  [k v]
+  (swap! *app-state assoc-in [:recipe-draft k] v))
+
+(defn recipe-edit-savable?
+  "Whether Save may fire: a title that is not blank. The route answers 400 to a blank
+  one, so this is the client agreeing with the server rather than guessing at a rule
+  of its own.
+
+  In `state` and not in the bar, because the bar is chrome: it should not have to know
+  which of a Recipe's fields is the required one."
+  []
+  (not (str/blank? (:title (recipe-edit-fields)))))
+
+(defn save-recipe-edit
+  "Save the draft and go back to the reading.
+
+  Sends the four resolved fields and **not `scope_ids`** — *a field you leave out
+  keeps its current value*, which is what stops a content save from disturbing a
+  filing the other mode owns. `update-recipe` adds the `modified_at` guard.
+
+  `go-to-page` on success, which also clears the draft, so the reading that comes up
+  is drawn from the row the response cached and not from what was typed."
+  []
+  (let [id (:recipe-page-id @*app-state)]
+    (when (and id (recipe-edit-savable?))
+      (update-recipe id (recipe-edit-fields) #(go-to-page :recipe id)))))
+
+(defn cancel-recipe-edit
+  "Leave the editor without saving. The draft is dropped by `show-page!` on the way
+  through, so this is one call and not a call plus a cleanup — and going back into the
+  editor afterwards shows the stored Recipe rather than the abandoned edit."
+  []
+  (when-let [id (:recipe-page-id @*app-state)]
+    (go-to-page :recipe id)))
 
 ;; ---------------------------------------------------------------------------
 ;; the filing

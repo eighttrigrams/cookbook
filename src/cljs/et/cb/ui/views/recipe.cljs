@@ -52,8 +52,7 @@
   *listing*, and from this page it would be a filter over a page the reader is not
   looking at. A chip's plain click already means something here, which is the other
   half of why there is nothing for a modifier to add."
-  (:require [reagent.core :as r]
-            [clojure.string :as str]
+  (:require [clojure.string :as str]
             [et.cb.ui.markdown :as markdown]
             [et.cb.ui.provenance :as provenance]
             [et.cb.ui.recipe-badges :as recipe-badges]
@@ -356,15 +355,28 @@
        :else [:div.recipe-page-body [markdown/render body]])]))
 
 (defn- editor
-  "The Recipe's four content fields, behind a Save — this page's other mode, at
-  `?edit=true`.
+  "The Recipe's four content fields — this page's other mode, at `?edit=true`, with
+  **Save and Cancel in the top bar's left slot** rather than under the form.
 
-  *instead of an edit modal, lets go to a separate page, with ?edit=true query
-  param*. It was `views.recipe-modals/edit-modal` and it is gone: a form over a page
-  that had to be a fixed overlay outside every containing block, and that could not
-  be linked to, reloaded or left with Back. Here it is the same Recipe at the same
-  address in a second mode, so all three of those come for free from
-  `state/sync-from-url!`.
+  *instead of an edit modal, lets go to a separate page, with ?edit=true query param*,
+  and then *when we go to edit, the save and cancel buttons should go where the back
+  button sits and the back button should not be there.* So this draws the fields and
+  nothing else: `core/left-slot` draws the two buttons, and both of them are
+  `state/save-recipe-edit` and `state/cancel-recipe-edit` rather than anything this
+  component owns.
+
+  **Which is why the draft is in app-state.** It was four component-local `r/atom`s,
+  which was right while Save was inside this markup and impossible the moment it left:
+  a button in the bar cannot see a closure in a page. `state/recipe-edit-fields` is
+  the draft resolved against the stored row and it says at length why the draft is a
+  *diff* rather than a copy — the short version is that a copy needs seeding, seeding
+  needs the row, and on a cold load at this address the row arrives after the
+  navigation.
+
+  These stay **controlled** inputs, now against app-state: every keystroke is a
+  `swap!` and the value drawn is always what the state says. A keystroke is still not
+  a save — the reading's Scope chips are this page's only control that saves per
+  gesture.
 
   **The header is drawn above the form, and the version subtitle the modal had is
   gone with it.** The modal said *version 3* because it had no header of its own to
@@ -379,60 +391,33 @@
   **No Scope picker, and that is the whole point of the split.** Filing happens on
   the reading, saves as it is toggled and makes no version; putting a picker here too
   would be one control on two surfaces disagreeing about when it saves. It follows
-  that this form must **omit `scope_ids` entirely** — *a field you leave out keeps
-  its current value* — so a content save cannot disturb the filing. The modal sent
-  the key on every save and had to, because it carried a picker whose set the owner
-  might just have emptied on purpose; with the picker gone, sending it would be the
-  bug and omitting it is the fix.
-
-  Local ratoms and one `update-recipe` at the end, as the modal had: a keystroke is
-  not a save, and this page's other control is the one that saves per gesture. Save
-  is dead on a blank title, which is the 400 this route answers — refusing it here
-  is the client agreeing with the server rather than guessing.
-
-  Cancel and a successful Save both go through `state/go-to-page :recipe id`, so the
-  bar loses `?edit=true` either way. Nothing is discarded by Cancel that was not
-  already only in this form."
-  [recipe _logged-in?]
-  (let [title (r/atom (or (:title recipe) ""))
-        useful-when (r/atom (or (:useful_when recipe) ""))
-        tags (r/atom (or (:tags recipe) ""))
-        description (r/atom (or (:description recipe) ""))]
-    (fn [recipe logged-in?]
-      (let [id (:id recipe)
-            leave #(state/go-to-page :recipe id)]
-        [:<>
-         [header recipe logged-in?]
-         [:div.recipe-page-edit
-          [:input.recipe-page-edit-title
-           {:type "text" :placeholder "Title"
-            :value @title
-            :on-change #(reset! title (-> % .-target .-value))}]
-          [:input
-           {:type "text" :placeholder "Useful when…"
-            :value @useful-when
-            :on-change #(reset! useful-when (-> % .-target .-value))}]
-          [:input.recipe-page-edit-tags
-           {:type "text" :placeholder recipe-fields/tags-placeholder
-            :value @tags
-            :on-change #(reset! tags (-> % .-target .-value))}]
-          [:textarea.recipe-page-edit-body
-           {:placeholder "The recipe itself"
-            :rows 16
-            :value @description
-            :on-change #(reset! description (-> % .-target .-value))}]
-          [:div.recipe-page-edit-actions
-           [:button {:disabled (str/blank? @title)
-                     ;; No `:scope_ids`. The filing is the reading's and an omitted
-                     ;; key keeps it — see the docstring.
-                     :on-click #(state/update-recipe id
-                                                     {:title @title
-                                                      :useful_when @useful-when
-                                                      :tags @tags
-                                                      :description @description}
-                                                     leave)}
-            "Save"]
-           [:button.secondary {:on-click leave} "Cancel"]]]]))))
+  that a save must **omit `scope_ids` entirely** — *a field you leave out keeps its
+  current value* — so a content save cannot disturb the filing. The modal sent the
+  key on every save and had to, because it carried a picker whose set the owner might
+  just have emptied on purpose; with the picker gone, sending it would be the bug and
+  omitting it is the fix."
+  [recipe logged-in?]
+  (let [{:keys [title useful_when tags description]} (state/recipe-edit-fields)]
+    [:<>
+     [header recipe logged-in?]
+     [:div.recipe-page-edit
+      [:input.recipe-page-edit-title
+       {:type "text" :placeholder "Title"
+        :value title
+        :on-change #(state/set-recipe-draft-field :title (-> % .-target .-value))}]
+      [:input
+       {:type "text" :placeholder "Useful when…"
+        :value useful_when
+        :on-change #(state/set-recipe-draft-field :useful_when (-> % .-target .-value))}]
+      [:input.recipe-page-edit-tags
+       {:type "text" :placeholder recipe-fields/tags-placeholder
+        :value tags
+        :on-change #(state/set-recipe-draft-field :tags (-> % .-target .-value))}]
+      [:textarea.recipe-page-edit-body
+       {:placeholder "The recipe itself"
+        :rows 16
+        :value description
+        :on-change #(state/set-recipe-draft-field :description (-> % .-target .-value))}]]]))
 
 (defn- not-found
   "What an address that names no readable Recipe gets.

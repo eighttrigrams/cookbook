@@ -65,20 +65,47 @@
   what it was and gets rendered *into* here. A `.brand` that sometimes held a button
   would have made every rule keyed off that class a question.
 
-  Keyed off the page and not off `focused-surface?`, deliberately: that predicate
-  answers *whether* the app's chrome steps aside, and this answers *what stands there
-  instead*, which is a different answer for every surface that ever does it."
-  [page]
+  **And while a Recipe is being edited it holds Save and Cancel, with no way back.**
+  *when we go to edit, the save and cancel buttons should go where the back button
+  sits and the back button should not be there.* No `← Shelf` is the interesting half
+  and it is right: leaving an editor is a question with two answers, and a third
+  button that quietly meant *the first one* would be the one a hurried reader pressed.
+  Cancel is the way out, and it lands on the reading, where `← Shelf` is again.
+
+  The two are `state/save-recipe-edit` and `state/cancel-recipe-edit` — the bar holds
+  no editing knowledge at all, not even which field a save may not blank.
+
+  Keyed off the page and the mode, not off `focused-surface?`, deliberately: that
+  predicate answers *whether* the app's chrome steps aside, and this answers *what
+  stands there instead*, which is a different answer for every surface that ever does
+  it — and here, for every mode of one."
+  [page edit?]
   [:div.top-bar-left
-   (if (= :recipe page)
+   (cond
+     (and (= :recipe page) edit?)
+     [:<>
+      [:button.recipe-edit-save
+       {:disabled (not (state/recipe-edit-savable?))
+        :on-click state/save-recipe-edit
+        :title "Save this Recipe"}
+       "Save"]
+      [:button.secondary.recipe-edit-cancel
+       {:on-click state/cancel-recipe-edit
+        :title "Leave without saving"}
+       "Cancel"]]
+
+     (= :recipe page)
      [recipe/back-to-shelf]
+
+     :else
      [:div.brand
       [:span.brand-mark "▤"]
       [:span.brand-name "Cookbook"]])])
 
 (defn- top-bar []
   (let [app-state @state/*app-state
-        {:keys [auth-required? logged-in? show-login? dark-mode page]} app-state
+        {:keys [auth-required? logged-in? show-login? dark-mode page
+                recipe-page-edit?]} app-state
         ;; **On a focused surface the right-hand side keeps the theme toggle and
         ;; nothing else.** *a couple of widgets on the right hand side, of which only
         ;; dark light mode is shown in every view* — so this gates every one of the
@@ -104,7 +131,7 @@
         ;; right-hand side is widgets, and only the theme toggle is in every view.
         chrome? (not (focused-surface? app-state))]
     [:div.top-bar
-     [left-slot page]
+     [left-slot page recipe-page-edit?]
      [:div.top-bar-right
       ;; The Inbox. Owner-only like the other two, and it is the one of the three
       ;; that carries a number: how many of his agents' changes are waiting. The

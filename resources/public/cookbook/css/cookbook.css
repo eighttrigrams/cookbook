@@ -1147,7 +1147,13 @@ html.dark-mode .inbox-kind.kind-proposed { background: rgba(245, 158, 11, 0.18);
    one field whose value is also the heading, and a save changes both. */
 .recipe-page-edit-title { font-size: 1.05em; font-weight: 600; }
 .recipe-page-edit-body { line-height: 1.55; }
-.recipe-page-edit-actions { display: flex; gap: 8px; margin-top: 4px; }
+
+/* Save and Cancel are in the top bar's left slot, so there is no actions row under
+   the form and no rule for one. They are the bar's ordinary buttons — Save the filled
+   accent, Cancel a `.secondary` — at the size everything else up there is, which is
+   what makes the slot read as one row rather than as a form that has escaped. Only
+   the height is asked for, so the pair matches the toggles on the other side. */
+.recipe-edit-save, .recipe-edit-cancel { padding: 6px 14px; }
 
 /* The owner's four actions, under the header and above the body — `views/recipe`'s
    `found` argues the placement. Left-aligned, where `.card-actions` is pushed right
