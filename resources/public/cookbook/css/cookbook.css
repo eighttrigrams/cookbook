@@ -650,8 +650,8 @@ html.dark-mode .pending-badge { background: rgba(245, 158, 11, 0.18); }
 /* --------------------------------------------------------------------------
    the version viewer
 
-   Full-screen and fixed to the viewport, and rendered outside the cards for the
-   reason the modals are — see the comment at the bottom of `recipes-tab`. It sits
+   Full-screen and fixed to the viewport, and mounted at the app root for the
+   reason the modals are — see `views.recipe-modals`. It sits
    at 25: above the cards and their glass, and **below `.modal-backdrop` at 30**,
    because the dismiss confirmation is now opened from this surface's own header
    and has to land on top of it. That ordering is argued where the modal is.

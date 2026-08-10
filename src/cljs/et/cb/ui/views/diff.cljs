@@ -57,11 +57,12 @@
   `description` is the field being diffed: the only one long enough to warrant a
   merge view, and the one that already goes through the full markdown parser.
 
-  The overlay is full-screen and is rendered outside the cards, for the reason
-  the modals are — see the comment at the bottom of `et.cb.ui.views.recipes`. Being
-  full-screen is a claim about the **mouse** only, so what is behind it is `inert`
-  while it is up: see `inert-behind!`, which is the whole of why this surface is a
-  dialog rather than a panel that happens to cover everything."
+  The overlay is full-screen and is mounted at the app root rather than inside a
+  page, with the Recipe modals and for their reasons — see
+  `et.cb.ui.views.recipe-modals`. Being full-screen is a claim about the **mouse**
+  only, so what is behind it is `inert` while it is up: see `inert-behind!`, which is
+  the whole of why this surface is a dialog rather than a panel that happens to cover
+  everything."
   (:require [clojure.string :as str]
             [reagent.core :as r]
             [et.cb.ui.provenance :as provenance]
@@ -410,8 +411,11 @@
   tree, which `aria-modal` beside it only claims.
 
   Walks up to `body` and inerts the siblings at each level, because the overlay is
-  rendered as a sibling of the page it covers (`inbox-page`, `recipes-tab`) and there
-  is no one container holding everything else.
+  rendered as a sibling of the page it covers — `core/app` mounts it beside
+  `page-body`, next to the top bar and the error banner — and there is no one
+  container holding everything else. Walking rather than inerting one known parent is
+  also what made the move out of the pages a non-event here: this reads the tree it
+  is actually in.
 
   **`.modal-backdrop` is skipped**, and that is the stylesheet's z-index argument in
   focus terms: the dismiss confirmation is opened from this surface's own header and

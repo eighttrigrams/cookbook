@@ -88,38 +88,11 @@
             [et.cb.ui.recipe-badges :as recipe-badges]
             [et.cb.ui.scope-badges :as scope-badges]
             [et.cb.ui.state :as state]
-            [et.cb.ui.views.diff :as diff]))
-
-(def ^:private tags-placeholder "Tags — extra words to find this by")
-
-(defn- scope-picker
-  "Which Scopes this Recipe is filed under, as a row of toggles over the owner's
-  own list. Rendered as nothing at all when he has made no Scopes yet: an empty
-  picker would be a control that cannot do anything, and the place to make one is
-  the Scopes page.
-
-  `selected` is a ratom holding a set of ids, so this component owns no state of
-  its own — the form around it is what sends the set, and reading it back out of a
-  child would be the same fact in two places."
-  [selected]
-  ;; Both derefs happen out here, before the `for`. A deref inside the body of a
-  ;; lazy seq is evaluated after reagent has stopped watching, so the chips would
-  ;; not repaint when one was clicked — and reagent says so at the console rather
-  ;; than silently.
-  (let [scopes (:scopes @state/*app-state)
-        chosen @selected]
-    (when (seq scopes)
-      [:div.scope-picker
-       [:span.scope-picker-label {:title "Categories this Recipe is filed under"}
-        "Scopes"]
-       (for [{:keys [id title description]} scopes]
-         ^{:key id}
-         [:button.scope-chip
-          {:type "button"
-           :class (when (contains? chosen id) "on")
-           :title description
-           :on-click #(swap! selected (fn [s] (if (contains? s id) (disj s id) (conj s id))))}
-          title])])))
+            ;; The picker and the placeholder, borrowed from the Edit form rather
+            ;; than kept here: the Edit modal is mounted at the app root now and
+            ;; must not reach into the shelf to draw itself — see
+            ;; `views.recipe-modals`. This direction is the safe one.
+            [et.cb.ui.views.recipe-modals :as recipe-modals]))
 
 (defn- compose-form []
   (let [title (r/atom "")
@@ -153,7 +126,7 @@
            :on-change #(reset! useful-when (-> % .-target .-value))
            :on-key-down #(when (= (.-key %) "Enter") (submit))}]
          [:input.compose-tags
-          {:type "text" :placeholder tags-placeholder
+          {:type "text" :placeholder recipe-modals/tags-placeholder
            :value @tags
            :on-change #(reset! tags (-> % .-target .-value))
            :on-key-down #(when (= (.-key %) "Enter") (submit))}]
@@ -162,114 +135,8 @@
            :rows 4
            :value @description
            :on-change #(reset! description (-> % .-target .-value))}]
-         [scope-picker scope-ids]
+         [recipe-modals/scope-picker scope-ids]
          [:button {:on-click submit :disabled (str/blank? @title)} "Add"]]))))
-
-(defn- edit-modal
-  "Tags and Scopes sit in here with the three content fields even though a save
-  that touches only them makes no version — the modal is where you edit a Recipe,
-  and which of its fields the version ladder is about is the API's business. The
-  subtitle says the version this is editing, and a filing-only save deliberately
-  leaves that number where it is.
-
-  The Scopes are prefilled from the Recipe's own `:scopes`, which came in with the
-  body when the card was expanded. Sending them on every save is what makes the
-  server's rule work for this client: an omitted `scope_ids` would keep the filing,
-  and this form has a picker showing a set that the owner may just have emptied
-  on purpose."
-  [recipe]
-  (let [title (r/atom (or (:title recipe) ""))
-        useful-when (r/atom (or (:useful_when recipe) ""))
-        tags (r/atom (or (:tags recipe) ""))
-        description (r/atom (or (:description recipe) ""))
-        scope-ids (r/atom (set (map :id (:scopes recipe))))]
-    (fn [recipe]
-      [:div.modal-backdrop {:on-click state/stop-editing}
-       [:div.modal {:on-click #(.stopPropagation %)}
-        [:h2 "Edit"]
-        [:div.modal-subtitle (str "version " (:version recipe))]
-        [:input {:type "text" :placeholder "Title"
-                 :value @title
-                 :on-change #(reset! title (-> % .-target .-value))}]
-        [:input {:type "text" :placeholder "Useful when…"
-                 :value @useful-when
-                 :on-change #(reset! useful-when (-> % .-target .-value))}]
-        [:input.modal-tags {:type "text" :placeholder tags-placeholder
-                            :value @tags
-                            :on-change #(reset! tags (-> % .-target .-value))}]
-        [:textarea.modal-description
-         {:placeholder "The recipe itself"
-          :rows 8
-          :value @description
-          :on-change #(reset! description (-> % .-target .-value))}]
-        [scope-picker scope-ids]
-        [:div.modal-actions
-         [:button {:disabled (str/blank? @title)
-                   :on-click #(state/update-recipe (:id recipe)
-                                                   {:title @title
-                                                    :useful_when @useful-when
-                                                    :tags @tags
-                                                    :description @description
-                                                    :scope_ids (vec @scope-ids)}
-                                                   state/stop-editing)}
-          "Save"]
-         [:button.secondary {:on-click state/stop-editing} "Cancel"]]]])))
-
-(defn- publish-modal
-  "The latch is one-way: nothing in the API takes it back off, so this asks
-  before it fires rather than offering an undo afterwards.
-
-  The confirm button goes dead on the first click. Only the response callback
-  closes this dialog — that is deliberate, so a failed publish can put its error
-  banner somewhere reachable — which leaves the button live for the whole round
-  trip unless something takes it out. Two quick clicks would otherwise send two
-  POSTs, and the second one loses a write race server-side: the card would gain
-  its published badge at the same moment the banner said the publish failed."
-  [_recipe]
-  (let [sending? (r/atom false)]
-    (fn [{:keys [id title]}]
-      [:div.modal-backdrop {:on-click state/stop-publishing}
-       [:div.modal {:on-click #(.stopPropagation %)}
-        [:h2 "Publish this recipe?"]
-        [:div.modal-subtitle title]
-        [:p.modal-note
-         "It becomes readable by anyone who opens Cookbook, and you have put your
-          name to it. There is no unpublish."]
-        [:div.modal-actions
-         [:button.publish-confirm
-          {:disabled @sending?
-           :on-click #(do (reset! sending? true)
-                          (state/publish-recipe id state/stop-publishing))}
-          (if @sending? "Publishing…" "Publish")]
-         [:button.secondary {:on-click state/stop-publishing} "Cancel"]]]])))
-
-(defn- delete-modal
-  "Deleting takes the recipe and every version of it, and no route puts any of
-  it back — so this asks first, the same way publishing does.
-
-  The confirm button goes dead on the first click, and here the latch matters
-  more than it does for publishing. Only the response callback closes this
-  dialog, so two quick clicks would send two DELETEs: the first succeeds and
-  the second 404s, raising 'Could not delete' over a delete that in fact went
-  through."
-  [_recipe]
-  (let [sending? (r/atom false)]
-    (fn [{:keys [id title version]}]
-      [:div.modal-backdrop {:on-click state/stop-deleting}
-       [:div.modal {:on-click #(.stopPropagation %)}
-        [:h2 "Delete this recipe?"]
-        [:div.modal-subtitle title]
-        [:p.modal-note
-         (if (= 1 version)
-           "Its one version goes with it, and there is no undo."
-           (str "All " version " versions go with it, and there is no undo."))]
-        [:div.modal-actions
-         [:button.delete-confirm.danger
-          {:disabled @sending?
-           :on-click #(do (reset! sending? true)
-                          (state/delete-recipe id state/stop-deleting))}
-          (if @sending? "Deleting…" "Delete")]
-         [:button.secondary {:on-click state/stop-deleting} "Cancel"]]]])))
 
 (defn- card-body
   "`detail` is nil until the fetch this expansion started comes back.
@@ -514,9 +381,19 @@
     human-only?           "Nothing here has been edited in this UI yet."
     :else                 "No recipes yet."))
 
-(defn recipes-tab []
-  (let [{:keys [recipes search human-only? excluded-scopes logged-in? open details editing
-                publishing deleting diffing]}
+(defn recipes-tab
+  "The shelf, and nothing over it.
+
+  **The overlays used to be mounted from in here and are now at the app root** —
+  the Edit form, the two confirmations and the version viewer, see
+  `views.recipe-modals`. The reason they were outside the cards is the reason they
+  are now outside the page: a card's `backdrop-filter` becomes the containing block
+  for a `position: fixed` overlay, and `.recipe-page` has that same filter, so a
+  modal mounted in a page is pinned to that page. And this page is no longer the
+  only one that opens them, which is what made a per-page mount wrong rather than
+  merely careful."
+  []
+  (let [{:keys [recipes search human-only? excluded-scopes logged-in? open details]}
         @state/*app-state]
     [:div.shelf
      (when logged-in? [compose-form])
@@ -548,22 +425,4 @@
        [:div.empty (empty-message search human-only? excluded-scopes)]
        (for [recipe recipes]
          ^{:key (:id recipe)}
-         [card recipe {:logged-in? logged-in? :open open :details details}]))
-     ;; Outside the cards: a card's backdrop-filter would make it the containing
-     ;; block for the modal's fixed positioning, pinning the modal to that one
-     ;; card instead of to the viewport.
-     (when-let [recipe (get details editing)]
-       [edit-modal recipe])
-     ;; The confirmation only needs the two short fields, which the listing
-     ;; already carries — unlike the Edit modal it never has to fetch a body.
-     (when-let [recipe (first (filter #(= publishing (:id %)) recipes))]
-       [publish-modal recipe])
-     ;; Same again: the question needs the title and the version count, both of
-     ;; which the listing carries, so this one never fetches a body either.
-     (when-let [recipe (first (filter #(= deleting (:id %)) recipes))]
-       [delete-modal recipe])
-     ;; And out here for the same reason, more so: the version viewer is
-     ;; full-screen, so a card's backdrop-filter becoming its containing block
-     ;; would pin a supposedly full-screen overlay to the inside of one card.
-     (when diffing
-       [diff/component])]))
+         [card recipe {:logged-in? logged-in? :open open :details details}]))]))

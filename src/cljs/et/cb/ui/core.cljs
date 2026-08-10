@@ -4,6 +4,7 @@
             [et.cb.ui.state :as state]
             [et.cb.ui.views.inbox :as inbox]
             [et.cb.ui.views.recipe :as recipe]
+            [et.cb.ui.views.recipe-modals :as recipe-modals]
             [et.cb.ui.views.recipes :as recipes]
             [et.cb.ui.views.scopes :as scopes]
             [et.cb.ui.views.settings :as settings]))
@@ -118,7 +119,23 @@
     [:div.main-layout
      [recipes/recipes-tab]]))
 
-(defn app []
+(defn app
+  "The shell: the top bar, the banner, the one page, and the overlays over it.
+
+  **The overlays are the app's and not a page's**, which is the last thing
+  `page-body` needed to be able to keep its promise. They are keyed off global state
+  — `:editing`, `:publishing`, `:deleting`, `:diffing` — and exactly one page is
+  mounted at a time, so a modal mounted inside a page is absent from every other
+  one: a Recipe page's Edit button would have set the state and rendered nothing.
+  Mounted here they stand over whichever page is up, and there is one copy of each
+  rather than one per page that can open it. `views.recipe-modals/overlays` says the
+  rest, including why the Inbox's own confirmation is not among them.
+
+  After `page-body` in the source, which is only tidiness: which of these is on top
+  is the stylesheet's answer and not the DOM's — `.modal-backdrop` at 30 over
+  `.diff-overlay` at 25 over the page — and the argument is written where the
+  z-index is."
+  []
   (let [{:keys [auth-required? logged-in? show-login? error page]} @state/*app-state]
     (if (nil? auth-required?)
       [:div.loading "Loading…"]
@@ -128,7 +145,8 @@
          [:div.error error [:button.error-dismiss {:on-click state/clear-error} "×"]])
        (when (and auth-required? (not logged-in?) show-login?)
          [login-form])
-       [page-body logged-in? page]])))
+       [page-body logged-in? page]
+       [recipe-modals/overlays]])))
 
 (defonce root (rdomc/create-root (.getElementById js/document "app")))
 

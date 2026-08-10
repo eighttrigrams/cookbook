@@ -65,8 +65,7 @@
   and a Recipe that is gone or filed under nothing simply has none."
   (:require [reagent.core :as r]
             [et.cb.ui.scope-badges :as scope-badges]
-            [et.cb.ui.state :as state]
-            [et.cb.ui.views.diff :as diff]))
+            [et.cb.ui.state :as state]))
 
 (def ^:private kind-labels
   "What each kind is called on a row. The words are the API's own — an agent reads
@@ -365,28 +364,31 @@
           ^{:key (:id entry)} [row entry])])]))
 
 (defn inbox-page
-  "The panel and the viewer, as **siblings**.
+  "The panel and the dismiss confirmation, as **siblings**.
 
-  The viewer has to be reachable from here at all — it used to be rendered only
-  from the shelf, and this page is not the shelf: `page-body` renders exactly one
-  page, so a row that opened `:diffing` while the shelf was not mounted would have
-  set the state and shown nothing. That goes double now: this is the only page from
-  which a proposal can be opened at all.
+  **The viewer is not mounted here any more and that is not a loss of reach.** It
+  used to be rendered from this page *and* from the shelf, because those were the
+  two pages a reader could open it from and `page-body` renders exactly one page —
+  so a row that opened `:diffing` while the only mount was on the shelf would have
+  set the state and shown nothing. `views.recipe-modals/overlays` now mounts it once
+  at the app root, above whichever page is up, which is the same guarantee without a
+  second copy of it to keep in step.
 
-  The confirmation is a sibling of both, and it is above them: Dismiss is a button on
-  the row *and* in the viewer's header, so the modal has to be able to land over a
-  surface that is itself full-screen. `.modal-backdrop` outranks `.diff-overlay` in
-  the stylesheet, which is where that is argued.
+  The confirmation stays here, and it is the one overlay in this app that is a
+  *page's* rather than a Recipe's: it is keyed to an entry in `:inbox`, and the only
+  place an entry can be dismissed from is the page that draws the list. It renders
+  outside `.inbox` rather than inside it, for the reason the Recipe overlays render
+  outside the pages: this block has a `backdrop-filter`, which would make it the
+  containing block for a fixed overlay's positioning and pin it inside the panel.
 
-  And it renders outside `.inbox` rather than inside it, for the reason the Recipe
-  modals render outside the cards: this block has a `backdrop-filter`, which would
-  make it the containing block for the viewer's fixed positioning and pin a
-  full-screen overlay inside the panel."
+  It has to be able to land over the viewer, too — Dismiss is a button on the row
+  *and* in the viewer's header — and that is a matter of z-index and not of DOM
+  order: `.modal-backdrop` outranks `.diff-overlay` in the stylesheet, which is
+  where it is argued, and which is why the viewer moving to the root changes
+  nothing about it."
   []
-  (let [{:keys [diffing inbox dismissing-proposal]} @state/*app-state]
+  (let [{:keys [inbox dismissing-proposal]} @state/*app-state]
     [:<>
      [inbox-block]
      (when-let [entry (first (filter #(= dismissing-proposal (:id %)) inbox))]
-       [dismiss-modal entry])
-     (when diffing
-       [diff/component])]))
+       [dismiss-modal entry])]))
