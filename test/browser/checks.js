@@ -122,11 +122,20 @@ async () => {
   const proposalButtons = [...document.querySelectorAll('.diff-header button')].map(b => b.textContent.trim());
 
   // 11 here rather than at the end, because it is about a viewer that is *open* and
-  // this is where one is. The keyboard cannot leave this surface — asserted as the
-  // census the finding used, because nothing inside the page can send a real Tab: a
-  // synthetic KeyboardEvent does not move focus. focus-probe.js is the keystroke
-  // half, driven from the session.
-  await check('11 the overlay is a dialog and nothing behind it is focusable', () => {
+  // this is where one is. The keyboard cannot leave this surface *for the page* —
+  // asserted as the census the finding used, because nothing inside the page can send
+  // a real Tab: a synthetic KeyboardEvent does not move focus. focus-probe.js is the
+  // keystroke half, driven from the session.
+  //
+  // **This check changed sides, and that is worth more than deleting it.** It used to
+  // assert `topBarInert` and `outside.length === 0` — nothing at all focusable outside
+  // the overlay. Both are now **false by design**: the way off this surface is the top
+  // bar's left slot, so a bar taken out of the tab order would be a dialog whose one
+  // exit the keyboard cannot reach. `inert-behind!` exempts `.top-bar` and nothing
+  // else, so what this asserts now is the *exact* set outside the overlay — the back
+  // button and the theme toggle — rather than an empty one. An exemption that widened
+  // to a third control, or a page that stopped being inert, reddens this.
+  await check('11 the overlay is a dialog, and outside it only the bar is reachable', () => {
     const ov = overlay();
     const focusable = [...document.querySelectorAll(
       'button, a[href], input, select, textarea, [tabindex]')]
@@ -135,18 +144,60 @@ async () => {
       // <link> in <head> matches a[href]-ish selectors in some engines and is not
       // focusable; anything not rendered cannot be tabbed to either.
       .filter(e => e.tagName !== 'LINK' && (e.offsetParent !== null || e === document.activeElement));
+    const bar = document.querySelector('.top-bar');
+    const outsideNames = outside.map(e => (e.className || e.tagName).split(' ')[0]
+                                          + ':' + (e.textContent || '').trim().slice(0, 12));
     return {pass: ov.getAttribute('role') === 'dialog'
                   && ov.getAttribute('aria-modal') === 'true'
                   && document.querySelector('.inbox').inert === true
-                  && outside.length === 0
+                  // the bar is reachable, and it is the *only* thing that is
+                  && bar.inert !== true
+                  && outside.length === 2
+                  && outside.every(e => bar.contains(e))
+                  && outside.some(e => e.classList.contains('diff-back'))
+                  && outside.some(e => e.classList.contains('dark-mode-toggle'))
                   && ov.contains(document.activeElement),
             evidence: {role: ov.getAttribute('role'), ariaModal: ov.getAttribute('aria-modal'),
                        ariaLabel: ov.getAttribute('aria-label'),
                        inboxInert: document.querySelector('.inbox').inert,
-                       topBarInert: document.querySelector('.top-bar')?.inert,
-                       focusableOutsideOverlay: outside.map(e => e.tagName + '.' + e.className),
+                       topBarInert: bar.inert,
+                       barIsExemptNotMarked: !bar.hasAttribute('data-inert-behind-viewer'),
+                       focusableOutsideOverlay: outsideNames,
+                       allOfThemInTheBar: outside.every(e => bar.contains(e)),
                        focusStartsInside: ov.contains(document.activeElement),
                        activeElement: document.activeElement.tagName + '.' + document.activeElement.className}};
+  });
+
+  // 13. **the viewer's chrome is the bar's now.** *for the versions view that instead
+  //     of an x there will be a back button (going back to either the inbox or to tha
+  //     Page page, depending where we came from).* Three facts about one move, so one
+  //     check: the slot says where back *is*, the right-hand side is down to the one
+  //     widget in every view, and the ✕ is nowhere.
+  //
+  //     `← Inbox` and not `← Recipe` because this suite opens the viewer from the
+  //     queue. The label is derived from `:page` rather than stored, so this is also
+  //     the assertion that the derivation reads the right end of it; the Recipe origin
+  //     is `recipe-page-checks.js` 25, since that surface is that file's subject.
+  await check('13 the viewer wears a back button in the bar, and no ✕', () => {
+    const slot = [...document.querySelectorAll('.top-bar-left button')]
+      .map(b => b.textContent.trim());
+    const right = [...document.querySelectorAll('.top-bar-right > *')]
+      .map(e => (e.className || e.tagName).split(' ')[0]);
+    const xs = [...document.querySelectorAll('.diff-overlay button')]
+      .filter(b => b.textContent.trim() === '✕');
+    return {pass: slot.length === 1 && slot[0] === '← Inbox'
+                  && !!document.querySelector('.top-bar-left .diff-back')
+                  && right.length === 1 && right[0] === 'dark-mode-toggle'
+                  && xs.length === 0 && !document.querySelector('.diff-close')
+                  // and the surface starts below the bar rather than over it
+                  && document.querySelector('.diff-overlay').getBoundingClientRect().top
+                     >= document.querySelector('.top-bar').getBoundingClientRect().bottom,
+            evidence: {slot, right, closeButtonsFound: xs.length,
+                       page: stateGet('page'),
+                       overlayTop: Math.round(document.querySelector('.diff-overlay')
+                                              .getBoundingClientRect().top),
+                       barBottom: Math.round(document.querySelector('.top-bar')
+                                             .getBoundingClientRect().bottom)}};
   });
 
   // 4. dismiss from the viewer asks first, and the question lands on top
@@ -170,10 +221,36 @@ async () => {
     clickIn(document.querySelector('.modal-actions'), 'button.secondary'));
   await until(() => !modal());
 
+  // 14. **back lands where you came from, with the queue as it was.** The overlay was
+  //     kept an overlay precisely so this needs no recorded origin: `:diffing` is
+  //     independent of `:page`, so the Inbox is still underneath and `stop-diff` alone
+  //     puts you back on it. What that buys is asserted here rather than assumed —
+  //     the Inbox, not the shelf, and the same number of rows, since a round trip
+  //     through a viewer must not refetch the queue out from under him.
+  const rowsBeforeTheViewer = rows().length;
+  await check('14 the slot\'s button lands back on the Inbox, queue unchanged', async () => {
+    clickIn(document.querySelector('.top-bar-left'), '.diff-back');
+    await until(() => !overlay());
+    await wait(200);
+    return {pass: !overlay() && stateGet('page') === 'inbox'
+                  && !!document.querySelector('.inbox')
+                  && rows().length === rowsBeforeTheViewer
+                  && !document.querySelector('.shelf')
+                  && !stateGet('diffing')
+                  // and the bar is the Inbox's again
+                  && !!document.querySelector('.top-bar-left .brand')
+                  && !document.querySelectorAll('[data-inert-behind-viewer]').length,
+            evidence: {page: stateGet('page'), inboxDrawn: !!document.querySelector('.inbox'),
+                       shelfDrawn: !!document.querySelector('.shelf'),
+                       rows: rows().length, rowsBeforeTheViewer,
+                       diffing: stateGet('diffing'),
+                       slot: [...document.querySelectorAll('.top-bar-left > *')]
+                         .map(e => (e.className || e.tagName).split(' ')[0]),
+                       inertReleased: !document.querySelectorAll('[data-inert-behind-viewer]').length}};
+  });
+
   // 5. one presentation — the proposal overlay and the version overlay are the same
-  //    markup. Close, open a `modified` row, compare the shells.
-  await step('close the viewer', () => clickIn(document, '.diff-close'));
-  await until(() => !overlay());
+  //    markup. Open a `modified` row and compare the shells.
   await step('open a modified entry', () => {
     const modRow = rows().find(r => r.querySelector('.inbox-kind')?.textContent === 'modified');
     if (!modRow) throw new Error('no modified entry in the dev queue — see README');
@@ -183,7 +260,9 @@ async () => {
   await wait(300);
   await check('5 one presentation: both readings are the same markup', () => {
     const versionShell = shellClasses();
-    const chrome = ['diff-overlay', 'diff-page', 'diff-header', 'diff-close',
+    // `diff-close` was in this list and the ✕ is gone — the way off the surface is
+    // the top bar's left slot, which is not part of either reading's markup.
+    const chrome = ['diff-overlay', 'diff-page', 'diff-header',
                     'diff-recipe-title', 'diff-version-label', 'diff-mode-toggle',
                     'diff-meta', 'diff-meta-side', 'diff-meta-version', 'diff-meta-when',
                     'diff-meta-row', 'diff-meta-key', 'diff-meta-value', 'diff-editor'];
@@ -195,7 +274,7 @@ async () => {
                        onlyInVersionReading: versionShell.filter(s => !proposalShell.includes(s)),
                        onlyInProposalReading: proposalShell.filter(s => !versionShell.includes(s))}};
   });
-  await step('close the viewer', () => clickIn(document, '.diff-close'));
+  await step('close the viewer', () => clickIn(document.querySelector('.top-bar-left'), '.diff-back'));
   await until(() => !overlay());
 
   // 6. dismiss from the row asks first too

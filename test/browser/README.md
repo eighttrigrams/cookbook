@@ -50,7 +50,13 @@ The suite assumes the dev queue also holds at least one `modified` entry, which 
 A check's **number is its name and not its position**. 1–9 keep the numbers they had
 when the mutation table was first published, so the two can be compared; 10, 11 and 12
 were added afterwards, and 11 sits in the middle of the file because it is about a
-viewer that is open and that is where one is.
+viewer that is open and that is where one is. **13 and 14** came with the versions
+view joining the shell — the ✕ becoming a back button in the top bar's left slot — and
+they sit beside 11 and 4 for its reason: both are about a viewer that is *up*.
+
+14 replaced a bare `close the viewer` step. Closing was something this suite did in
+order to get to the next check; now that where you land is a claim, it is a check, and
+the step it grew out of is still doing its old job of moving the run along.
 
 
 ## The two house rules every wait here follows
@@ -79,6 +85,22 @@ a table in a document goes stale silently, and this list is the part that does n
 | **M6** | put the removed `fetch-inbox` guard back (it cannot fire; see the commit that took it out) |
 | **M7** | drop `published?`/`stale?` from the row's Approve `:disabled` |
 | **M8** | remove `inert-behind!`'s call from `surface-ref` |
+| **M9** | drop `.top-bar` from `inert-behind!`'s skip test, so the bar goes inert under the viewer again |
+| **M10** | render `[:button.diff-close …]` back into `shell`'s header |
+| **M11** | make `views/diff/back-to-origin` ignore `page` and always say `← Back` |
+
+**11 changed sides rather than being deleted**, which is the entry in this table worth
+reading first. It used to assert `topBarInert` and that *nothing at all* outside the
+overlay is focusable. Both are now false by design: the way off the viewer is the top
+bar's left slot, so a bar taken out of the tab order would be a dialog whose one exit
+the keyboard cannot reach. It asserts the exact set instead — the back button and the
+theme toggle, both inside `.top-bar`, and the page behind still inert. **M9** is that
+decision's mutation: with the exemption gone the bar is unreachable and 11 reddens on
+`topBarInert`, where before it would have gone green.
+
+**M10** puts the ✕ back and reddens 13 alone; **M11** flattens the derived label and
+reddens 13 (`← Inbox`) here and `recipe-page-checks.js` 25 (`← Recipe`) there — the two
+origins of one `case`, which is why they are two checks in two files.
 
 M1 is the one to be careful with. Nesting the pane *inside* `.inbox-row` produces row
 heights in the thousands and reddens a height check trivially; that shape never
@@ -138,6 +160,7 @@ Recipe would half-run from a Recipe page and produce two false reds.
     6   the page wears the same header facts as the card
     14  the four actions are reachable across the slot and the panel
     22  a Recipe page keeps the theme toggle and no page selectors
+    25  the versions viewer says ← Recipe and comes back to it
     3a  Back returns to the shelf, and the bar says so
     3b  Forward returns to the Recipe, at the same address
     5   a top-bar button leaves the page and puts / back in the bar
@@ -290,6 +313,8 @@ which deletes it and any edits with it.
 | **M30** | seed the draft instead of resolving it: have `views/recipe/editor` `swap!` the row's four fields into `:recipe-draft` on its first render, and make `recipe-edit-fields` read the draft alone |
 | **M31** | put Edit and Versions back in `.recipe-page-actions` and drop `[recipe/navigation-actions …]` from `core/left-slot` |
 | **M32** | move Delete up into the slot with them — `navigation-actions` renders it too |
+| **M33** | make `core/focused-surface?` ignore `:diffing`, so the bar keeps its selectors under the viewer |
+| **M34** | give the viewer's slot `← Shelf`, Edit and Versions as well as its back button |
 
 M2 is the one that reddens hardest and is worth doing at least once: with the route
 gone there is no app on the page at all — `/recipe/1` is the JSON 404 — so `coldLoad()`
@@ -324,6 +349,12 @@ opposite — 18 goes red and 16 stays green, since the push still happens and th
 still follows it in the same context; **17** catches it too, which is the reason it is
 not folded into 16. **M20** reddens 19 alone, and it is the one worth looking at: a
 visitor gets a form, fills it in, presses Save, and the API answers 403.
+
+M33 and M34 are the versions view's, and both are about the slot being an *order*:
+**M33** leaves the page selectors up while a dialog is open, which 22 does not see (it
+is about a Recipe page, not the viewer) and `checks.js` 13 does. **M34** puts Versions
+in the slot while the versions view is up — a control for the surface you are already on
+— and reddens 25.
 
 M31 and M32 are the amendment's, and they are the pair that shows why 14 spans two
 containers rather than one: **M31** empties the slot's half and fills the panel's, so a

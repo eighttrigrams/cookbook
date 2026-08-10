@@ -530,6 +530,51 @@
                              secondVisit}};
       });
 
+      // 25. **the versions viewer, opened from here, says `← Recipe` and comes back
+      //     here.** The label is derived from `:page` and not stored, so the two
+      //     origins are two assertions about one `case`: `checks.js` 13 has the Inbox
+      //     end, and this is the Recipe end, because this surface is this file's
+      //     subject.
+      //
+      //     It also asserts what the slot does *not* hold while the viewer is up. The
+      //     viewer is opened from this page, so its button **replaces** `← Shelf`,
+      //     Edit and Versions — a slot still offering Versions would be a control for
+      //     the surface you are already on.
+      await check('25 the versions viewer says ← Recipe and comes back to it', async () => {
+        clickIn(document.querySelector('.top-bar-left'), 'button', 'Versions');
+        const ov = await until(() => document.querySelector('.diff-overlay'), 8000);
+        await until(() => document.querySelector('.diff-header h2'));
+        const inTheViewer = {
+          slot: [...document.querySelectorAll('.top-bar-left button')].map(b => b.textContent.trim()),
+          right: [...document.querySelectorAll('.top-bar-right > *')]
+            .map(e => (e.className || e.tagName).split(' ')[0]),
+          heading: text('.diff-header h2'),
+          noX: !document.querySelector('.diff-close'),
+          pageBehindInert: !!page()?.inert,
+          barNotInert: document.querySelector('.top-bar').inert !== true,
+          clearsTheBar: !!ov && ov.getBoundingClientRect().top
+                               >= document.querySelector('.top-bar').getBoundingClientRect().bottom};
+        clickIn(document.querySelector('.top-bar-left'), '.diff-back');
+        await until(() => !document.querySelector('.diff-overlay'));
+        await until(() => document.querySelector('.recipe-page-body'));
+        const afterBack = {
+          path: path() + location.search,
+          slot: [...document.querySelectorAll('.top-bar-left button')].map(b => b.textContent.trim()),
+          readingDrawn: !!document.querySelector('.recipe-page-body'),
+          diffing: stateGet('diffing'),
+          inertReleased: !document.querySelectorAll('[data-inert-behind-viewer]').length};
+        return {pass: inTheViewer.slot.join(',') === '← Recipe'
+                      && inTheViewer.right.length === 1
+                      && inTheViewer.heading === 'Versions'
+                      && inTheViewer.noX && inTheViewer.pageBehindInert
+                      && inTheViewer.barNotInert && inTheViewer.clearsTheBar
+                      && afterBack.path === url
+                      && afterBack.slot.join(',') === '← Shelf,Edit,Versions'
+                      && afterBack.readingDrawn && !afterBack.diffing
+                      && afterBack.inertReleased,
+                evidence: {inTheViewer, afterBack, expectedPath: url}};
+      });
+
       notes.push('reload ' + location.origin + url + ' and run coldLoad(), then '
                  + location.origin + url + '?edit=true and run coldEdit()');
       return done({subject: {id: subject.id, title: subject.title, url}});
@@ -1042,6 +1087,33 @@
         notes.push('the fixture arrived filed under ' + startedFiledUnder.length
                    + ' Scope(s); it is put back that way at the end');
 
+      // **Bring the fixture to a known state before asserting anything, and put it
+      // back after.** Both checks below toggle chips and read what happened, so both
+      // need to know what they started from — and a run that goes red can leave the
+      // fixture filed, which then makes the *next* run assert the opposite of what it
+      // means. That happened: check 21 failed on a paint race, its tidy-up read the
+      // un-repainted chips, found none lit and unfiled nothing, and the following run
+      // saw a fixture filed under two Scopes and reddened check 20 as well. One red
+      // check should cost one column, not the next run.
+      //
+      // Driven through `state` and not through the chips, deliberately: this is
+      // *cleanup* and not an assertion, so it should be the most robust thing
+      // available rather than the most faithful to a click. `toggle-recipe-scope` is
+      // the only writer of the filing, so the set is reached by toggling the symmetric
+      // difference — and waited on in the atom, where paint timing cannot reach.
+      const fileExactly = async (target) => {
+        const now = filedIds();
+        // `scopeId` and not `id`, which is the Recipe's and would be shadowed here
+        for (const scopeId of [...new Set([...now, ...target])])
+          if (now.includes(scopeId) !== target.includes(scopeId))
+            st.toggle_recipe_scope(id, scopeId);
+        await until(() => !stateGet('filing')
+                          && JSON.stringify(filedIds()) === JSON.stringify([...target].sort()),
+                    8000);
+        return filedIds();
+      };
+      await step('start from filed-under-nothing', () => fileExactly([]));
+
       // 20. **filing writes, and the version does not move.** Two claims that only
       //     make sense together: a toggle really does reach the server — the receipt
       //     comes back and says so — *and* the version badge is the same number
@@ -1076,14 +1148,21 @@
         const cleared = {lit: lit(), ids: filedIds(), version: text('.version-badge'),
                          rowVersion: row().version};
 
+        // **The receipt is the proof that the write happened, and the stamp is not.**
+        // `modified_at` has one-second resolution, so two saves inside the same second
+        // carry the same value — which made `filed.stamp !== stampBefore` pass when
+        // this phase was run once and fail when it was run twice in a row, about an
+        // app that was doing the right thing both times. The row coming back with the
+        // Scope on it is what says the server wrote; that is asserted, and both stamps
+        // stay in the evidence because they are worth reading. (It is the same
+        // one-second fact that makes a double-clicked chip 409 only sometimes — see
+        // `state/toggle-recipe-scope`.)
         return {pass: filed.ids.length === 1 && filed.lit.includes(firstName)
                       && filed.version === versionBefore
                       && filed.rowVersion === rowVersionBefore
                       && cleared.ids.length === 0 && cleared.lit.length === 0
                       && cleared.version === versionBefore
                       && cleared.rowVersion === rowVersionBefore
-                      // the write really happened, which is the other half
-                      && filed.stamp !== stampBefore
                       && !stateGet('error'),
                 evidence: {versionBefore, rowVersionBefore, filed, cleared,
                            stampMoved: filed.stamp !== stampBefore,
@@ -1109,8 +1188,13 @@
         a.click();
         b.click();                                   // same frame: no await between
         const queued = stateGet('filing');
-        await until(() => !stateGet('filing'), 8000);
-        await until(() => filedIds().length === 2);
+        // **Both conditions, and the DOM one is not redundant** — the same trap check
+        // 20 records, and this check went red on it once: `:filing` clearing says the
+        // receipt landed, the chips repaint a frame later, and `until` returns on its
+        // first poll without awaiting when the state is already right. So the wait has
+        // to include the *visible* consequence or the assertion reads the previous
+        // paint and blames the app.
+        await until(() => !stateGet('filing') && lit().length === 2, 8000);
         const after = {lit: lit().sort(), ids: filedIds(),
                        version: text('.version-badge')};
         return {pass: after.lit.join(',') === names.join(',')
@@ -1122,19 +1206,9 @@
                            error: stateGet('error')}};
       });
 
-      // Put the fixture back the way it was found — one gesture per Scope, through
-      // the same control, so the tidy-up is itself the thing under test.
-      await step('unfile what these checks filed', async () => {
-        // chip → id through the owner's own Scope list, because a chip carries its
-        // title and not its id, and adding one to the markup for a check's benefit
-        // would be the suite reaching into the app
-        const idOf = name => ((stateGet('scopes') || []).find(s => s.title === name) || {}).id;
-        for (const chip of chips())
-          if (chip.classList.contains('on')
-              && !startedFiledUnder.includes(idOf(chip.textContent.trim()))) chip.click();
-        await until(() => !stateGet('filing'), 8000);
-        await until(() => filedIds().length === startedFiledUnder.length);
-      });
+      // Put the fixture back exactly as it was found, by the same state-driven route
+      // and for the same reason.
+      await step('restore the filing this phase found', () => fileExactly(startedFiledUnder));
       notes.push('left on ' + path() + ', ' + MIXED + ' filed under '
                  + filedIds().length + ' Scope(s)');
       return done({subject: {id, title: subject.title, url: '/recipe/' + id}});
