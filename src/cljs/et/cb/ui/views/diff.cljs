@@ -443,10 +443,14 @@
   detached and reattached each time, which here would re-take focus while the reader
   is tabbing through the header.
 
-  Focus goes to `.diff-page` and not to a button: the ✕ and Approve are both one
-  Enter from doing something, and a reader who has just opened a page to read it has
-  read nothing yet. It has `tabindex=\"-1\"` for that and for nothing else, so the
-  first Tab is the ✕.
+  Focus goes to `.diff-page` and not to a button: **Approve is one Enter from writing
+  an agent's wording into a Recipe**, and a reader who has just opened a page to read
+  it has read nothing yet. It has `tabindex=\"-1\"` for that and for nothing else.
+
+  The example used to be *the ✕ or Approve*, and the ✕ has gone to the top bar's left
+  slot. The reason survives it and is sharper without it: what the first Tab now
+  reaches is that back button, which is the one control up there that is safe to land
+  on, and Approve is still two stops away rather than one.
 
   The opener is read **before** anything is inerted, because inerting an ancestor of
   the focused element blurs it, and restored on the way out only if it is still in the
@@ -462,6 +466,41 @@
         (reset! *opener nil)
         (when (and opener (.-isConnected opener))
           (.focus opener))))))
+
+(defn back-to-origin
+  "The way off this surface, **in the top bar's left slot** — where the `✕` in the
+  header used to be. *for the versions view that instead of an x there will be a back
+  button (going back to either the inbox or to tha Page page, depending where we came
+  from).*
+
+  **It names its destination, and the destination is derived rather than stored.**
+  `:diffing` is independent of `:page`, so the page this was opened from is still
+  underneath, untouched — which is why `stop-diff` on its own already lands you back
+  on it, and always did, and is what the `✕` did. So `:page` already answers *where
+  did I come from*, and a `:diff-origin` field would be a second answer to a question
+  that has one. Two answers can disagree; this is `source-split` reading its own counts
+  rather than being told them.
+
+  Both branches are real and both are reachable — `views.recipe`'s Versions button
+  calls `start-diff`, and the Inbox's rows call `start-proposal-diff` and
+  `start-diff-at-version`. There is no third caller: the shelf's card footer had one
+  and it moved to the page two orders ago.
+
+  The fallback is unreachable and stays, for `page-body`'s reason: 'unreachable' is a
+  property of today's callers, and a button whose label depended on a `case` having
+  been kept in step is a button that one day says nothing at all.
+
+  It is `views.diff`'s own component, drawn by `core/left-slot`, exactly as
+  `views.recipe/back-to-shelf` is: the slot places controls and does not know what any
+  of them do."
+  [page]
+  [:button.secondary.diff-back
+   {:on-click state/stop-diff
+    :title "Close the versions view"}
+   (case page
+     :inbox "← Inbox"
+     :recipe "← Recipe"
+     "← Back")])
 
 (defn- shell
   "The surface: the overlay, the page, the header, and whatever the reading puts

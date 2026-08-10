@@ -2,6 +2,7 @@
   (:require [reagent.dom.client :as rdomc]
             [reagent.core :as r]
             [et.cb.ui.state :as state]
+            [et.cb.ui.views.diff :as diff]
             [et.cb.ui.views.inbox :as inbox]
             [et.cb.ui.views.recipe :as recipe]
             [et.cb.ui.views.recipe-modals :as recipe-modals]
@@ -26,29 +27,45 @@
                   :on-key-down #(when (= (.-key %) "Enter") (do-login))}]
          [:button {:on-click do-login} "Sign in"]]))))
 
+;; ---------------------------------------------------------------------------
+;; the top bar
+;;
+;; **The design principle, in his words, because everything here is measured against
+;; it and the next change will be too:**
+;;
+;;   *so the basic design is we have a top level bar with either cookbook brand, back
+;;   button, or save cancel on the left hand side and a couple of widgets on the right
+;;   hand side, of which only dark light mode is shown in every view.*
+;;
+;; Two rules fall out of that, and they are the two functions below:
+;;
+;; - **The left slot holds one of three things**: the brand, a back button, or Save
+;;   and Cancel. Never two of them, and never the brand beside a back button — which
+;;   is why it is a slot with an ordered decision in it rather than a row of `when`s.
+;; - **The right-hand side is conditional, and the theme toggle is the only widget in
+;;   every view.** Everything else up there answers to `focused-surface?`.
+
 (defn- focused-surface?
   "Whether what is on screen is a **focused surface**: about one thing, arrived at by
   its own address or opened over everything else, and carrying its own way out. Today
-  that is the Recipe page and only the Recipe page.
+  that is the Recipe page and the version viewer.
 
   **One question, asked in one place, because the answer decides more than one
-  thing** — and because the set is going to grow. *a couple of widgets on the right
-  hand side, of which only dark light mode is shown in every view*: so on a focused
-  surface the top bar's right-hand side keeps the theme toggle and nothing else, and
-  the left slot holds that surface's own chrome instead of the brand. Written as
-  three conditions at three call sites, adding the next focused surface would mean
-  finding all three; written here, it is one clause.
+  thing** — the right-hand side keeps the theme toggle alone, and the left slot holds
+  that surface's own chrome instead of the brand. Written as conditions at the call
+  sites, adding a surface would mean finding all of them; written here, it is one
+  clause, and the viewer is what that was built for.
 
-  It takes the whole state rather than `page` for exactly that reason. The version
-  viewer is a focused surface by the same argument and is not a `:page` at all — it
-  is `:diffing`, an overlay over whichever page is up — so the shape that answers for
-  it has to be able to look at more than the page.
+  It takes the whole state rather than `page`, which is what let the viewer join
+  without changing the shape: `:diffing` is not a `:page` at all — it is an overlay
+  over whichever page is up. A predicate over `page` would have needed widening
+  instead of extending.
 
   What is *not* one answer is the left slot's **contents**: each focused surface has
   its own way out and only it knows what that is. This decides which chrome goes
   away; `left-slot` decides what replaces it."
-  [{:keys [page]}]
-  (= :recipe page))
+  [{:keys [page diffing]}]
+  (or (= :recipe page) (some? diffing)))
 
 (defn- left-slot
   "The top bar's left-hand side, which is **one slot with more than one thing in
@@ -85,6 +102,13 @@
   the reading's three are `views.recipe`'s own components. The slot **places** things;
   it does not know what any of them do.
 
+  **And the version viewer's back button outranks all of it**, which is the one thing
+  about this `cond` worth reading as an *order* rather than as four cases. The viewer
+  is opened *from* the reading — case 3 — so its button **replaces** `← Shelf`, Edit
+  and Versions rather than joining them: a slot offering Versions while the versions
+  view is up would be a control for the surface you are already on, and `← Shelf`
+  beside it would leave two back buttons meaning different things.
+
   Keyed off the page and the mode, not off `focused-surface?`, deliberately: that
   predicate answers *whether* the app's chrome steps aside, and this answers *what
   stands there instead*, which is a different answer for every surface that ever does
@@ -93,9 +117,12 @@
   It needs the Recipe's id and gets it from `:recipe-page-id`, which is the same value
   the page itself is drawn from, so the slot cannot come to be about a different
   Recipe than the panel under it."
-  [page edit? recipe-id logged-in?]
+  [page edit? recipe-id logged-in? diffing]
   [:div.top-bar-left
    (cond
+     (some? diffing)
+     [diff/back-to-origin page]
+
      (and (= :recipe page) edit?)
      [:<>
       [:button.recipe-edit-save
@@ -125,7 +152,7 @@
 (defn- top-bar []
   (let [app-state @state/*app-state
         {:keys [auth-required? logged-in? show-login? dark-mode page
-                recipe-page-edit? recipe-page-id]} app-state
+                recipe-page-edit? recipe-page-id diffing]} app-state
         ;; **On a focused surface the right-hand side keeps the theme toggle and
         ;; nothing else.** *a couple of widgets on the right hand side, of which only
         ;; dark light mode is shown in every view* — so this gates every one of the
@@ -151,7 +178,7 @@
         ;; right-hand side is widgets, and only the theme toggle is in every view.
         chrome? (not (focused-surface? app-state))]
     [:div.top-bar
-     [left-slot page recipe-page-edit? recipe-page-id logged-in?]
+     [left-slot page recipe-page-edit? recipe-page-id logged-in? diffing]
      [:div.top-bar-right
       ;; The Inbox. Owner-only like the other two, and it is the one of the three
       ;; that carries a number: how many of his agents' changes are waiting. The
