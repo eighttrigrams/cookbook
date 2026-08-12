@@ -553,13 +553,24 @@
 
 (defn unseen-count [] (count (:inbox @*app-state)))
 
+(declare stop-diff)
+
 (defn mark-seen
   "Acknowledge one entry, by its **event** id. The list is refetched rather than
   the entry removed here: the server decides what is in the queue, and something
-  may have arrived since — which is the whole reason the queue exists."
+  may have arrived since — which is the whole reason the queue exists.
+
+  **And it closes the viewer if this is the entry the viewer was opened from**,
+  which is `resolve-proposal`'s rule one kind along: an entry that has left the
+  queue must not be left on screen behind a button that would now 404. Decided here
+  rather than at the two call sites, so the row and the surface answer the same way —
+  and the check is what makes the row's press a no-op for a viewer that is closed or
+  open on something else."
   [event-id]
   (api/post-json (str "/api/inbox/" event-id "/seen") {} (auth-headers)
-    (fn [_] (fetch-inbox))
+    (fn [_]
+      (when (= event-id (:diffing-event @*app-state)) (stop-diff))
+      (fetch-inbox))
     (err-handler "Could not mark that as seen")))
 
 (declare fetch-recipes)
@@ -919,8 +930,8 @@
   (swap! *app-state update :versions dissoc id))
 
 (defn- open-viewer!
-  "The **only** writer of `:diffing` and `:diffing-proposal`, which is why they are
-  written in one `assoc` and can never come apart. `[nil nil]` is closed.
+  "The **only** writer of `:diffing`, `:diffing-proposal` and `:diffing-event`, which
+  is why they are written in one `assoc` and can never come apart. All nil is closed.
 
   One overlay showing one of two comparisons — a step of a recipe's history, or a
   proposal against that recipe — is the same argument `go-to-page` makes about the
@@ -934,11 +945,21 @@
   `fetch-filing!` is the lean read, which counts no consumption, and what it brings
   is exactly the two things that go stale — where the Recipe is filed, and the
   `modified_at` the picker's own PUT has to send. A cached row from a shelf visit
-  ten minutes ago would draw chips that were true then."
-  [recipe-id proposal-event-id]
+  ten minutes ago would draw chips that were true then.
+
+  **`:diffing-event` is which queue entry the surface was opened from**, and it is a
+  third field rather than a reading of the other two. `:diffing-proposal` is an event
+  id as well, so the temptation is to reuse it; they answer different questions.
+  `:diffing-proposal` names a *proposal* and so decides which of the two readings is
+  drawn; this names an entry that can be **acknowledged**, which is what lets the
+  surface carry Seen — and it is nil for the two ways in that are not the queue, the
+  Recipe page's Versions button and the Deleted page, where there is no entry to
+  acknowledge and no button to draw."
+  [recipe-id proposal-event-id event-id]
   (swap! *app-state assoc
          :diffing recipe-id
          :diffing-proposal proposal-event-id
+         :diffing-event event-id
          :diff-version-idx 0)
   (when (and recipe-id (:logged-in? @*app-state))
     (fetch-filing! recipe-id)))
@@ -947,7 +968,7 @@
   "Open the version viewer on a recipe, at the newest step. Fetches only on a
   miss; a save is what drops the cache, so what is kept is what is current."
   [id]
-  (open-viewer! id nil)
+  (open-viewer! id nil nil)
   (when-not (get-in @*app-state [:versions id])
     (fetch-versions id)))
 
@@ -961,7 +982,11 @@
   opens without a round trip — see `db.proposal/attach-to-events` for why they are
   sent with the queue rather than asked for here."
   [event-id recipe-id]
-  (open-viewer! recipe-id event-id))
+  ;; The event id goes in as the *proposal*, not as an acknowledgeable entry: a
+  ;; `proposed` entry is answered and never acknowledged — POST /api/inbox/:id/seen
+  ;; refuses one with a 400, because its being unseen is exactly its being unanswered.
+  ;; So the surface it opens carries Approve and Dismiss and no Seen.
+  (open-viewer! recipe-id event-id nil))
 
 (defn- step-that-produced
   "Which step of the version list *produced* version `v`, as an index into it.
@@ -992,9 +1017,16 @@
   list has arrived, so on a cache miss it is set from inside `fetch-versions`'
   own numbering guard, and only if the viewer is still open on this recipe: a
   reader who closed it or moved on must not have the step yanked under them by a
-  response from before."
-  [id version]
-  (open-viewer! id nil)
+  response from before.
+
+  **`event-id` is the queue entry this was opened from**, and it is what puts Seen on
+  the surface — *when we go from the tray/inbox, to the versions, we can approve/dismiss
+  but not set \"Seen\". add that*. Every caller of this function is a queue row, so it
+  is a required argument rather than an option: a row that opened the viewer without
+  saying which entry it was would give a reader a page they cannot answer, which is the
+  thing being fixed."
+  [id version event-id]
+  (open-viewer! id nil event-id)
   (if-let [entries (get-in @*app-state [:versions id])]
     (swap! *app-state assoc :diff-version-idx (step-that-produced entries version))
     (fetch-versions id
@@ -1009,7 +1041,7 @@
   `:diff-unified?` deliberately survives this: which of the two layouts a reader
   can read is about the reader, not about the recipe they closed."
   []
-  (open-viewer! nil nil))
+  (open-viewer! nil nil nil))
 
 (defn step-diff
   "+1 goes one version older, -1 one newer. The list is newest-first, so this is

@@ -196,7 +196,7 @@
                   ;; version on a `proposed` row is the one it was written against,
                   ;; not a step in the history — so there is nothing here to step to.
                   #(state/start-proposal-diff id recipe_id)
-                  #(state/start-diff-at-version recipe_id version))}
+                  #(state/start-diff-at-version recipe_id version id))}
      recipe_title]
     ;; Plain text, and told why: a title that simply stopped being clickable
     ;; would read as the row being broken. One sentence for both kinds now, because
@@ -216,37 +216,28 @@
   rows are the same shape is also the thing he asked for here, and a row that is a
   row on every kind is what makes that true structurally rather than by care.
 
-  The button goes dead on the first click — Seen and Approve alike — the way the
-  confirm buttons in the modals do and for the same reason: only the response closes
-  this out, because the list is refetched rather than the row spliced away (the server
-  decides what is in the queue), which leaves the button live for the whole round trip
-  unless something takes it out. Two quick clicks on Seen would send two POSTs, the
-  second an idempotent 200 that nonetheless refetches over the first; two on Approve
-  would put a 409 over a decision that in fact went through.
+  **None of the three answers is on a row any more** — *we should not allow to to
+  approve/dismiss or seen ON the tray/overview page.* Approve, Dismiss and Seen are all
+  on the surface the title opens, which is where the entry can be *read*: the two the
+  row used to carry with something to say first (a proposal against published text, or
+  against a version he has saved since) had already moved there for that reason, and
+  this finishes the thought — the button that can be pressed without reading is gone
+  rather than merely disabled for the two cases where pressing it unread is worst.
 
-  Dismiss opens a confirmation instead, the way Delete and Publish do, because the
-  agent's text is not served anywhere afterwards and nothing brings it back. A
-  `proposed` row has **no Seen button**, deliberately: a proposal is not something to
-  acknowledge, and the API refuses to acknowledge one.
+  So a row is what it says it is: a kind, a title that opens, what it is filed under,
+  which version, and when. Triage is choosing what to open.
 
-  **Approve is dead on the row for the two proposals that have something to say
-  first**, and those rows are answered in the viewer, which is where the sentences are.
-  Triage is the row's job and it keeps it for the ordinary case — an agent's rewrite of
-  an unpublished Recipe he has not touched since is a proposal he can accept from the
-  list. But approving a rewrite of *published* text, or over a save of his own, is the
-  one write in this app with no confirmation in front of it, and a button that does that
-  with nothing on screen saying so is not triage. So the gate is structural rather than
-  a note nobody has to read: the button that can be pressed without reading is the
-  button with nothing to read.
+  **One exception, and it is a dead end otherwise.** An entry whose Recipe has been
+  *purged* cannot be opened — there is no text left — so a row like that with no button
+  could never leave the queue at all. It keeps Seen, and only it. There are two such
+  entries in this database already, from before deleting became a tombstone, which is
+  how the case was found rather than reasoned about.
 
-  The disabled state is told why in the row's own words — the `published` flag beside
-  it, the version badge showing `v1 → v3` — because a button that simply went grey would
-  read as the row being broken, which is the argument `title-element` makes one function
-  up.
+  The version badge still carries the proposal's `v1 → v3` and the `published` flag
+  still rides in the last cell, because both are triage — they say *read this one
+  carefully* before it is opened, which is now the only thing a row asks of him.
 
-  Five grid cells and it stays five: the flag rides inside the actions cell, next to the
-  button it is about, for the reason the Scope badges ride inside the title's — a sixth
-  column would take its room out of the title or move the buttons from row to row."
+  Five grid cells and it stays five."
   [_entry]
   (let [sending? (r/atom false)]
     (fn [{:keys [id kind version created_at scopes proposal] :as entry}]
@@ -271,26 +262,23 @@
              [:span.inbox-version {:title (get kind-titles kind)} (str "v" version)]))
          [:span.inbox-when created_at]
          [:span.inbox-row-actions
-          (if proposed?
-            [:<>
-             (when published?
-               [:span.proposal-flag
-                {:title "This Recipe is public and your name is on it. Approving replaces
-                         that public text, and there is no unpublish — so this one is
-                         answered in the viewer, where the whole note is."}
-                "published"])
-             [:button.proposal-approve
-              {:disabled (or @sending? published? stale?)
-               :title (when (or published? stale?)
-                        "Not from the row: open it and read what approving would do.")
-               :on-click #(do (reset! sending? true) (state/approve-proposal id nil))}
-              (if @sending? "Approving…" "Approve")]
-             [:button.secondary.danger.proposal-dismiss
-              {:on-click #(state/start-dismissing-proposal id)} "Dismiss"]]
+          (when published?
+            [:span.proposal-flag
+             {:title "This Recipe is public and your name is on it. Approving replaces
+                      that public text, and there is no unpublish — read it before you
+                      answer it."}
+             "published"])
+          ;; The one answer left on a row, and only where there is nowhere else to put
+          ;; it: an entry naming a Recipe that has been purged has no text to open, so
+          ;; without this it could never leave the queue.
+          (when-not (openable? entry)
             [:button.secondary.inbox-seen
              {:disabled @sending?
+              :title "Nothing is left to open, so this is answered here"
               :on-click #(do (reset! sending? true) (state/mark-seen id))}
              (if @sending? "…" "Seen")])]]))))
+
+
 
 (defn- dismiss-modal
   "Asks before dismissing, and the question is what is lost. The Recipe is not
@@ -337,7 +325,8 @@
       [:strong "Your own edits are not in here"]
       " — this is the record of what the agents did, not a change log."]
      [:p.settings-note
-      "Click a Recipe's title to open it: what an agent's save changed on a "
+      "Click a Recipe's title to open it — which is where you read it and where you
+       answer it: what an agent's save changed on a "
       [:strong "modified"]
       " entry, on a "
       [:strong "created"]
@@ -345,28 +334,31 @@
        and on a "
       [:strong "proposed"]
       " one what the agent wants to make of it, beside the text you have now."]
+     ;; **The one rule the page has to state, because the rows no longer show it.**
+     ;; Every answer is on the page an entry opens, so a reader looking at a list of
+     ;; rows with no buttons has to be told where the buttons went — otherwise the
+     ;; queue reads as a list he cannot act on.
      [:p.settings-note
-      "Most entries are something that already happened: mark it "
+      "You answer an entry on the page it opens, not here. Most of them are something
+       that already happened: read it and mark it "
       [:em "Seen"]
-      " and it leaves the queue. A "
+      " there, and it leaves the queue. A "
       [:strong "proposed"]
       " entry is a question instead — an agent wants to rewrite the Recipe and is
-       waiting for you — so it asks you to "
+       waiting for you — so its page offers "
       [:em "Approve"]
-      " or "
+      " and "
       [:em "Dismiss"]
-      " it, here on the row or on the page it opens. Either way the entry disappears
-       and the rest keep their order."]
-     ;; Said on the page and not only on the row, because it is the one place where a
-     ;; button is deliberately dead: a reader who finds Approve grey and no sentence
-     ;; anywhere would take it for a bug rather than for the point.
+      ". Either way the entry disappears and the rest keep their order."]
      [:p.settings-note
-      "Two of them cannot be approved from the row: one against a Recipe that is "
+      "A row flags what to read carefully before you open it: a proposal against a "
       [:strong "published"]
-      ", and one written against a version you have "
+      " Recipe, whose text is already public with your name on it, and one written
+       against a version you have "
       [:strong "saved since"]
-      " — the row flags both, and approving is on the page that says in full what it
-       would replace."]
+      " — shown as "
+      [:em "v1 → v3"]
+      "."]
      (if (empty? inbox)
        [:div.inbox-empty "Nothing your agents did is waiting."]
        [:div.inbox-list
@@ -391,11 +383,12 @@
   outside the pages: this block has a `backdrop-filter`, which would make it the
   containing block for a fixed overlay's positioning and pin it inside the panel.
 
-  It has to be able to land over the viewer, too — Dismiss is a button on the row
-  *and* in the viewer's header — and that is a matter of z-index and not of DOM
-  order: `.modal-backdrop` outranks `.diff-overlay` in the stylesheet, which is
-  where it is argued, and which is why the viewer moving to the root changes
-  nothing about it."
+  It has to be able to land over the viewer, and that is now the *only* way it is ever
+  opened: Dismiss left the row along with the other two answers, so the button that
+  opens this confirmation is in the viewer's header. A matter of z-index and not of DOM
+  order — `.modal-backdrop` outranks `.diff-overlay` in the stylesheet, which is where
+  it is argued, and which is why the viewer moving to the root changed nothing about
+  it."
   []
   (let [{:keys [inbox dismissing-proposal]} @state/*app-state]
     [:<>

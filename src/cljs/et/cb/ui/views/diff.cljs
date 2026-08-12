@@ -616,6 +616,33 @@
         "Deleted"]
        " page, where it can be destroyed for good."])))
 
+(defn- seen-action
+  "**Seen, in the header of the surface the entry was opened on** — *when we go from
+  the tray/inbox, to the versions, we can approve/dismiss but not set \"Seen\". add
+  that.* The proposal reading has had its two answers here since the panes moved onto
+  a page of their own; this is the third kind's one answer, in the same place, so that
+  whatever a queue entry can be answered with can be answered where it is read.
+
+  And since the queue's rows no longer carry any of the three, this is the **only**
+  place a `created`, `modified` or `deleted` entry can be acknowledged from.
+
+  It goes dead on the first click, like every other answer in this app: only the
+  response takes the surface away, so two quick clicks would send two POSTs — and the
+  second is a 200 rather than an error (`seen` is a latch and the route is idempotent
+  about it), which is worse, because nothing would look wrong.
+
+  `state/mark-seen` closes this surface when the entry it acknowledged is the one the
+  surface was opened from, which is `resolve-proposal`'s rule for the other kind: an
+  entry that has left the queue must not be left on screen behind a button."
+  [_event-id]
+  (let [sending? (r/atom false)]
+    (fn [event-id]
+      [:button.secondary.diff-seen
+       {:disabled @sending?
+        :title "Acknowledge this change — it leaves your queue"
+        :on-click #(do (reset! sending? true) (state/mark-seen event-id))}
+       (if @sending? "Marking…" "Seen")])))
+
 (defn- shell
   "The surface: the overlay, the page, the header, and whatever the reading puts
   under it.
@@ -683,7 +710,7 @@
   newest-first: index 0 is the step into today's text, so ← walks backwards in time
   and → forwards, as in rhizome."
   [recipe-id]
-  (let [{:keys [diff-version-idx diff-unified? dark-mode recipes versions]}
+  (let [{:keys [diff-version-idx diff-unified? dark-mode recipes versions diffing-event]}
         @state/*app-state
         recipe (first (filter #(= recipe-id (:id %)) recipes))
         entries (get versions recipe-id)
@@ -720,7 +747,11 @@
       :label (step-label older newer (zero? idx))
       :label-title (str "Where each version came from — " provenance/explanation)
       :unified? diff-unified?
-      :toggle-disabled? (nil? older)}
+      :toggle-disabled? (nil? older)
+      ;; Only when this surface was opened from a queue entry. The Versions button on
+      ;; a Recipe's page and the Deleted page open the same reading with nothing to
+      ;; acknowledge, and `:diffing-event` is nil for both.
+      :actions (when diffing-event [seen-action diffing-event])}
      (cond
        (nil? entries)
        [:p.diff-loading "Loading…"]
