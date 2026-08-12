@@ -1497,6 +1497,230 @@
     // fixture back where it found it — filed under nothing — and `cleanup.py` removes
     // the fixture anyway.
     //
+    // ---- the draft preview, against the answer the save produces --------------
+    //
+    // **The owner reported this one and named the case himself**: *the interesting
+    // case is when i insert human edit into agentic surroundings*. Insert one
+    // hand-written line into six an agent wrote and the preview used to show three
+    // red lines and then four blank ones — his own new line among them — because the
+    // old rule kept a stored caution only where a draft line sat at the *same index*
+    // and read the same, so one insertion untold everything below it. Then Save came
+    // back red, blue, red, and *i believe when i save that is different afterwards*.
+    //
+    // So the phase asserts the two halves of that sentence: what the preview draws
+    // now, and that it is what the API says once the draft has landed. Check 35 is
+    // the complaint itself, and it is the reason this phase builds a fixture and
+    // saves on it rather than borrowing CHECK-PROV — a save moves the ladder of
+    // cautions the `provenance` phase reads, which is the argument `save()` already
+    // makes one phase up.
+    //
+    // Check 36 is the other direction and matters more than its size suggests: the
+    // rule that a line matched to nothing is *his* must not survive an alignment that
+    // was never computed. Its fixture is 250 lines because that is what it takes to
+    // go past `alignment-budget` once the common head and tail are off, and a body
+    // replaced wholesale is the shape that does it.
+    // **Takes an optional machine token**, unlike `save()`, which logs in as
+    // `machine-user`/`pw`. That pair is what a fresh dev database is seeded with and
+    // it is still the default here — but a dev database is a place where passwords
+    // get rotated by hand, and this one's had been, so `save()` and this phase both
+    // died at the login with nothing wrong in the app. Mint one from the backend
+    // nREPL (`(et.cb.auth/create-machine-token nil "machine-user")`) and pass it in
+    // when that happens; the fixtures this builds need a machine's authorship and
+    // there is no other way to write one.
+    draftProvenance: async (givenToken) => {
+      const {check, step, done, notes} = runner();
+      const api = async (p, {method, body, token} = {}) => {
+        const r = await fetch('/api/' + p, {
+          method: method || (body ? 'POST' : 'GET'),
+          headers: Object.assign({'Content-Type': 'application/json'},
+                                 token ? {Authorization: 'Bearer ' + token} : {}),
+          body: body === undefined ? undefined : JSON.stringify(body)});
+        let parsed = null;
+        try { parsed = JSON.parse((await r.text()) || 'null'); } catch (e) { parsed = null; }
+        return {status: r.status, body: parsed};
+      };
+      // The reported body, near enough: six lines an agent wrote, two of them empty,
+      // and the empties are not decoration. Under the old rule a blank line could
+      // keep its caution by *coincidence* — same index, same text — while its
+      // neighbours went untold, which is how the screenshot came to have one lone red
+      // band in a field of white. If an index rule is ever restored, checks 33 and 34
+      // catch it; these two lines are what make the failure look like the report.
+      const AGENT_BODY = 'Use ragtime for migrations.\n'
+                         + '\n'
+                         + 'Each migration is an edn map.\n'
+                         + 'Keep :transactions false for SQLite.\n'
+                         + '\n'
+                         + 'See also the rollback notes.';
+      const HIS_LINE = 'IMPORTANT: I always run these against a copy first.';
+      const INSERT_AFTER = 3;                       // 1-based; his line becomes line 4
+
+      const login = givenToken ? null
+                    : await api('auth/login',
+                                {body: {username: 'machine-user', password: 'pw'}});
+      const token = givenToken || (login && login.body || {}).token;
+      if (!token) throw new Error('no machine token: ' + JSON.stringify(login)
+                                  + ' — the dev password has drifted from the seeded '
+                                  + 'one; mint a token on the nREPL and pass it to '
+                                  + 'draftProvenance(token), see the comment above');
+      if (givenToken) notes.push('ran with a token supplied by the runner, not a login');
+      const build = async (title, description) => {
+        const made = await api('recipes', {token, body: {
+          title, useful_when: 'the draft preview must agree with the save', description}});
+        if (made.status !== 201)
+          throw new Error('could not build ' + title + ': ' + JSON.stringify(made));
+        notes.push('built ' + title + ' as recipe ' + made.body.id
+                   + ' and left it for cleanup.py');
+        return made.body.id;
+      };
+      const id = await build('CHECK-DRAFT one hand-written line in agent surroundings',
+                             AGENT_BODY);
+      const row = () => (stateGet('details') || {})[id] || {};
+      const toggle = () => document.querySelector('.recipe-page-provenance-toggle');
+      const lines = () => [...document.querySelectorAll('.provenance-line')];
+      const textOf = el => el.querySelector('.provenance-line-text').textContent;
+      // `null` for an untold row and a number for a told one, which is the distinction
+      // the whole phase turns on — `parseFloat` of an absent custom property is NaN,
+      // and NaN compares false against everything including itself, so a check written
+      // on it would pass by accident in both directions.
+      const drawn = () => lines().map(el =>
+        el.classList.contains('provenance-line-untold')
+          ? null : parseFloat(el.style.getPropertyValue('--caution')) / 100);
+
+      await step('open the fixture at its own address', () => st.open_recipe_page(id));
+      await until(() => page() && document.querySelector('.recipe-page-body') && toggle(),
+                  8000);
+      if (!toggle())
+        throw new Error('no provenance toggle on the fresh fixture — is the API sending'
+                        + ' caution on the full read?');
+      // Guaranteed where the fixture is built rather than asserted in a check, as
+      // `save()` does: a check going red because the *setup* was not what it thought
+      // would be blaming the app for the harness.
+      const stored = perLine(row().caution);
+      if (!(stored.length === 6 && stored.every(v => v === 0)))
+        throw new Error('a machine-written v1 should read 0.00 on every line, got '
+                        + JSON.stringify(stored));
+
+      const openDraftPreview = async description => {
+        st.open_recipe_editor(id);
+        await until(() => document.querySelector('.recipe-page-edit-body'));
+        type(document.querySelector('.recipe-page-edit-body'), description);
+        await until(() => (stateGet('recipe-draft') || {}).description === description);
+        if (toggle().textContent.trim() === 'Show provenance') toggle().click();
+        await until(() => document.querySelector('.provenance-source'));
+        await wait(50);
+      };
+
+      const edited = (() => {
+        const l = AGENT_BODY.split('\n');
+        l.splice(INSERT_AFTER, 0, HIS_LINE);
+        return l.join('\n');
+      })();
+
+      // 33. **the lines he did not touch keep what the API said about them**, at
+      //     their new numbers. This is the whole of the regression: they are the same
+      //     lines, one row further down, and an insertion is not an opinion about
+      //     them. Under the old rule every one of these was untold.
+      //
+      //     Asserted against `stored` — the API's own answer for the body before the
+      //     edit, spread per line — so this compares the view against the server and
+      //     not against itself.
+      await check('33 an insertion leaves every other line with the caution the API gave it',
+        async () => {
+          await openDraftPreview(edited);
+          const got = drawn();
+          const rows = lines().map(textOf);
+          // draft row j -> stored row index, for every row except the inserted one
+          const expected = stored.slice(0, INSERT_AFTER)
+                                 .concat([undefined])          // his line: check 34
+                                 .concat(stored.slice(INSERT_AFTER));
+          const others = got.filter((_, j) => j !== INSERT_AFTER);
+          const othersExpected = expected.filter((_, j) => j !== INSERT_AFTER);
+          // **The inserted row is left out of both halves of this**, including the
+          // untold count, and that is what keeps this check and 34 separate: the
+          // typed line is 34's whole subject, and a 33 that also asserted something
+          // about it would go red for two unrelated reasons and say which only in
+          // its evidence. M47 is the mutation that proved the point — it left every
+          // other line right and 33 reddened anyway.
+          return {pass: rows.join('\n') === edited
+                        && got.length === 7
+                        && others.every((v, k) => v === othersExpected[k])
+                        && !others.some(v => v === null),
+                  evidence: {drawn: got, expectedForTheOthers: othersExpected,
+                             untoldAmongTheOthers: others.filter(v => v === null).length,
+                             theRowsAreTheDraft: rows.join('\n') === edited}};
+        });
+
+      // 34. **the line he is typing reads as his.** The claim the second half of
+      //     `draft-cautions` makes, and the one thing the old preview could never say:
+      //     this field's Save writes a `ui` version, so a line that is in the draft and
+      //     in no stored line got there by his hand.
+      await check('34 the inserted line previews at 1.00 — his', async () => {
+        const got = drawn();
+        return {pass: got[INSERT_AFTER] === 1
+                      && lines()[INSERT_AFTER] && textOf(lines()[INSERT_AFTER]) === HIS_LINE,
+                evidence: {atTheInsertion: got[INSERT_AFTER],
+                           text: lines()[INSERT_AFTER] && textOf(lines()[INSERT_AFTER]),
+                           whole: got}};
+      });
+
+      // 35. **the complaint, as an assertion**: *i believe when i save that is
+      //     different afterwards*. The preview is recorded, Save is pressed while it
+      //     is on screen, and what the API then says about the version that landed is
+      //     compared against it, line for line.
+      //
+      //     It can only be checked by saving, which is why this phase owns its
+      //     fixture. Equality is the assertion and not merely "no longer blank": a
+      //     preview that had gone confidently *wrong* would satisfy anything weaker,
+      //     and wrong is the direction that matters.
+      await check('35 the preview is what the save produces, line for line', async () => {
+        const before = {version: row().version, preview: drawn()};
+        clickIn(document.querySelector('.top-bar-left'), '.recipe-edit-save');
+        await until(() => document.querySelector('.recipe-page-body')
+                          && row().version === before.version + 1, 8000);
+        await wait(150);
+        const after = perLine(row().caution);
+        return {pass: before.preview.length === after.length
+                      && before.preview.every((v, i) => v === after[i])
+                      && row().version === before.version + 1,
+                evidence: {preview: before.preview, afterSave: after,
+                           version: [before.version, row().version]}};
+      });
+
+      // 36. **the safety valve, which must fail towards untold and never towards his.**
+      //     Past `alignment-budget` no alignment is computed, and *we did not work it
+      //     out* has to stay distinguishable from *you typed this* — collapse the two
+      //     and a pasted-in body would be claimed as his work, wholesale, which is the
+      //     one confident lie this preview must not tell.
+      //
+      //     Two hundred and fifty lines against two hundred and fifty different ones,
+      //     because the budget is only reached once the common head and tail are off
+      //     and a wholesale replacement is what leaves nothing to trim.
+      await check('36 past the alignment budget the preview says untold, not "yours"',
+        async () => {
+          const many = n => Array.from({length: 250}, (_, i) => n + ' line ' + i).join('\n');
+          const bigId = await build('CHECK-DRAFT-BIG a body replaced wholesale', many('agent'));
+          st.open_recipe_page(bigId);
+          await until(() => page() && document.querySelector('.recipe-page-body')
+                            && document.querySelector('.recipe-page-provenance-toggle'), 8000);
+          st.open_recipe_editor(bigId);
+          await until(() => document.querySelector('.recipe-page-edit-body'));
+          const replacement = many('mine');
+          type(document.querySelector('.recipe-page-edit-body'), replacement);
+          await until(() => (stateGet('recipe-draft') || {}).description === replacement);
+          if (toggle().textContent.trim() === 'Show provenance') toggle().click();
+          await until(() => document.querySelector('.provenance-source'), 8000);
+          await wait(100);
+          const got = drawn();
+          return {pass: got.length === 250 && got.every(v => v === null),
+                  evidence: {rows: got.length, untold: got.filter(v => v === null).length,
+                             claimedAsHis: got.filter(v => v === 1).length,
+                             first: got.slice(0, 3)}};
+        });
+
+      notes.push('left on ' + path());
+      return done({subject: {id, url: '/recipe/' + id}});
+    },
+
     // Needs **two** of the owner's Scopes to exist for check 21. Dev has three.
     //
     // What these two are about is the split the whole change turns on: *yeah, we dont

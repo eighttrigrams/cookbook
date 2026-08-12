@@ -345,10 +345,36 @@ thinner than intended, nothing is wrong, re-run the seed for a fixture that exer
 it again. Editing the fixture is also worth knowing about before running `cleanup.py`,
 which deletes it and any edits with it.
 
+### The draft preview's fixtures, and the one credential that has drifted
+
+`draftProvenance()` builds its own two Recipes rather than borrowing `CHECK-PROV`,
+for `save()`'s reason: check 35 has to **save**, and a save moves the ladder of
+cautions the `provenance` phase reads. `CHECK-DRAFT` is six lines an agent wrote,
+two of them empty; `CHECK-DRAFT-BIG` is 250 lines, which is what it takes to get
+past `alignment-budget` once the common head and tail are trimmed. `cleanup.py`
+takes both out with everything else called `CHECK-`.
+
+**It takes an optional machine token, and here is when you need one.** `save()`
+logs in as `machine-user` / `pw`, which is what a fresh dev database is seeded
+with — but a dev database is where passwords get rotated by hand, and this one's
+had been, so both phases died at the login with nothing wrong in the app. Mint one
+on the backend nREPL and pass it in:
+
+    ;; on :nrepl-port from config.edn
+    (et.cb.auth/create-machine-token nil "machine-user")
+
+    …evaluate…  (<contents of the file>).draftProvenance('<the token>')
+
+The phase notes which of the two routes it took, so a run always says on the record
+whether it authenticated as documented.
+
 ### The mutations
 
 | | the edit |
 |---|---|
+| **M46** | `draft-cautions` back to the index-and-text rule it replaced — a draft line keeps its caution only at the same index with the same text |
+| **M47** | in `draft-cautions`, `(nil? m) nil` instead of `1.0` — the alignment is right and the line being typed is left untold |
+| **M48** | in `aligned-to-stored`, `:unknown` collapsed to `nil` on the over-budget branch — an alignment that was never computed reads as *you typed all of this* |
 | **M1** | render `(:useful_when recipe)` where `views/recipe/found` renders the description — the page shows the wrong field |
 | **M2** | delete `(GET "/recipe/*" [] serve-index)` from `server.clj` and restart |
 | **M2′** | drop the `(sync-from-url!)` call from `state/fetch-auth-required` — the server route stands and the boot never reads the bar |
@@ -485,6 +511,18 @@ reddens 30 alone. M45 — the legend row rendered unconditionally — reddens 30
 12** as well, which is worth knowing: 11 asserts the legend goes away with the view and
 12 asserts it never appears without a `caution` to explain, so an empty row is three
 different lies at once.
+
+**M46 to M48 are the draft preview's, and they are three different failures rather
+than three strengths of one.** M46 is the bug as reported: 33 goes red with four
+untold rows where the API had said `0.00`, 34 with the owner's own new line untold,
+and 35 with `preview: [0,0,0,null,null,null,null]` against `afterSave:
+[0,0,0,1,0,0,0]` — which is the report itself, in one evidence object. M47 leaves
+33 green and reddens 34 and 35, so it is the check that the *claim* is being made
+and not merely that the alignment survived a shift. **M48 is the one that matters
+most and the only one 36 sees**: it reddens nothing else, because a wholesale
+replacement is the one edit where under- and over-claiming look alike everywhere
+except on the rows themselves — 250 lines of an agent's work drawn as the owner's,
+with no other check in either suite able to tell.
 
 M21 to M25 are the filing's, and the pair worth understanding is **M23** and **M24** —
 both of them are what an unhurried reader would write, and both lose a click. M23 sends

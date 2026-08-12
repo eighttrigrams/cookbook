@@ -77,6 +77,139 @@
                         ranges)]
     (mapv #(get by-line (inc %)) (range line-count))))
 
+;; ---------------------------------------------------------------------------
+;; Aligning a draft against the body the ranges are about
+;;
+;; **This replaced an index-and-text rule, and the owner is the one who reported
+;; what was wrong with it.** That rule kept a stored line's caution only where a
+;; draft line sat at the same index *and* read the same, and it was defended here
+;; at length on the grounds that it could only ever under-claim. What it could not
+;; survive is the commonest edit of all, and the one this feature is *for*:
+;;
+;; > i think you need to compare how provenance looks before and after a change.
+;; > the interesting case is when i insert human edit into agentic surroundings
+;;
+;; Insert one hand-written line into six an agent wrote and every line below it
+;; shifts by one, so the preview showed three red lines and then four blank ones —
+;; and after Save the same body came back red, blue, red. The blank ones included
+;; his own new line. A preview that goes quiet about exactly the thing the reader
+;; is looking at is not being conservative, it is being useless: *reflect the
+;; volatile state* was the ask, and under-claiming everything below the caret is
+;; not a reading of the volatile state.
+;;
+;; The old text also argued that a real diff was unavailable, because `views.diff`
+;; is CodeMirror's merge view and its alignment is behind an editor mount. That
+;; was true and beside the point: a line-level longest common subsequence is
+;; twenty lines of code and needs no library at all.
+;; ---------------------------------------------------------------------------
+
+(def ^:private alignment-budget
+  "The largest DP table this will build, in cells, once the common head and tail
+  are off. Beyond it the middle is left **unaligned** rather than aligned slowly —
+  see `aligned-to-stored` for why that is a third answer and not a nil.
+
+  40k is 200 changed lines against 200, which is not an edit but a rewrite, and
+  *we do not know* is the honest reading of a rewrite. Ordinary typing never comes
+  near it: trimming the head and tail leaves a middle the size of what you touched,
+  so inserting a line into a thousand is a 1×0 table. The preview is also computed
+  when the toggle is pressed and not as you type — while it is up the textarea is
+  not on the page — so this is insurance rather than a budget being spent."
+  40000)
+
+(defn- prefix-count
+  "How many lines `a` and `b` share from the top."
+  [a b]
+  (let [n (min (count a) (count b))]
+    (loop [i 0]
+      (if (and (< i n) (= (nth a i) (nth b i))) (recur (inc i)) i))))
+
+(defn- suffix-count
+  "How many lines `a` and `b` share from the bottom, without running back into the
+  `already` lines the head has claimed — so that head and tail can never overlap
+  and the middle is never a negative slice."
+  [a b already]
+  (let [na (count a) nb (count b)
+        n (- (min na nb) already)]
+    (loop [i 0]
+      (if (and (< i n) (= (nth a (- na i 1)) (nth b (- nb i 1))))
+        (recur (inc i))
+        i))))
+
+(defn- lcs-alignment
+  "For each index of `b`, the index of `a` it is matched to by a longest common
+  subsequence, or nil.
+
+  Plain O(n·m) dynamic programming over an `Int32Array`, filled from the bottom
+  right so that `dp[i][j]` is the answer for the two tails and the walk back out
+  reads forwards. Nothing clever: the tables are small by the time this is called,
+  and a subtle diff would be a worse thing to own than a slow one.
+
+  **A line can be identical and still come back nil**, when the subsequence chosen
+  did not include it — two lines swapped round is the plain case. That is a real
+  imprecision and it lands on the safe side; `draft-cautions` says which side that
+  is and why."
+  [a b]
+  (let [na (count a) nb (count b)
+        w (inc nb)
+        dp (js/Int32Array. (* (inc na) w))]
+    (loop [i (dec na)]
+      (when (>= i 0)
+        (loop [j (dec nb)]
+          (when (>= j 0)
+            (aset dp (+ (* i w) j)
+                  (if (= (nth a i) (nth b j))
+                    (inc (aget dp (+ (* (inc i) w) (inc j))))
+                    (max (aget dp (+ (* (inc i) w) j))
+                         (aget dp (+ (* i w) (inc j))))))
+            (recur (dec j))))
+        (recur (dec i))))
+    (let [out (js/Array. nb)]
+      (loop [i 0 j 0]
+        (when (< j nb)
+          (cond
+            (>= i na)
+            (do (aset out j nil) (recur i (inc j)))
+
+            (= (nth a i) (nth b j))
+            (do (aset out j i) (recur (inc i) (inc j)))
+
+            (>= (aget dp (+ (* (inc i) w) j)) (aget dp (+ (* i w) (inc j))))
+            (recur (inc i) j)
+
+            :else
+            (do (aset out j nil) (recur i (inc j))))))
+      (vec out))))
+
+(defn- aligned-to-stored
+  "For each line of `draft`, **which line of `stored` it is** — the same line,
+  wherever it has moved to — as one of three answers:
+
+  - an **index** into `stored`: this is that line, and it keeps that line's caution
+  - **nil**: no stored line is this one, so it is a line being typed now
+  - **:unknown**: the alignment was not computed here at all
+
+  The third is not a nil, and keeping them apart is the whole reason this returns a
+  vector of three kinds rather than of indices-or-nil. *You typed this* and *we did
+  not work it out* have opposite consequences one function along: the first is the
+  claim that a line is his, the second is a refusal to claim anything. Collapsing
+  them would make a budget overrun read as *you wrote all of this*, which on a
+  pasted-in body is the one confident lie this preview must not tell.
+
+  The common head and tail come off first — cheap, and on ordinary typing they are
+  nearly the whole body — and only what is left goes through `lcs-alignment`."
+  [stored draft]
+  (let [ns (count stored) nd (count draft)
+        p (prefix-count stored draft)
+        s (suffix-count stored draft p)
+        a (subvec stored p (- ns s))
+        b (subvec draft p (- nd s))
+        mid (if (> (* (count a) (count b)) alignment-budget)
+              (vec (repeat (count b) :unknown))
+              (mapv #(when (number? %) (+ p %)) (lcs-alignment a b)))]
+    (-> (vec (range 0 p))
+        (into mid)
+        (into (map #(+ (- ns s) %)) (range s)))))
+
 (defn draft-cautions
   "The same one-number-per-line, for a body **being edited** — a draft the server has
   never seen — aligned against the ranges it has.
@@ -84,40 +217,45 @@
   *show provenance button should be avilable in both edit and view modes. and in edit
   modes it should reflect the volatile state.* The volatile state is the difficulty:
   `caution`'s ranges index the **stored** description's lines, and a draft's lines are
-  not those lines. The rule, and it is one sentence on purpose:
+  not those lines. The rule, and it is two sentences on purpose:
 
-  > A draft line keeps its stored caution when it is at the **same index** and has the
-  > **same text**. Anything else is untold.
+  > A draft line the diff matches to a stored line keeps that line's caution, wherever
+  > it has moved to. A line the diff matches to nothing is one you are typing now, so
+  > it is yours.
 
-  **What matters more than the rule is that it can only ever under-claim.** Insert a
-  line at the top and every line below shifts, so all of them fall to untold — which
-  reads as *we do not know*, and we do not. The other failure, a confident tint against
-  the wrong line, would be the view lying about who wrote something, which is the one
-  thing this whole feature exists not to do. So the conservative arm is the feature and
-  not a limitation to be apologised for, and a reader tempted to sharpen it should read
-  the next two paragraphs first.
+  **The second sentence is a claim, and here is what backs it.** This function serves
+  one surface: the body field of the edit form, in a browser, under a Save that writes
+  a `ui` version. A line that is in the draft and in no stored line is a line that
+  reached the document through that field — so it is his, by the same rule the server
+  will apply the moment he presses Save. It is not a guess about an unknown author; it
+  is the only author this input has. Checked against the server rather than asserted:
+  on the reported case — one line typed into six an agent wrote — the preview and the
+  answer that comes back after Save agree line for line.
 
-  **A real diff is not the fix.** `views.diff` looks like a source of one and is not:
-  it is CodeMirror's merge view, so the alignment lives inside the library and behind
-  an editor mount, not in a function you can call on two strings. Pulling a line-diff
-  in would be new machinery in aid of a *guess* — and a guess the server overrules the
-  moment the draft is saved, because the next real read brings ranges computed from the
-  text that actually landed.
+  **Where it is imprecise, it is imprecise towards blue, and that is the safe way
+  round.** `lcs-alignment` can leave an unmoved line unmatched when two are swapped,
+  and such a line is then drawn as his. The failure this whole feature exists to
+  prevent is the other one — an agent told a line is free that is really his — and
+  `et.cb.caution/ours` already chooses the same direction for the same reason: an
+  unclassified author is treated as an agent's so that the mistake is *being
+  needlessly careful*. Blue where red belonged costs an agent a line it might have
+  rewritten. Red where blue belonged costs him a sentence.
 
-  **A text-keyed lookup is worse than it looks.** Matching a draft line to any stored
-  line with the same text mis-attributes a body with two identical lines — an empty
-  line, `---`, `## Notes` — and trades a conservative wrong for a confident one. Index
-  *and* text, therefore, and nothing cleverer.
+  **And nothing here survives a Save.** The next read brings ranges computed by
+  `us-vs-them` over the text that actually landed, so this is a preview in the
+  strict sense: wrong for as long as it takes to press a button.
 
-  A line past the end of the stored body has no counterpart at its index and is untold
-  by the same rule, with no special case: `nth` with a nil default sees to it. Which is
-  also what makes a brand-new line at the end read correctly, and it is the commonest
-  edit there is."
+  **A text-keyed lookup is still worse than it looks**, and that older note stands:
+  matching a draft line to *any* stored line with the same text mis-attributes a body
+  with two identical lines — an empty line, `---`, `## Notes`. The diff does not do
+  that. It matches in order, so the second `## Notes` can only ever match the second."
   [stored-description ranges draft-description]
-  (let [stored (split-lines stored-description)
-        stored-cautions (line-cautions ranges (count stored))]
-    (into []
-          (map-indexed (fn [i line]
-                         (when (= line (nth stored i nil))
-                           (nth stored-cautions i nil))))
-          (split-lines draft-description))))
+  (let [stored (vec (split-lines stored-description))
+        stored-cautions (line-cautions ranges (count stored))
+        draft (vec (split-lines draft-description))]
+    (mapv (fn [m]
+            (cond
+              (= :unknown m) nil
+              (nil? m) 1.0
+              :else (nth stored-cautions m nil)))
+          (aligned-to-stored stored draft))))
