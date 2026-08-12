@@ -727,9 +727,11 @@ html.dark-mode .pending-badge { background: rgba(245, 158, 11, 0.18); }
   flex-wrap: wrap;
   padding: 0 0 16px;
 }
-/* Outline rather than the app's filled accent pill: there are five of them in a
-   row here, and five filled pills read as five things demanding to be pressed. */
-.diff-header button {
+/* Outline rather than the app's filled accent pill: there were five of them in a
+   row here, and five filled pills read as five things demanding to be pressed.
+   `.diff-mode-toggle` is named beside the row because it left it and kept the look:
+   it is the same kind of control, sitting one band lower — see `.diff-mode-row`. */
+.diff-header button, .diff-mode-toggle {
   padding: 0 10px;
   min-width: 34px;
   height: 34px;
@@ -740,12 +742,12 @@ html.dark-mode .pending-badge { background: rgba(245, 158, 11, 0.18); }
   font-size: 0.95em;
   line-height: 1;
 }
-.diff-header button:hover:not(:disabled) {
+.diff-header button:hover:not(:disabled), .diff-mode-toggle:hover:not(:disabled) {
   background: var(--surface-subtle);
   color: var(--text-primary);
   transform: none;
 }
-.diff-header button:disabled {
+.diff-header button:disabled, .diff-mode-toggle:disabled {
   opacity: 0.35;
   cursor: not-allowed;
   transform: none;
@@ -763,9 +765,17 @@ html.dark-mode .pending-badge { background: rgba(245, 158, 11, 0.18); }
   padding-top: 14px;
 }
 .diff-step { font-variant-numeric: tabular-nums; }
-.diff-mode-toggle { margin-left: auto; }
+/* Its own row, under the filing and over the panes. `flex-end` keeps it where the
+   eye already looks for it — it was the right-hand end of the header row — and the
+   bottom padding is the gap the header and the filing row above it both use, so the
+   bands stay evenly spaced now that there are three of them. */
+.diff-mode-row {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 0 12px;
+}
 .diff-mode-toggle:not(:disabled) { border-color: var(--accent); color: var(--accent); }
-/* Capped and clipped rather than allowed to push the mode toggle onto a second
+/* Capped and clipped rather than allowed to push the answer buttons onto a second
    line. A cap and not just `flex-shrink`, because the row above wraps: a flex
    container breaks lines *before* it shrinks anything, so a shrinkable title
    never gets the chance. Nothing is lost by clipping — the full title of both

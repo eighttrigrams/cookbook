@@ -618,18 +618,27 @@
          [:span.diff-recipe-title subject]
          nav
          [:span.diff-version-label {:title label-title} label]
-         [:button.diff-mode-toggle
-          ;; Dead where there is no merge view to lay out either way, rather than
-          ;; live and doing nothing: the ← and → next to it go grey for the same
-          ;; reason.
-          {:on-click state/toggle-diff-unified :disabled toggle-disabled?}
-          (if unified? "Split" "Unified")]
          actions]
         ;; Under the header and above the reading: the filing is what this Recipe
         ;; is *about*, which belongs with the heading that names it rather than
         ;; among the two texts it is not part of. Same order as the Recipe's own
         ;; page, where it sits under the header for the same reason.
         [scope-filing recipe-id]
+        ;; **Split/Unified on a row of its own** — *the unified/split view button
+        ;; belongs not in that row. but should go below on its own.* It was in the
+        ;; header, at the far right, among what the reading *is* and what can be
+        ;; done about it: a heading, a title, a version label, Approve, Dismiss. It
+        ;; is neither of those. It changes how the two texts below are laid out and
+        ;; nothing else, so it sits with them — the last thing before the panes,
+        ;; over the pane it re-lays-out.
+        ;;
+        ;; Dead where there is no merge view to lay out either way, rather than
+        ;; live and doing nothing: the ← and → in the header go grey for the same
+        ;; reason.
+        [:div.diff-mode-row
+         [:button.diff-mode-toggle
+          {:on-click state/toggle-diff-unified :disabled toggle-disabled?}
+          (if unified? "Split" "Unified")]]
         body]])))
 
 (defn- version-reading

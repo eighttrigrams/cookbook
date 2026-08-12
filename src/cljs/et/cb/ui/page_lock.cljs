@@ -18,19 +18,26 @@
   `inert` does not help with either: it takes the keyboard and the pointer off
   what is behind, and says nothing about scrolling.
 
-  **Why the body is taken out of flow rather than given `overflow: hidden`.**
-  Hiding the overflow does stop the wheel, and a scroller whose overflow turns
-  hidden is forced back to the top — so the page behind would jump, and the
-  scroll position it jumped from is not recoverable afterwards. Out of flow there
-  is no in-flow content for the document to scroll at all, and `top` decides what
-  the reader sees behind the surface. The position is remembered here and handed
-  back as scroll on release.
+  **`overflow: hidden` on the root, and nothing else.** The document stops being
+  scrollable and **keeps the position it was at** — measured, because the first
+  version of this was built on the opposite belief. It took the body out of flow
+  and offset it by the scroll position instead, on the grounds that hiding the
+  overflow forces a scroller back to the top; that is not true, and the
+  measurement it came from was a bad one (a test harness had scrolled the page to
+  0 before the lock ever ran, in a different app). Taking the body out of flow
+  cost two things that were then visible on screen: an html element with no
+  in-flow content stops the body's background reaching the canvas, so the band
+  above the overlay went **white** — *for the navbar all of a sudden white where
+  white is nowhere else used* — and the body, being a centred `max-width` column,
+  no longer centred once it was positioned. Hiding the overflow moves nothing and
+  paints nothing differently.
 
   **Two ways to hold it, because the two surfaces want different things.**
   `lock-at-top!` is for a surface whose chrome is up in the top bar: the bar has
-  to be on screen or the exit is not. `lock-in-place!` is for a dialog that
-  covers the viewport anyway, where moving the page underneath it would be a jolt
-  with nothing to show for it.
+  to be on screen or the exit is not, so the page is put at the top first and its
+  place given back on release. `lock-in-place!` is for a dialog that covers the
+  viewport anyway, where moving the page underneath it would be a jolt with
+  nothing to show for it.
 
   A counter, not a flag: the Inbox's dismiss confirmation opens *over* the
   version viewer (`.modal-backdrop` at 30 over `.diff-overlay` at 25 — the
@@ -44,56 +51,46 @@
 (defonce ^:private holders (atom 0))
 (defonce ^:private held-at (atom 0))
 
-(defn- lock! [show-from]
+(defn- lock! [to-top?]
   (when (= 1 (swap! holders inc))
-    (let [y (.-scrollY js/window)
-          style (.. js/document -body -style)
+    (let [style (.. js/document -documentElement -style)
           ;; The scrollbar is about to go; paying its width back as padding is
           ;; what keeps the page from shifting sideways under the surface.
           gap (- (.-innerWidth js/window)
                  (.. js/document -documentElement -clientWidth))]
-      (reset! held-at y)
+      (reset! held-at (.-scrollY js/window))
+      ;; Before the overflow, not after: with the document no longer scrollable
+      ;; there is nothing left to scroll to the top.
+      (when to-top? (.scrollTo js/window 0 0))
       (set! (.-paddingRight style) (str gap "px"))
-      (set! (.-position style) "fixed")
-      (set! (.-top style) (str "-" (case show-from :top 0 y) "px"))
-      ;; `left`/`right` because a fixed box with both auto shrink-wraps to its
-      ;; content — the body is a centred 1100px column (`base.css`), and without
-      ;; these it would collapse to the width of its widest line.
-      (set! (.-left style) "0")
-      (set! (.-right style) "0"))))
+      (set! (.-overflow style) "hidden"))))
 
 (defn lock-at-top!
   "Hold the page behind and show it **from the top**, so that the top bar — and
    with it the way off the surface — is where it can be seen and clicked."
   []
-  (lock! :top))
+  (lock! true))
 
 (defn lock-in-place!
   "Hold the page behind exactly where the reader left it. For a dialog that
    covers the viewport, where scrolling the page underneath would be a jolt
    nobody asked for."
   []
-  (lock! :here))
+  (lock! false))
 
 (defn unlock!
-  "Hand the page back — to the last holder only — and put it back where it was."
+  "Hand the page back — to the last holder only — and put it back where it was.
+
+   The scroll is restored unconditionally rather than only for a `lock-at-top!`:
+   `lock-in-place!` did not move it, so setting it to where it already is costs
+   nothing, and one exit path is one fewer thing to keep in step with two
+   entrances."
   []
   (when (zero? (swap! holders dec))
-    (let [style (.. js/document -body -style)]
-      (set! (.-position style) "")
-      (set! (.-top style) "")
-      (set! (.-left style) "")
-      (set! (.-right style) "")
+    (let [style (.. js/document -documentElement -style)]
+      (set! (.-overflow style) "")
       (set! (.-paddingRight style) "")
-      ;; **After a layout read, and the read is used.** Clearing the styles above
-      ;; does not reflow on its own, so a `scrollTo` here is clamped against the
-      ;; collapsed scroll range and lands at 0 — the page at the top, which is
-      ;; the thing being avoided. Reading the range forces the reflow, and
-      ;; clamping to it is a truer scroll than asking for an offset the document
-      ;; may have grown shorter than while the surface was up.
-      (let [range (- (.. js/document -documentElement -scrollHeight)
-                     (.-innerHeight js/window))]
-        (.scrollTo js/window 0 (min @held-at (max range 0)))))))
+      (.scrollTo js/window 0 @held-at))))
 
 (def while-mounted
   "Holds the page for as long as it is in the tree, and draws nothing.
