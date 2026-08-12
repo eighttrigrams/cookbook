@@ -64,6 +64,7 @@
   in. They are **current** where the title is a snapshot, which `subject` explains,
   and a Recipe that is gone or filed under nothing simply has none."
   (:require [reagent.core :as r]
+            [et.cb.ui.page-lock :as page-lock]
             [et.cb.ui.scope-badges :as scope-badges]
             [et.cb.ui.state :as state]))
 
@@ -294,6 +295,7 @@
   (let [sending? (r/atom false)]
     (fn [{:keys [id recipe_title]}]
       [:div.modal-backdrop {:on-click state/stop-dismissing-proposal}
+       [page-lock/while-mounted]
        [:div.modal {:on-click #(.stopPropagation %)}
         [:h2 "Dismiss this proposal?"]
         [:div.modal-subtitle recipe_title]

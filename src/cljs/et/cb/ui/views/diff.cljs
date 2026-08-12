@@ -68,7 +68,9 @@
   everything."
   (:require [clojure.string :as str]
             [reagent.core :as r]
+            [et.cb.ui.page-lock :as page-lock]
             [et.cb.ui.provenance :as provenance]
+            [et.cb.ui.recipe-fields :as recipe-fields]
             [et.cb.ui.state :as state]
             ["@codemirror/merge" :refer [MergeView unifiedMergeView]]
             ["@codemirror/state" :refer [EditorState]]
@@ -475,15 +477,27 @@
 
   The opener is read **before** anything is inerted, because inerting an ancestor of
   the focused element blurs it, and restored on the way out only if it is still in the
-  document — the row a proposal was opened from is gone once it has been answered."
+  document — the row a proposal was opened from is gone once it has been answered.
+
+  **The page behind is held still here too, and it belongs beside the inerting
+  rather than in a stylesheet.** `inert` takes the keyboard and the pointer off what
+  is behind and says nothing about the wheel, so the page underneath went on
+  scrolling: its content slid up into the band above this overlay, and the top bar
+  went with it — taking `back-to-origin`, the one way off this surface, off the
+  screen. `page-lock/lock-at-top!` is the half of *behind* that `inert-behind!` does
+  not cover, and it pins the page at the top for exactly that reason: the bar has to
+  be up there or the exit is not. The reader's place in the page they came from is
+  given back on release."
   [*opener]
   (fn [el]
     (if el
       (do (reset! *opener (.-activeElement js/document))
+          (page-lock/lock-at-top!)
           (inert-behind! el)
           (some-> (.querySelector el ".diff-page") (.focus)))
       (let [opener @*opener]
         (release-behind!)
+        (page-lock/unlock!)
         (reset! *opener nil)
         (when (and opener (.-isConnected opener))
           (.focus opener))))))
@@ -523,6 +537,49 @@
      :recipe "← Recipe"
      "← Back")])
 
+(defn- scope-filing
+  "Which Scopes this Recipe is filed under, as the control that files it — here,
+  on the surface a queue row opens.
+
+  *on the individual pages reachable from the review tray lets have the option to
+  add or change scopes. as scope changes … dont count as new versions. any scope
+  change store immediately wihtout any confirmation or save or such thing.* All
+  three of those are already true of the mechanism this borrows: it is the same
+  `recipe-fields/scope-picker` the Recipe's own page wears and the same
+  `state/toggle-recipe-scope` behind it, which PUTs on every toggle, makes no
+  version, and has no Save to press. `views.recipe/scope-filing` argues the design;
+  this is that control on a second surface, and the fact that it *is* the same one
+  is the point — triaging what an agent wrote and filing it are one motion, and the
+  filing must mean the same thing in both places.
+
+  **In `shell` and not in either reading**, so it is on the `created`, the
+  `modified` and the `proposed` page alike. The tray opens all three and the
+  question 'what is this Recipe about' is the same question on each.
+
+  Three conditions, and each of them is a thing that would otherwise be a lie:
+
+  - `logged-in?` — **as cosmetic as the gate on the Recipe page's own picker**, and
+    for the same reason: every way onto this surface is already owner-only (the
+    Versions button is behind `core/left-slot`'s `when logged-in?`, and the queue is
+    a page a visitor is sent away from), and a visitor is served no `scopes` on a
+    Recipe and no Scope list to draw one from. The boundary is the server; this is
+    convenience, and it is here so that the condition does not have to be
+    re-derived from three call sites the day a fourth appears.
+  - a row in `:details` — `state/filed-under` reads the filing out of it, and with
+    no row it answers with the empty set, which on a filed Recipe would draw every
+    chip unlit. That is a picker claiming the Recipe is filed under nothing.
+    `state/open-viewer!` fetches the row as it opens, so this is a moment and not a
+    state.
+  - the picker's own `(seq scopes)` guard, inside it: an owner who has made no
+    Scopes gets no empty control."
+  [recipe-id]
+  (let [{:keys [logged-in? details]} @state/*app-state]
+    (when (and logged-in? recipe-id (get details recipe-id))
+      [recipe-fields/scope-picker
+       {:selected (state/filed-under recipe-id)
+        :on-toggle #(state/toggle-recipe-scope recipe-id %)
+        :class "diff-filing"}])))
+
 (defn- shell
   "The surface: the overlay, the page, the header, and whatever the reading puts
   under it.
@@ -545,7 +602,8 @@
   one reason — the ref closure has to outlive a render."
   [_opts _body]
   (let [ref (surface-ref (atom nil))]
-    (fn [{:keys [heading subject label label-title nav unified? toggle-disabled? actions]} body]
+    (fn [{:keys [heading subject label label-title nav unified? toggle-disabled?
+                 actions recipe-id]} body]
       [:div.diff-overlay
        {:ref ref
         :role "dialog"
@@ -567,6 +625,11 @@
           {:on-click state/toggle-diff-unified :disabled toggle-disabled?}
           (if unified? "Split" "Unified")]
          actions]
+        ;; Under the header and above the reading: the filing is what this Recipe
+        ;; is *about*, which belongs with the heading that names it rather than
+        ;; among the two texts it is not part of. Same order as the Recipe's own
+        ;; page, where it sits under the header for the same reason.
+        [scope-filing recipe-id]
         body]])))
 
 (defn- version-reading
@@ -588,6 +651,7 @@
         older (nth entries (inc idx) nil)]
     [shell
      {:heading "Versions"
+      :recipe-id recipe-id
       :subject (str (:title recipe)
                     (when (pos? total)
                       (str " · " total (if (= 1 total) " version" " versions"))))
@@ -641,11 +705,12 @@
   paragraph of a 2550-character body was below the fold of the thing meant to show
   it. 2550 is the Recipe he reported it on, and not his longest — that one is nearly
   three times as long, which `db.proposal/attach-to-events` now has the number for."
-  [{:keys [id recipe_title proposal]}]
+  [{:keys [id recipe_id recipe_title proposal]}]
   (let [{:keys [diff-unified? dark-mode]} @state/*app-state
         [current proposed] (proposal-sides proposal)]
     [shell
      {:heading "Proposal"
+      :recipe-id recipe_id
       :subject recipe_title
       :label (str "Version " (:recipe_version proposal) " → proposed")
       :label-title "The Recipe's current version, and the rewrite waiting on it —

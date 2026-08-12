@@ -34,6 +34,7 @@
 
   The version viewer comes with them for both reasons at once — see `overlays`."
   (:require [reagent.core :as r]
+            [et.cb.ui.page-lock :as page-lock]
             [et.cb.ui.state :as state]
             [et.cb.ui.views.diff :as diff]))
 
@@ -51,6 +52,7 @@
   (let [sending? (r/atom false)]
     (fn [{:keys [id title]}]
       [:div.modal-backdrop {:on-click state/stop-publishing}
+       [page-lock/while-mounted]
        [:div.modal {:on-click #(.stopPropagation %)}
         [:h2 "Publish this recipe?"]
         [:div.modal-subtitle title]
@@ -78,6 +80,7 @@
   (let [sending? (r/atom false)]
     (fn [{:keys [id title version]}]
       [:div.modal-backdrop {:on-click state/stop-deleting}
+       [page-lock/while-mounted]
        [:div.modal {:on-click #(.stopPropagation %)}
         [:h2 "Delete this recipe?"]
         [:div.modal-subtitle title]

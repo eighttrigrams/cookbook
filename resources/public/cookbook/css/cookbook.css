@@ -750,6 +750,18 @@ html.dark-mode .pending-badge { background: rgba(245, 158, 11, 0.18); }
   cursor: not-allowed;
   transform: none;
 }
+/* The filing, between the header and the reading. `padding` matching the header's
+   bottom so the three bands — header, filing, texts — are evenly spaced, and a rule
+   above it because it belongs to the chrome and not to the comparison: a reader
+   scrolling the texts should not have to work out where the page stops describing
+   the Recipe and starts showing the change. The chips themselves are the shared
+   `.scope-picker`, untouched — what a surface says about a shared component is
+   where it sits, never what it looks like. */
+.scope-picker.diff-filing {
+  padding: 0 0 16px;
+  border-top: 1px solid var(--border-color);
+  padding-top: 14px;
+}
 .diff-step { font-variant-numeric: tabular-nums; }
 .diff-mode-toggle { margin-left: auto; }
 .diff-mode-toggle:not(:disabled) { border-color: var(--accent); color: var(--accent); }

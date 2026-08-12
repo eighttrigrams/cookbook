@@ -181,7 +181,17 @@
       :scopes (fetch-scopes)
       ;; More than freshness here: the queue is the *only* place an agent's write
       ;; shows up, and it may have arrived while he was reading the shelf.
-      :inbox (fetch-inbox)
+      ;;
+      ;; **The Scope list comes too, for the reason the `:recipe` branch below
+      ;; says at length**: the version viewer opens over this page and carries the
+      ;; same picker, and the picker draws from `:scopes` — the owner's whole list.
+      ;; That was fetched by the Scopes page, by `fetch-shelf!` and by a Recipe's
+      ;; own page, so an owner who came straight to `/inbox` by its address had
+      ;; none, and the picker would have rendered as nothing at all: a control
+      ;; silently absent on exactly the path this feature is for. Signed in only,
+      ;; because /api/scopes answers anybody else 403.
+      :inbox (do (fetch-inbox)
+                 (when (:logged-in? @*app-state) (fetch-scopes)))
       ;; And this one is not freshness at all: the page has nothing to draw until
       ;; the body arrives, because the listing never carried one.
       ;;
@@ -725,6 +735,28 @@
       (cache-detail! recipe)
       (when on-done (on-done recipe)))))
 
+(defn fetch-filing!
+  "One Recipe's **lean** row into `:details`: its `scopes`, its `modified_at`, its
+  counts — everything but the description.
+
+  **Which is the one read of a single Recipe that costs nothing.** GET
+  /api/recipes/:id says it in as many words: *a lean read of this same path does
+  not count either — it returns the retrieval index, not the Recipe*. That is what
+  makes it the right request for the version viewer, and `?detail=full` the wrong
+  one. GET /api/inbox is deliberate about this — *reading this list moves no
+  `view_count` … reviewing what an agent wrote is not using a Recipe* — and a
+  viewer that fetched the body to find out where a Recipe is filed would have
+  undone that decision one page further along, ranking his shelf by how much
+  triaging he had done.
+
+  The response merges (`cache-detail!`), so a Recipe whose full row is already
+  held keeps its description and its `caution` and has its filing and its stamp
+  refreshed. Both are what the picker on that surface needs: the filing is what it
+  draws, and the stamp is the `modified_at` the filing PUT sends to be told when
+  somebody else has saved in between."
+  [id]
+  (api/fetch-json (str "/api/recipes/" id) (auth-headers) cache-detail!))
+
 (defn fetch-recipe-page!
   "The one Recipe a `/recipe/<id>` page is about, into `:details` and a status
   beside it.
@@ -848,12 +880,22 @@
   proposal against that recipe — is the same argument `go-to-page` makes about the
   pages: the state that must not exist is not defended at each reader, it is
   unreachable. Two `swap!`s at two call sites would have made 'the viewer is open on
-  a proposal and on a history at once' a thing to be careful about."
+  a proposal and on a history at once' a thing to be careful about.
+
+  **The filing comes with the opening**, for the picker the surface now carries —
+  the owner's, so a visitor reading a published Recipe's history asks for nothing.
+  Fetched on every open rather than only on a miss, and it is cheap enough to be:
+  `fetch-filing!` is the lean read, which counts no consumption, and what it brings
+  is exactly the two things that go stale — where the Recipe is filed, and the
+  `modified_at` the picker's own PUT has to send. A cached row from a shelf visit
+  ten minutes ago would draw chips that were true then."
   [recipe-id proposal-event-id]
   (swap! *app-state assoc
          :diffing recipe-id
          :diffing-proposal proposal-event-id
-         :diff-version-idx 0))
+         :diff-version-idx 0)
+  (when (and recipe-id (:logged-in? @*app-state))
+    (fetch-filing! recipe-id)))
 
 (defn start-diff
   "Open the version viewer on a recipe, at the newest step. Fetches only on a

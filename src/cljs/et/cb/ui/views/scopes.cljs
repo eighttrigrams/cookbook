@@ -28,6 +28,7 @@
   dialog says, with the count in it, and that is why it exists at all."
   (:require [reagent.core :as r]
             [clojure.string :as str]
+            [et.cb.ui.page-lock :as page-lock]
             [et.cb.ui.state :as state]))
 
 (def ^:private title-placeholder "Title")
@@ -122,6 +123,7 @@
   (let [sending? (r/atom false)]
     (fn [{:keys [id title recipe_count]}]
       [:div.modal-backdrop {:on-click state/stop-deleting-scope}
+       [page-lock/while-mounted]
        [:div.modal {:on-click #(.stopPropagation %)}
         [:h2 "Delete this Scope?"]
         [:div.modal-subtitle title]
