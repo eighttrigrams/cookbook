@@ -15,6 +15,12 @@
   every description up front, which would make the collapse cosmetic and
   contradict the API's own rule.
 
+  **And an expanded card shows the first ten blocks of that body rather than all
+  of it**, with a See more for the rest — tracker's gesture, and the same
+  argument as the collapse one level down: a card that unfolds to full length
+  pushes the shelf off the screen. `clampable-body` is where that lives, and the
+  Recipe's own page is where a body is still rendered whole.
+
   Recipes are versioned. The card shows which version it is on; every save that
   changes something makes the next one. Beside that it shows where those versions
   came from — `3(machine)/17(ui)` — from counts the listing endpoint aggregates,
@@ -156,17 +162,99 @@
                               (fn [s] (if (contains? s %) (disj s %) (conj s %))))}]
          [:button {:on-click submit :disabled (str/blank? @title)} "Add"]]))))
 
+(def ^:private visible-blocks
+  "How many blocks of a body an unexpanded card shows. Tracker's number, from
+  `ui.components.task-item/clampable-description`, and it is the same number here
+  because being the same gesture in both apps is the point of copying it at all."
+  10)
+
+(defn- fence-line?
+  "A line that opens or closes a fenced code block. Only ``` and ~~~ at the start
+  of a line count, which is what marked's block tokenizer reads as a fence too;
+  inline triple backticks in the middle of a sentence are not one."
+  [line]
+  (some? (re-find #"^\s*(```|~~~)" line)))
+
+(defn- body-blocks
+  "The body cut into the blocks a reader sees. Blank lines are the boundaries,
+  as in tracker's `markdown-blocks` — **except inside a fenced code block**,
+  where a blank line is part of the code and not a break between two thoughts.
+
+  That exception is why this is a loop over lines rather than tracker's one-line
+  `str/split`, and it is cookbook's own case rather than a refinement of
+  tracker's: the bodies here are technical recipes whose fences routinely have
+  blank lines in them (`markdown.cljs` gives this field the full parser and the
+  highlighter for exactly that reason), so a naive split both counts one code
+  listing as as many blocks as it has blank lines and can cut between two of
+  them — leaving the visible half with an unclosed fence, which marked then reads
+  as code running to the end of the text. Splitting on prose boundaries only
+  means the cut can never land inside a fence, so nothing downstream has to
+  repair one."
+  [text]
+  (loop [lines (str/split-lines (or text ""))
+         fenced? false
+         current []
+         done []]
+    (if-let [line (first lines)]
+      (let [fence? (fence-line? line)
+            ;; A fence line toggles the state and belongs to the block it bounds,
+            ;; whichever end of the pair it is.
+            inside? (if fence? (not fenced?) fenced?)]
+        (if (and (not inside?) (not fence?) (str/blank? line))
+          (recur (rest lines) inside? []
+                 (cond-> done (seq current) (conj (str/join "\n" current))))
+          (recur (rest lines) inside? (conj current line) done)))
+      (cond-> done (seq current) (conj (str/join "\n" current))))))
+
+(defn- clampable-body
+  "The rendered body, abbreviated until he asks for the rest.
+
+  **Expanding a card is not a request to read the whole Recipe**, it is a look at
+  what the retrieval index could not say — and a body that arrives at full length
+  pushes the next card off the screen, which is the shelf's own job undone. So an
+  expansion shows the first `visible-blocks` blocks and a See more, and the whole
+  body is one click further on. The Recipe's own page still renders it entire
+  (`views.recipe/found`): a page is where a reader has said they are reading this
+  one, and nothing there is competing for the screen.
+
+  This is tracker's `clampable-description`, ported — same threshold, same
+  one-way expansion, same quiet `.see-more` affordance rather than a button —
+  down to keeping the state in a component-local ratom, which is why collapsing
+  the card and expanding it again comes back abbreviated: the component goes with
+  the collapse, and where the reader had got to in a card they have shut is not
+  worth a key in app state.
+
+  Two things of tracker's are deliberately **not** here. There is no
+  `content-type` arm, because every body in cookbook is markdown — the html
+  escape hatch over there exists for mail. And the click needs no
+  `stopPropagation`: tracker's description sits inside the row that opens the
+  item, while `.card-body` is a sibling of the header that toggles the card, so
+  there is no ancestor handler to swallow. Adding one would be a guard against
+  nothing, and would suggest to the next reader that there is."
+  [text]
+  (let [expanded? (r/atom false)]
+    (fn [text]
+      (let [blocks (body-blocks text)
+            clamped? (and (not @expanded?) (> (count blocks) visible-blocks))]
+        [:div.card-body
+         [markdown/render (if clamped?
+                            (str/join "\n\n" (take visible-blocks blocks))
+                            text)]
+         (when clamped?
+           [:span.see-more {:on-click #(reset! expanded? true)} "See more"])]))))
+
 (defn- card-body
   "`detail` is nil until the fetch this expansion started comes back.
 
   The body is the one field that gets the full markdown parser, and the only one
   that can carry a fenced code block — so the highlighter is only ever asked for
-  something a card has actually been expanded to see."
+  something a card has actually been expanded to see. It is also asked for less
+  than the whole of that: see `clampable-body`."
   [detail]
   (if detail
     (if (str/blank? (:description detail))
       [:div.card-body-empty "No body yet."]
-      [:div.card-body [markdown/render (:description detail)]])
+      [clampable-body (:description detail)])
     [:div.card-body-loading "Loading…"]))
 
 (def ^:private scope-badge-hint

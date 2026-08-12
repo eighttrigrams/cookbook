@@ -135,6 +135,9 @@ which is what reading a Recipe *is*.
     (<contents of the file>).save()        — a version-making save; builds its own fixture
     (<contents of the file>).provenance()  — the provenance view; needs provenance-seed.py
     (<contents of the file>).filing()      — the Scope picker; needs the same seed
+    (<contents of the file>).draftProvenance([token])
+                                           — the draft preview; builds its own two
+    (<contents of the file>).clampedBody() — the shelf's abbreviation; builds its own
 
 The two cold loads cannot share a context with the others, or with each other: the load
 each is about replaces the JS context, which is the whole point of them. There are two
@@ -201,6 +204,14 @@ Recipe would half-run from a Recipe page and produce two false reds.
     30  the toggle is in the panel's corner, in both modes
     20  a toggle files the Recipe, and the version does not move       (filing)
     21  two chips in one frame both land
+    33  an insertion leaves every other line as the API had it (draftProvenance)
+    34  the inserted line previews at 1.00 — his
+    35  the preview is what the save produces, line for line
+    36  past the alignment budget the preview says untold, not "yours"
+    37  an expanded card abbreviates a long body                       (clampedBody)
+    39  the abbreviation keeps a fenced code block whole
+    38  See more shows the rest of the body, and goes
+    40  a short body is shown whole, with nothing to press
 
 6 is out of sequence for the reason 11 is in `checks.js`: it is about a page that is
 *open*, and that is where one is. It was written after the fact — the first version of
@@ -368,10 +379,69 @@ on the backend nREPL and pass it in:
 The phase notes which of the two routes it took, so a run always says on the record
 whether it authenticated as documented.
 
+### `clampedBody()` — the shelf abbreviates, and says there is more
+
+*when uncollapsing a card, it should not show the full text immediately. rather it
+should be abbreviated and show a show more button exactly as tracker does.* The clamp
+is tracker's `ui.components.task-item/clampable-description`, ported into
+`views.recipes/clampable-body`: the first `visible-blocks` blocks of the body and a
+`See more`, one-way, with the state in a component-local ratom.
+
+The phase **builds its own fixture** and needs no machine token — nothing here is
+about authorship, so the plain POST dev reads as the owner's is enough. It builds
+rather than borrows for `save()`'s reason turned around: what these checks need is a
+body *longer than the threshold*, and `SUBJECT` is two blocks, which would make 37, 38
+and 39 vacuously green. `CHECK-CLAMP` is `visible-blocks + 4` blocks — nine
+paragraphs, a fenced code block, four more paragraphs — and `cleanup.py` takes it out
+with everything else called `CHECK-`.
+
+**The threshold is read out of the app rather than written down here.** The phase
+takes `views.recipes/visible-blocks` off the namespace, so turning the app's 10 into a
+5 does not redden anything — which is the point. A suite holding its own copy would go
+red on a decision that had been made deliberately, and a copy "kept in sync" would
+prove nothing at all. It reads `body-blocks` for the same reason, in 40.
+
+**The fixture's code fence is placed where a blank-line split cuts it in half.** Nine
+paragraphs put its three pieces at naive blocks 9, 10 and 11, so tracker's regex shows
+two of them and leaves the fence open — the failure 39 exists for, and cookbook's own
+case rather than a refinement of tracker's: the bodies here carry code with blank
+lines in it, which is why this field gets the full parser and the highlighter at all.
+So 39 asserts *that the fixture is still cut that way* as well as the outcome. A
+fixture that stopped being cut would leave the check green while proving nothing, and
+this one is built by the phase itself — so unlike check 8's trailing newline it cannot
+drift without somebody editing this file, and it is an assertion rather than a note.
+
+**39 runs before 38**, because 38 is what asks for the rest and 39 is about the
+abbreviated reading. 40 is the control, and it is not ceremony: *every* card wearing a
+See more is what a threshold of zero looks like, and M52 is that mistake — it passes
+37, 38 and 39 without any of them noticing.
+
+**22 was found red before any of this was written, and it is worth knowing why.** Its
+last conjunct was `barOnTheShelf.right.length === 4` — three page selectors and the
+theme toggle — and the Deleted page put a fourth selector in that slot, so the check
+had been failing since 🗑 joined the bar, for a decision made on purpose. It reads
+`barOnTheShelf.right.length > here.right.length` and the theme toggle's presence now:
+the shelf's half of 22 is a guard against comparing the page against nothing, and a
+census of the bar is not what makes a Recipe page's slot a *narrowing*. The exactness
+stays on the page's own slots, where the claim is. Nothing in the clamp's work touches
+the top bar, and 22 is the one check in this suite that a fifth page would have
+reddened again.
+
+Check 1 in `shelf()` gained a step for the same change: it compares the body across
+the card and the page, so it now presses `See more` if there is one before reading the
+card's. `SUBJECT` is short and there is none today — which is exactly why the step is
+written down rather than left to be discovered. The README invites pointing that
+constant at another published Recipe with a body, and a long one would have reddened
+check 1 for a card that was behaving correctly.
+
 ### The mutations
 
 | | the edit |
 |---|---|
+| **M49** | `clamped?` to `false` in `clampable-body` — the state before this change, a card that shows the whole body the moment it opens |
+| **M50** | `blocks` from `str/split` on blank lines, as tracker's `markdown-blocks` does, instead of `body-blocks` |
+| **M51** | key the affordance off the body instead of the state — `(when (> (count blocks) visible-blocks) …)` — so it survives being pressed |
+| **M52** | `(> (count blocks) 1)` in `clamped?` — a threshold of one block, with the cut left where it was |
 | **M46** | `draft-cautions` back to the index-and-text rule it replaced — a draft line keeps its caution only at the same index with the same text |
 | **M47** | in `draft-cautions`, `(nil? m) nil` instead of `1.0` — the alignment is right and the line being typed is left untold |
 | **M48** | in `aligned-to-stored`, `:unknown` collapsed to `nil` on the over-budget branch — an alignment that was never computed reads as *you typed all of this* |
@@ -511,6 +581,21 @@ reddens 30 alone. M45 — the legend row rendered unconditionally — reddens 30
 12** as well, which is worth knowing: 11 asserts the legend goes away with the view and
 12 asserts it never appears without a `caution` to explain, so an empty row is three
 different lies at once.
+
+**M49 to M52 are the abbreviation's, and each of the four reddens a different check.**
+That is the run they were written from, and it is why there are four checks rather than
+two. **M49** — no clamp at all, which is the state this change replaced — reddens 37
+with all fourteen blocks on the card and 38 on `nothing to click: .see-more`, and
+leaves 39 and 40 green: a body shown whole trivially has its fence whole, which is
+worth knowing, because it says 39 is not a second reading of 37. **M50 is the one to
+run**: it reddens **39 alone**, with `codeLinesShown: ['A']` and the listing rendered
+as `;; MARK-10-CODE-A\n(defn a [] :a)` — two lines of code the reader can see the
+beginning of, an unclosed fence, and 37 green throughout because the tenth block's
+marker happens to be inside the code. **M51** reddens 38 on its second half only:
+the whole body arrives and the See more is still sitting under it, which is the
+control-that-did-nothing a check reading only the text would have called a pass.
+**M52** reddens **40 alone** — `Sourdough starter`, two blocks, wearing a See more,
+with `threshold: 10` still in the evidence beside it.
 
 **M46 to M48 are the draft preview's, and they are three different failures rather
 than three strengths of one.** M46 is the bug as reported: 33 goes red with four

@@ -437,6 +437,22 @@ html.dark-mode .pending-badge { background: rgba(245, 158, 11, 0.18); }
   font-size: 0.88em;
 }
 
+/* The way to the rest of an abbreviated body. Tracker's `.see-more`, in this
+   app's accent: a quiet underlined phrase and not a `button`, because the shelf's
+   one real button is Page and a second filled control in the same card would
+   compete with it. `display: block` is the difference from tracker's, whose
+   description ends in a paragraph it can sit beside; here the block above is a
+   rendered markdown tree that may well end in a `pre`, and an inline affordance
+   trailing one reads as part of the code. */
+.see-more {
+  display: block;
+  margin-top: 8px;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 0.85em;
+  text-decoration: underline;
+}
+
 .card-footer {
   display: flex;
   align-items: center;

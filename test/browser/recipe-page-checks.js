@@ -18,19 +18,24 @@
 //     (<contents of this file>).save()        — a version-making save; builds its own
 //     (<contents of this file>).provenance()  — the provenance view; needs its seed
 //     (<contents of this file>).filing()      — the Scope picker; needs the same seed
+//     (<contents of this file>).draftProvenance([token])
+//                                             — the draft preview; builds its own two
+//     (<contents of this file>).clampedBody() — the shelf's abbreviation; builds its own
 //
 // Each returns `{passed, of, failed, results, notes}`. See README.md in this
 // directory for the run and for the mutation each check was watched to fail
 // against, and for what this suite reads out of the dev database.
 //
-// **Four of the seven phases write nothing.** `SUBJECT` is read and the only trace
-// those reads leave is the `view_count` they move — which is the number the shelf is
-// ranked by, and moving it is what reading a Recipe *is*. The editor is opened,
-// prefilled and left by Cancel, never saved. The two that write say so at length and
-// neither writes to anything of his: `filing()` files and unfiles the seeded
-// `CHECK-PROV`, and `save()` — the only phase that makes a *version* — builds a
-// `CHECK-SAVE` of its own to make it on, because a save moves the ladder of cautions
-// the provenance phase reads.
+// **Four phases write nothing.** `SUBJECT` is read and the only trace those reads
+// leave is the `view_count` they move — which is the number the shelf is ranked by,
+// and moving it is what reading a Recipe *is*. The editor is opened, prefilled and
+// left by Cancel, never saved. The ones that write say so at length and none of them
+// writes to anything of his: `filing()` files and unfiles the seeded `CHECK-PROV`,
+// `save()` — the only phase that makes a *version* — builds a `CHECK-SAVE` of its own
+// to make it on, because a save moves the ladder of cautions the provenance phase
+// reads, and `draftProvenance()` and `clampedBody()` each build the fixtures their
+// property needs and cannot borrow. Every one of those is a CHECK- Recipe, which is
+// what `cleanup.py` looks for.
 //
 // Every check is isolated and every evidence object is lazy, for the reason
 // `checks.js` gives at length: a mutation that makes one selector return null must
@@ -149,6 +154,20 @@
       // what fetches a body at all; the listing never carried one.
       await step('expand the card', () => clickIn(cardFor(SUBJECT), '.card-header'));
       await until(() => cardFor(SUBJECT)?.querySelector('.card-body'));
+      // **A card abbreviates a long body, so the whole of it has to be asked for
+      // before the two surfaces can be compared.** `SUBJECT` is short and no See
+      // more appears on it today, which is exactly why this is here rather than
+      // left to be discovered: point the constant at a longer Recipe — which the
+      // README invites, and only asks for published-and-has-a-body — and check 1
+      // would go red on a card that is behaving correctly. What it compares is the
+      // body, not how much of it a shelf shows; the abbreviation is checks 37-40's.
+      if (cardFor(SUBJECT)?.querySelector('.see-more')) {
+        await step('ask the card for the whole body',
+                   () => clickIn(cardFor(SUBJECT), '.see-more'));
+        await until(() => !cardFor(SUBJECT)?.querySelector('.see-more'));
+        notes.push('the subject is long enough to be abbreviated on the card; '
+                   + 'pressed See more before comparing the two surfaces');
+      }
       const cardBody = cardFor(SUBJECT)?.querySelector('.card-body')?.textContent?.trim();
       // and the header facts it wears, for check 6
       const BADGES = '.published-badge, .pending-badge, .scope-badge, .version-badge,' +
@@ -256,8 +275,19 @@
                       && here.left.length === 3
                       && here.left[0].startsWith('secondary')       // ← Shelf
                       && !document.querySelector('.top-bar-left .brand')
-                      // the shelf had all three, so this is a narrowing and not a loss
-                      && barOnTheShelf.right.length === 4
+                      // **The shelf's half is a guard against a vacuous comparison
+                      // and not a census of the bar**, which is a correction rather
+                      // than a loosening: it read `=== 4` — three page selectors and
+                      // the theme toggle — and the Deleted page made four selectors,
+                      // so this check went red the day 🗑 joined the bar and stayed
+                      // red for a decision made on purpose. A count here says
+                      // nothing about a Recipe page, which is what the check is
+                      // about; what it needs is that the shelf had *more* up there
+                      // than the page does, so that "narrowed to the toggle" is a
+                      // narrowing. The exactness stays where the claim is, on the
+                      // page's own slots above.
+                      && barOnTheShelf.right.length > here.right.length
+                      && barOnTheShelf.right.some(s => s.startsWith('dark-mode-toggle'))
                       && barOnTheShelf.left.some(s => s.startsWith('brand')),
                 evidence: {onTheShelf: barOnTheShelf, onTheRecipePage: here,
                            selectorsStillHere: selectorsHere}};
@@ -1879,6 +1909,185 @@
       notes.push('left on ' + path() + ', ' + MIXED + ' filed under '
                  + filedIds().length + ' Scope(s)');
       return done({subject: {id, title: subject.title, url: '/recipe/' + id}});
+    },
+
+    // ---- phase eight: the shelf abbreviates a long body ---------------------
+    // Checks 37 to 40. Runs from the shelf and leaves the browser there.
+    //
+    // **It builds its own fixture**, and needs no machine token to do it: nothing
+    // here is about authorship, so the plain POST dev reads as the owner's is
+    // enough. It builds rather than borrows for `save()`'s reason turned around —
+    // what these checks need is a body *longer than the threshold*, and a length
+    // that is the whole point of the fixture is not something a run may depend on
+    // a Recipe of his still having. `SUBJECT` is two blocks and would make 37, 38
+    // and 39 vacuously green.
+    //
+    // It writes one Recipe, files the `created` event any POST files, and leaves
+    // both for `cleanup.py` — which removes CHECK- Recipes *and* their events, for
+    // the reason it uses sqlite at all.
+    clampedBody: async () => {
+      const {check, step, done, notes} = runner();
+      if (!shelf()) throw new Error('this phase is about the shelf, and the page is at '
+                                    + path() + ' — go to / and run it again');
+      const api = async (p, {method, body} = {}) => {
+        const r = await fetch('/api/' + p, {
+          method: method || (body ? 'POST' : 'GET'),
+          headers: {'Content-Type': 'application/json'},
+          body: body === undefined ? undefined : JSON.stringify(body)});
+        let parsed = null;
+        try { parsed = JSON.parse((await r.text()) || 'null'); } catch (e) { parsed = null; }
+        return {status: r.status, body: parsed};
+      };
+
+      // **The threshold is read out of the app and not written down here.** It is
+      // `views.recipes/visible-blocks`, and a copy of the number in this file would
+      // let the two drift with nothing going red: turn the app's 10 into a 5 and a
+      // suite holding its own 10 reddens 37 for a change that was made on purpose,
+      // while a suite that had also been "kept in sync" would prove nothing at all.
+      const VISIBLE = window.et?.cb?.ui?.views?.recipes?.visible_blocks;
+      if (typeof VISIBLE !== 'number')
+        throw new Error('cannot read views.recipes/visible-blocks — has the clamp moved '
+                        + 'namespace, or is this a release build?');
+      const TOTAL = VISIBLE + 4;                       // four blocks past the cut
+      const MARK = n => 'MARK-' + String(n).padStart(2, '0');
+      // Two digits, so that a `includes(MARK(1))` cannot be satisfied by MARK-14.
+      const para = n => MARK(n) + ' a paragraph of the body, one of the ones a reader '
+                        + 'either meets on the card or has to ask for.';
+      // A fenced block **with blank lines in it, placed where a blank-line split
+      // would cut it in half.** Fence-aware it is one block and it is the last one
+      // before the cut; split naively its three pieces are blocks VISIBLE-1,
+      // VISIBLE and VISIBLE+1, so a rule that counts them separately shows two of
+      // them, leaves the fence open, and hides a line of code the reader can see
+      // the beginning of. Check 39 asserts that arrangement as well as the outcome,
+      // because a fixture that stopped being cut by the naive rule would leave 39
+      // green while proving nothing.
+      const CODE = ['```clojure',
+                    ';; ' + MARK(VISIBLE) + '-CODE-A',
+                    '(defn a [] :a)',
+                    '',
+                    ';; ' + MARK(VISIBLE) + '-CODE-B',
+                    '(defn b [] :b)',
+                    '',
+                    ';; ' + MARK(VISIBLE) + '-CODE-C',
+                    '(defn c [] :c)',
+                    '```'].join('\n');
+      const blocks = [];
+      for (let n = 1; n < VISIBLE; n++) blocks.push(para(n));
+      blocks.push(CODE);                               // block VISIBLE, the last shown
+      for (let n = VISIBLE + 1; n <= TOTAL; n++) blocks.push(para(n));
+      const BODY = blocks.join('\n\n');
+      const TITLE = 'CHECK-CLAMP a body longer than a card shows';
+
+      const made = await api('recipes', {body: {
+        title: TITLE, useful_when: 'the shelf must abbreviate a long body',
+        description: BODY}});
+      if (made.status !== 201)
+        throw new Error('could not build the fixture: ' + JSON.stringify(made));
+      notes.push('built ' + TITLE + ' as recipe ' + made.body.id
+                 + ' and left it for cleanup.py');
+
+      // Onto the shelf it goes by a refetch, because the listing this client holds
+      // was fetched before the fixture existed.
+      await step('refetch the listing', () => st.fetch_recipes());
+      await until(() => cardFor(TITLE), 8000);
+      if (!cardFor(TITLE)) throw new Error('the fixture is not on the shelf');
+      await step('expand the fixture', () => clickIn(cardFor(TITLE), '.card-header'));
+      await until(() => cardFor(TITLE)?.querySelector('.card-body'), 8000);
+
+      const body = () => cardFor(TITLE)?.querySelector('.card-body');
+      const shown = () => body()?.textContent || '';
+      const seeMore = () => cardFor(TITLE)?.querySelector('.see-more');
+      const marksIn = t => {
+        const out = [];
+        for (let n = 1; n <= TOTAL; n++) if (t.includes(MARK(n))) out.push(n);
+        return out;
+      };
+      const upTo = n => { const out = []; for (let i = 1; i <= n; i++) out.push(i); return out; };
+
+      // 37. **an expanded card shows the first blocks and holds the rest back.**
+      //     The complaint this came from: *when uncollapsing a card, it should not
+      //     show the full text immediately.* Asserted as the exact set of blocks —
+      //     `1..VISIBLE` present and nothing after them — rather than as "shorter
+      //     than the whole", which a body cut anywhere at all would satisfy.
+      await check('37 an expanded card abbreviates a long body', () => {
+        const marks = marksIn(shown());
+        return {pass: !!body() && !!seeMore()
+                      && marks.join(',') === upTo(VISIBLE).join(','),
+                evidence: {visibleBlocksInTheApp: VISIBLE, blocksInTheFixture: TOTAL,
+                           marksShown: marks, expected: upTo(VISIBLE),
+                           seeMoreOffered: !!seeMore(),
+                           charactersShown: shown().length, charactersStored: BODY.length}};
+      });
+
+      // 39. **the cut falls between blocks and never inside a fenced code block.**
+      //     Cookbook's own case rather than tracker's: these bodies carry code with
+      //     blank lines in it, and a blank-line split both counts one listing as
+      //     three blocks and can cut between two of them — leaving the shown half
+      //     with an unclosed fence, which marked reads as code running on to the end
+      //     of the text. So this asserts a *complete* listing: one `pre`, all three
+      //     of its lines, and the naive rule shown to have cut it. That last one is
+      //     what keeps the check from going quietly vacuous.
+      //
+      //     Before 38, because 38 is what asks for the rest — and what this check is
+      //     about is the abbreviated reading.
+      await check('39 the abbreviation keeps a fenced code block whole', () => {
+        const naiveShown = BODY.split(/\r?\n\r?\n+/).slice(0, VISIBLE).join('\n\n');
+        const naiveCutsTheFence = ((naiveShown.match(/```/g) || []).length % 2) === 1;
+        const pres = [...(body()?.querySelectorAll('pre') || [])];
+        const lines = ['A', 'B', 'C'].filter(x => shown().includes('CODE-' + x));
+        return {pass: naiveCutsTheFence && pres.length === 1 && lines.length === 3,
+                evidence: {theFixtureIsCutByABlankLineSplit: naiveCutsTheFence,
+                           preBlocks: pres.length, codeLinesShown: lines,
+                           codeAsRendered: pres[0]?.textContent}};
+      });
+
+      // 38. **See more shows the whole body and stops offering.** Both halves: an
+      //     affordance that stays after it has been used reads as a control that did
+      //     nothing, and it is the second press that would have nothing left to do.
+      await check('38 See more shows the rest of the body, and goes', async () => {
+        clickIn(cardFor(TITLE), '.see-more');
+        await until(() => !seeMore());
+        const marks = marksIn(shown());
+        return {pass: marks.join(',') === upTo(TOTAL).join(',') && !seeMore(),
+                evidence: {marksShown: marks, expected: upTo(TOTAL),
+                           seeMoreStillThere: !!seeMore(),
+                           charactersShown: shown().length, charactersStored: BODY.length}};
+      });
+
+      // 40. **a body short enough to show gets no affordance at all**, and the
+      //     control matters here as much as the clamp: *every* card wearing a See
+      //     more is what a threshold of zero looks like, and it would pass 37 and 38
+      //     without either of them noticing. `SUBJECT` is the short Recipe the rest
+      //     of this file already depends on being there; the check reads its block
+      //     count out of `body-blocks` rather than assuming it, so a run against a
+      //     database where it has grown says which it was.
+      await check('40 a short body is shown whole, with nothing to press', async () => {
+        const row = rowFor(SUBJECT);
+        if (!row) throw new Error('no Recipe named ' + SUBJECT + ' on the shelf — see README');
+        if (!cardFor(SUBJECT)?.querySelector('.card-body')) {
+          clickIn(cardFor(SUBJECT), '.card-header');
+          await until(() => cardFor(SUBJECT)?.querySelector('.card-body'), 8000);
+        }
+        const stored = ((stateGet('details') || {})[row.id] || {}).description || '';
+        // `c.count` and not `.length`: `body-blocks` answers with a cljs vector, whose
+        // `.length` is `undefined` — and `undefined <= 10` is false, so the first
+        // version of this check went red with no `blocksInIt` in its evidence at all,
+        // because `JSON.stringify` drops the key. Which is the shape of a check that
+        // fails for a reason inside itself.
+        const count = c.count(window.et.cb.ui.views.recipes.body_blocks(stored));
+        return {pass: count > 0 && count <= VISIBLE
+                      && !!cardFor(SUBJECT)?.querySelector('.card-body')
+                      && !cardFor(SUBJECT)?.querySelector('.see-more'),
+                evidence: {subject: SUBJECT, blocksInIt: count, threshold: VISIBLE,
+                           seeMoreOffered: !!cardFor(SUBJECT)?.querySelector('.see-more')}};
+      });
+
+      await step('collapse the two cards this phase opened', () => {
+        clickIn(cardFor(TITLE), '.card-header');
+        clickIn(cardFor(SUBJECT), '.card-header');
+      });
+      notes.push('left on ' + path());
+      return done({fixture: {id: made.body.id, title: TITLE, blocks: TOTAL}});
     },
   };
 })()
