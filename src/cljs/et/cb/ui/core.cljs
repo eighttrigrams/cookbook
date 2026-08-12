@@ -3,6 +3,7 @@
             [reagent.core :as r]
             [et.cb.ui.state :as state]
             [et.cb.ui.views.diff :as diff]
+            [et.cb.ui.views.deleted :as deleted]
             [et.cb.ui.views.inbox :as inbox]
             [et.cb.ui.views.recipe :as recipe]
             [et.cb.ui.views.recipe-modals :as recipe-modals]
@@ -210,6 +211,18 @@
           :class (when (= :scopes page) "active")
           :title "Scopes"}
          "▦"])
+      ;; The Deleted page, beside the Scopes for the same reason and with the same
+      ;; borrowed styling: it is a page only the owner has, reached by a button
+      ;; because this shell has no router. **No count on it**, unlike the Inbox: a
+      ;; number there would be a standing reminder to destroy things, and a tombstone
+      ;; is not work waiting to be done — leaving one alone forever is a legitimate
+      ;; way to use this page.
+      (when (and chrome? logged-in?)
+        [:button.settings-toggle.deleted-toggle
+         {:on-click state/toggle-deleted
+          :class (when (= :deleted page) "active")
+          :title "Deleted — Recipes off the shelf, still readable"}
+         "🗑"])
       ;; only the owner has a setting to make: the machine user's password
       (when (and chrome? logged-in?)
         [:button.settings-toggle
@@ -242,7 +255,7 @@
   "The pages a signed-out caller is sent away from. Named as a set, because the
   question the gate below asks changed the day a page arrived that is *not* one of
   these — see `page-body`."
-  #{:scopes :settings :inbox})
+  #{:scopes :settings :inbox :deleted})
 
 (defn- page-body
   "Exactly one of the five, chosen by `:page` — the shelf is not a backdrop the
@@ -271,6 +284,7 @@
     :scopes [scopes/scopes-page]
     :settings [settings/machine-user-block]
     :inbox [inbox/inbox-page]
+    :deleted [deleted/deleted-page]
     :recipe [recipe/recipe-page]
     [:div.main-layout
      [recipes/recipes-tab]]))

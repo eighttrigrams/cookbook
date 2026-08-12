@@ -125,6 +125,7 @@
 (declare fetch-machine-user)
 (declare fetch-scopes)
 (declare fetch-inbox)
+(declare fetch-deleted)
 (declare fetch-recipe-page!)
 
 (defn- show-page!
@@ -192,6 +193,9 @@
       ;; because /api/scopes answers anybody else 403.
       :inbox (do (fetch-inbox)
                  (when (:logged-in? @*app-state) (fetch-scopes)))
+      ;; Freshness, and the same reason the queue is refetched: an agent may have
+      ;; deleted something since he last looked, and this page is where that shows.
+      :deleted (fetch-deleted)
       ;; And this one is not freshness at all: the page has nothing to draw until
       ;; the body arrives, because the listing never carried one.
       ;;
@@ -211,9 +215,9 @@
       nil)))
 
 (defn go-to-page
-  "Show one page: `:shelf`, `:settings`, `:scopes`, `:inbox` or `:recipe` — the
-  last one takes the Recipe's id as a second argument, and is the only one that
-  needs anything beyond its own name.
+  "Show one page: `:shelf`, `:settings`, `:scopes`, `:inbox`, `:deleted` or
+  `:recipe` — the last one takes the Recipe's id as a second argument, and is the
+  only one that needs anything beyond its own name.
 
   **One value and not four booleans, so 'both pages are open' is a state that
   cannot be reached** rather than one that has to be defended wherever the state
@@ -333,6 +337,7 @@
 (defn toggle-scopes [] (toggle-page :scopes))
 
 (defn toggle-inbox [] (toggle-page :inbox))
+(defn toggle-deleted [] (toggle-page :deleted))
 
 ;; ---------------------------------------------------------------------------
 ;; auth
@@ -492,6 +497,40 @@
 ;; waiting.
 
 (declare stop-diff)
+
+(defn fetch-deleted
+  "The tombstones — what has been deleted and not yet destroyed, newest first.
+
+  Its own key rather than a corner of `:recipes`: these are not on the shelf, and a
+  listing that mixed them would have every reader of `:recipes` asking which kind of
+  row it was holding. `:deleted` is the page's whole state."
+  []
+  (api/fetch-json "/api/deleted" (auth-headers)
+    #(swap! *app-state assoc :deleted %)))
+
+(defn purge-recipe
+  "Destroy one tombstone for good, and then re-read the page it was on.
+
+  `on-done` runs on failure too, because it is what closes the confirmation — the
+  same shape `publish-recipe` and `delete-recipe` use, and for the same reason: a
+  dialog left open over an error banner is a dialog the reader has to dismiss twice.
+
+  The queue is refetched as well as the list, and that is not belt-and-braces: the
+  entries naming this Recipe are still in it and have just stopped being openable
+  (`recipe_exists` goes to 0), so a page holding the old copy would go on offering a
+  link to text that is gone. `fetch-scopes` because a purge takes the associations
+  with it, though the counts do not move — they stopped counting it when it was
+  deleted."
+  [id on-done]
+  (api/delete-simple (str "/api/deleted/" id) (auth-headers)
+    (fn [_]
+      (fetch-deleted)
+      (fetch-inbox)
+      (fetch-scopes)
+      (on-done))
+    (fn [resp]
+      (on-done)
+      ((err-handler "Could not destroy the deleted Recipe") resp))))
 
 (defn fetch-inbox
   "The queue.
@@ -839,10 +878,17 @@
    (let [request (-> (swap! *app-state update-in [:versions-request id] (fnil inc 0))
                      (get-in [:versions-request id]))]
      (api/fetch-json (str "/api/recipes/" id "/versions") (auth-headers)
-       (fn [{:keys [versions]}]
+       (fn [{:keys [versions deleted_at]}]
          (when (= request (get-in @*app-state [:versions-request id]))
            (let [versions (vec versions)]
              (swap! *app-state assoc-in [:versions id] versions)
+             ;; **Kept beside the list rather than in it**, and it is the only way this
+             ;; client can learn that what it is reading has been deleted: `/api/
+             ;; recipes/:id` answers 404 for a tombstone, so `:details` never holds
+             ;; one, and this is the one read that sees it (`db.recipe/list-versions`).
+             ;; A separate map keyed by id, not a key on `:versions`, because that
+             ;; value is a vector every reader walks.
+             (swap! *app-state assoc-in [:versions-deleted-at id] deleted_at)
              (when on-landed (on-landed versions)))))))))
 
 (defn- forget-versions!
@@ -1314,9 +1360,11 @@
         ((err-handler "Could not publish") resp)))))
 
 (defn delete-recipe
-  "Takes the recipe and its whole version history with it, and nothing in the
-  API brings any of it back — which is why a confirmation stands in front of
-  this call.
+  "Takes the Recipe off the shelf. Since 012 that is a **tombstone** server-side —
+  the row, its history and its filing all survive — so the confirmation in front of
+  this call is no longer the last word: what it destroys is destroyed on the Deleted
+  page, by `purge-recipe`. The dialog still asks, because leaving the shelf is a
+  decision, and it says what is true now.
 
   `on-done` runs on failure too, for the same reason it does in
   `publish-recipe`: it is what closes the confirmation, and the error banner
@@ -1329,8 +1377,11 @@
   (let [done #(when on-done (on-done))]
     (api/delete-simple (str "/api/recipes/" id) (auth-headers)
       (fn [_]
-        ;; The whole history went with it server-side, so the cached copy of it
-        ;; goes too — and the viewer closes if it was the thing being read,
+        ;; The cached row and history go, and that is now about the *reads* rather
+        ;; than about the data: the row survives as a tombstone and every read of it
+        ;; in this client's audience answers nothing, so a cached copy would be the
+        ;; one place it still looked alive. The Deleted page fetches its own list.
+        ;; The viewer closes if it was the thing being read,
         ;; rather than stepping through versions of a recipe that is gone. Both
         ;; readings, and the second one needs it as much: deleting a Recipe
         ;; resolves its pending proposal in the same transaction, so a viewer left
@@ -1394,6 +1445,20 @@
   (if (get-in @*app-state [:details id])
     (swap! *app-state assoc k id)
     (fetch-detail id (fn [_] (swap! *app-state assoc k id)))))
+
+(defn start-purging
+  "Latch the purge confirmation open on one tombstone.
+
+  A plain `assoc` and **not** `open-on-detail!`, which is what the publish and delete
+  confirmations use: those read their Recipe out of `:details`, and a tombstone is the
+  one thing that map cannot hold — every read that fills it excludes the deleted. The
+  Deleted page's own list is where its title and version come from, so there is nothing
+  to fetch and nothing to wait for."
+  [id]
+  (swap! *app-state assoc :purging id))
+
+(defn stop-purging []
+  (swap! *app-state assoc :purging nil))
 
 ;; Publishing asks first. The latch is one-way — nothing in the API takes it
 ;; back off — so a misplaced click is not something an undo could repair.

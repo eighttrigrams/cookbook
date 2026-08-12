@@ -496,7 +496,15 @@
    (let [recipe (jdbc/execute-one! (db/get-conn ds)
                   (sql/format {:select (cond-> (select-columns lean? audience)
                                          (not (visitor? audience))
-                                         (conj (db.proposal/pending-exists-clause :recipes.id)))
+                                         (conj (db.proposal/pending-exists-clause :recipes.id))
+                                         ;; **Only the read that may find a tombstone
+                                         ;; selects the stamp.** Putting it in
+                                         ;; `lean-select-columns` would name a column
+                                         ;; that is null in every other read here (they
+                                         ;; all exclude tombstones) and would put it in
+                                         ;; a visitor's projection, which is a key
+                                         ;; saying something about the owner's shelf.
+                                         tombstones? (conj :deleted_at))
                                :from [:recipes]
                                :where [:and [:= :id id]
                                        (if (and tombstones? (not (visitor? audience)))
@@ -1246,4 +1254,12 @@
                                :source (:source current)
                                :current true)]
                        history)
-       :total (inc (count history))})))
+       :total (inc (count history))
+       ;; **The one read that sees a tombstone says that it is one**, and that is why
+       ;; the key is here rather than being asked for separately. Nothing else can
+       ;; tell a client: `GET /api/recipes/:id` answers 404 for a deleted Recipe, so
+       ;; the surface that opens one out of the queue would have had no way to know
+       ;; what it was reading — and it has to know, because a page that offers to file
+       ;; or approve something deleted is a page whose buttons all fail. nil for a
+       ;; Recipe on the shelf, so the absence is the ordinary case.
+       :deleted_at (:deleted_at current)})))

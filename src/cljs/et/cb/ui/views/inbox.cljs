@@ -90,23 +90,27 @@
 (defn- openable?
   "Whether this row's change can be looked at in the viewer.
 
-  Two conditions, and the second is the one that is easy to miss. A `deleted` entry
-  cannot be opened — the Recipe and its whole history are gone, so there is no
-  version list and a link would 404. But **the `created` and `modified` entries
-  above it are just as dead**, and one of them can still be sitting unseen in the
-  queue after the `deleted` entry has been acknowledged. So the kind is not the
-  question; whether the Recipe is still there is, and the server answers it with
-  `recipe_exists` because this client cannot: its copy of the shelf may be narrowed
-  by a search, so 'not in the listing' does not mean 'not there'.
+  **One condition now, and the kind is no longer part of it.** *for deleted, i should
+  also be able to visit. curerntly i cant click.* Since the delete became a tombstone
+  (012) a deleted Recipe keeps its text, so `deleted` opens like the other three — and
+  the question that is left is the one this always came down to: is there anything
+  behind this entry to read. The server answers it with `recipe_exists`, because this
+  client cannot: its copy of the shelf may be narrowed by a search, so 'not in the
+  listing' does not mean 'not there'.
 
-  **`proposed` is in here now**, and it passes the second condition free: deleting a
-  Recipe resolves its pending proposal and takes the entry out of the queue in the
-  same transaction, so every `proposed` entry that is in the list at all has its
-  Recipe. It is asked anyway rather than assumed, because the flag is what this
-  question is, and one kind exempting itself from it is how the next kind would."
-  [{:keys [kind recipe_exists]}]
-  (and (contains? #{"created" "modified" "proposed"} kind)
-       (= 1 recipe_exists)))
+  So the kind set is gone rather than gaining a fourth member. It was there to say
+  *`deleted` cannot be opened*, and that sentence is what changed; keeping the set and
+  adding `deleted` to it would have left a filter that admits everything, which is a
+  condition waiting to be mistaken for a rule.
+
+  What still cannot be opened is a Recipe that has been **purged** — the page that
+  lists tombstones can destroy one for good, and then the entries naming it go back to
+  being un-openable, which is what the flag says. And note the half that is easy to
+  miss either way: a deleted Recipe's `created` and `modified` entries are in exactly
+  the same state as its `deleted` one, and one of them can still be sitting unseen
+  after the `deleted` one has been acknowledged."
+  [{:keys [recipe_exists]}]
+  (= 1 recipe_exists))
 
 (defn- approve-warnings
   "The two things about approving a proposal that must not be left to be discovered
@@ -180,6 +184,11 @@
      {:title (case kind
                "created" "Read what the agent wrote"
                "modified" "See what this save changed"
+               ;; A `deleted` row opens the version it was deleted on, which is the
+               ;; last thing the Recipe said. There is no *change* to show — the delete
+               ;; wrote no version — so this promises the text and not a diff, the way
+               ;; the `created` line beside it learnt to.
+               "deleted" "Read this Recipe as it was when it was deleted"
                "proposed" "Read what the agent proposes, against this Recipe's text")
       :on-click (if (= "proposed" kind)
                   ;; By the **event** id, which is what the two answers are keyed by,
@@ -190,12 +199,11 @@
                   #(state/start-diff-at-version recipe_id version))}
      recipe_title]
     ;; Plain text, and told why: a title that simply stopped being clickable
-    ;; would read as the row being broken.
+    ;; would read as the row being broken. One sentence for both kinds now, because
+    ;; there is one reason left — the Recipe was purged from the page that lists what
+    ;; has been deleted, and nothing serves its text again.
     [:span.inbox-title
-     {:title (if (= "deleted" kind)
-               "This Recipe is gone, so there is nothing left to open"
-               "This Recipe has since been deleted, so there is nothing left
-                to open")}
+     {:title "This Recipe has been purged, so there is nothing left to open"}
      recipe_title]))
 
 (defn- row

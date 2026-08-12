@@ -698,6 +698,40 @@ html.dark-mode .pending-badge { background: rgba(245, 158, 11, 0.18); }
    surface the bar is a back button and one toggle, which is the narrowest it ever is,
    and `mobile.css` was measured at 390px. A bar that grows is the thing to re-measure,
    not this number to fudge. */
+/* The Deleted page. A panel and rows, borrowing the queue's and the Scopes page's
+   shapes rather than inventing a third: one row per tombstone, the title on the left
+   with its badges, the version and the date in the middle, the one destructive button
+   on the right. `.deleted-row-meta`'s `margin-left: auto` is what pushes the two
+   halves apart, the way the queue's rows do it. */
+.deleted-panel {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 14px;
+  padding: 20px 24px 24px;
+  margin-bottom: 24px;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+.deleted-list { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
+.deleted-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  background: var(--glass-bg-subtle);
+}
+.deleted-row-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.deleted-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+  white-space: nowrap;
+}
+.deleted-row-actions { display: flex; gap: 8px; }
+
 .diff-overlay {
   position: fixed;
   top: calc(24px + 32px + 24px);
@@ -763,6 +797,17 @@ html.dark-mode .pending-badge { background: rgba(245, 158, 11, 0.18); }
   padding: 0 0 16px;
   border-top: 1px solid var(--border-color);
   padding-top: 14px;
+}
+/* Said where the filing picker would have been, and taking its place: one band that
+   says either what this Recipe is filed under or that it is not on a shelf to be
+   filed. Same padding and rule as `.scope-picker.diff-filing`, so the surface has the
+   same three bands whichever of the two it is showing. */
+.diff-deleted-note {
+  margin: 0;
+  padding: 14px 0 16px;
+  border-top: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-size: 0.9em;
 }
 .diff-step { font-variant-numeric: tabular-nums; }
 /* Its own row, under the filing and over the panes. `flex-end` keeps it where the

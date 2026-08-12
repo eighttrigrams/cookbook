@@ -571,14 +571,50 @@
     `state/open-viewer!` fetches the row as it opens, so this is a moment and not a
     state.
   - the picker's own `(seq scopes)` guard, inside it: an owner who has made no
-    Scopes gets no empty control."
+    Scopes gets no empty control.
+
+  **And not on a deleted Recipe at all**, which is the fourth. A tombstone keeps its
+  filing — that is part of what it is for, and the page that lists what has been
+  deleted shows those badges — but filing is a decision about a shelf this Recipe is
+  no longer on, and the PUT behind every chip would be refused: since 012 a deleted
+  Recipe is not writable, and no write path had to learn that. A control whose every
+  click meets an error banner is worse than no control, so the surface draws nothing
+  for one. **Where it learns that from is `:versions-deleted-at` and not `:details`**,
+  which is not a detail: `/api/recipes/:id` answers 404 for a tombstone, so `:details`
+  never holds one at all, and the version list is the one read that sees it. What it
+  draws instead is `deleted-note`."
   [recipe-id]
-  (let [{:keys [logged-in? details]} @state/*app-state]
-    (when (and logged-in? recipe-id (get details recipe-id))
+  (let [{:keys [logged-in? details versions-deleted-at]} @state/*app-state]
+    (when (and logged-in? recipe-id
+               (get details recipe-id)
+               (nil? (get versions-deleted-at recipe-id)))
       [recipe-fields/scope-picker
        {:selected (state/filed-under recipe-id)
         :on-toggle #(state/toggle-recipe-scope recipe-id %)
         :class "diff-filing"}])))
+
+(defn- deleted-note
+  "Said on the surface when what is open is a **deleted** Recipe: it is off the shelf,
+  what is on screen is the version it was deleted on, and nothing here will write.
+
+  *for deleted, i should also be able to visit* — and visiting one has to look
+  different from visiting a Recipe that is still there, or the page is quietly lying
+  about what its buttons would do. This is where the filing picker would have been,
+  and it takes its place rather than sitting beside it: one band, saying either what
+  this Recipe is filed under or that it is not on the shelf to be filed.
+
+  It names the page that can destroy it rather than offering to do it here. Purging is
+  the one irreversible act in this app, and a button for it on a surface reached by
+  reading would be one click from a place nobody came to make decisions."
+  [recipe-id]
+  (let [{:keys [logged-in? versions-deleted-at]} @state/*app-state]
+    (when (and logged-in? (get versions-deleted-at recipe-id))
+      [:p.diff-deleted-note
+       "This Recipe is deleted. What you are reading is the version it was deleted
+        on, and nothing here can change it — it is on the "
+       [:button.inbox-title-link {:on-click #(do (state/stop-diff) (state/go-to-page :deleted))}
+        "Deleted"]
+       " page, where it can be destroyed for good."])))
 
 (defn- shell
   "The surface: the overlay, the page, the header, and whatever the reading puts
@@ -624,6 +660,7 @@
         ;; among the two texts it is not part of. Same order as the Recipe's own
         ;; page, where it sits under the header for the same reason.
         [scope-filing recipe-id]
+        [deleted-note recipe-id]
         ;; **Split/Unified on a row of its own** — *the unified/split view button
         ;; belongs not in that row. but should go below on its own.* It was in the
         ;; header, at the far right, among what the reading *is* and what can be
@@ -661,7 +698,14 @@
     [shell
      {:heading "Versions"
       :recipe-id recipe-id
-      :subject (str (:title recipe)
+      ;; **The listing's title, or the version's own.** A tombstone is not in
+      ;; `:recipes` — nothing deleted is — so a Recipe opened from the queue's
+      ;; `deleted` row or from the Deleted page had no title up here at all, and the
+      ;; subject read as a bare *· 1 version*. Every entry carries the title it was
+      ;; saved with, and the one being shown is the honest fallback: it is the title
+      ;; that belongs to the text on screen, which for a live Recipe is the same
+      ;; string the listing would have given.
+      :subject (str (or (:title recipe) (:title newer))
                     (when (pos? total)
                       (str " · " total (if (= 1 total) " version" " versions"))))
       :nav [:<>
