@@ -119,24 +119,37 @@
 
 (deftest every-entry-says-whether-its-recipe-is-still-there
   ;; Not the same question as `kind`, which is the point: after a create and a
-  ;; delete, the `created` entry names a Recipe that is just as gone as the
-  ;; `deleted` one does — and it can still be unseen after the `deleted` one has
-  ;; been acknowledged, which is exactly when a page would offer a link into a 404.
+  ;; delete, the `created` entry names the same deleted Recipe the `deleted` one
+  ;; does — and it can still be unseen after the `deleted` one has been
+  ;; acknowledged, which is exactly when a page would draw the wrong link.
+  ;;
+  ;; **Both flags, and what each one is for.** Since 012 a delete is a tombstone, so
+  ;; `recipe_exists` stays 1 and the entry can be *opened* — that is the whole reason
+  ;; the tombstone exists — while `recipe_tombstoned` is what tells the page what it
+  ;; is looking at. This test used to assert 0 for the first, which was the truth of
+  ;; a hard delete.
   (let [alive (:id (machine-create! "Still here"))
         doomed (:id (machine-create! "Gone by the end"))]
     (is (every? #(= 1 (:recipe_exists %)) (inbox)) "both are there to begin with")
+
+    (is (every? #(= 0 (:recipe_tombstoned %)) (inbox)) "and neither is deleted")
 
     (is (= 200 (:status (machine :delete (str "/api/recipes/" doomed)))))
     (let [by-recipe (group-by :recipe_id (inbox))]
       (is (= [1] (distinct (map :recipe_exists (get by-recipe alive))))
           "the surviving Recipe's entry still says so")
-      (is (= [0 0] (mapv :recipe_exists (get by-recipe doomed)))
-          "and *both* of the dead Recipe's entries say it is gone — the `created`
-           one as well as the `deleted` one, which is the half a client cannot
-           work out for itself")
-      (testing "and the flag is the truth: those ids really are 404s now"
+      (is (= [0] (distinct (map :recipe_tombstoned (get by-recipe alive)))))
+      (is (= [1 1] (mapv :recipe_exists (get by-recipe doomed)))
+          "and *both* of the deleted Recipe's entries can still be opened — the
+           `created` one as well as the `deleted` one, which is the half a client
+           cannot work out for itself")
+      (is (= [1 1] (mapv :recipe_tombstoned (get by-recipe doomed)))
+          "and both say it is deleted, which is what the page says out loud")
+      (testing "and the flags are the truth: the Recipe is off every read, and its
+                versions are the one thing still readable"
         (is (= 404 (:status (GET-json (str "/api/recipes/" doomed)))))
-        (is (= 200 (:status (GET-json (str "/api/recipes/" alive)))))))
+        (is (= 200 (:status (GET-json (str "/api/recipes/" alive)))))
+        (is (= 200 (:status (h/API :get (str "/api/recipes/" doomed "/versions") {}))))))
 
     (testing "acknowledging the `deleted` entry leaves the dead `created` one
               behind, still flagged — the case the flag exists for"
@@ -144,7 +157,15 @@
         (is (= 200 (:status (h/API :post (str "/api/inbox/" (:id dead-delete) "/seen") {}))))
         (let [left (first (filter #(= doomed (:recipe_id %)) (inbox)))]
           (is (= "created" (:kind left)))
-          (is (= 0 (:recipe_exists left))))))))
+          (is (= 1 (:recipe_exists left)))
+          (is (= 1 (:recipe_tombstoned left))))))
+
+    (testing "purging is what finally makes it un-openable, and the entries stay"
+      (is (= 200 (:status (h/API :delete (str "/api/deleted/" doomed) {}))))
+      (let [left (first (filter #(= doomed (:recipe_id %)) (inbox)))]
+        (is (= 0 (:recipe_exists left)))
+        (is (= 0 (:recipe_tombstoned left)))
+        (is (= 404 (:status (h/API :get (str "/api/recipes/" doomed "/versions") {}))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; what area the change was in
@@ -211,7 +232,7 @@
       (is (= "The old name" (:recipe_title entry)) "the title is as it read then")
       (is (= ["Ops"] (scopes-on entry)) "the badges are where it is filed now"))))
 
-(deftest a-dead-recipes-entries-keep-their-title-and-lose-their-badges
+(deftest a-deleted-recipes-entries-keep-their-title-and-their-badges-until-a-purge
   (let [bread (scope! "Bread")
         {:keys [id]} (machine-create! "Doomed")]
     (machine :put (str "/api/recipes/" id) {:scope_ids [bread]})
@@ -220,10 +241,20 @@
     (is (= 200 (:status (machine :delete (str "/api/recipes/" id)))))
     (let [entries (inbox)]
       (is (= ["created" "modified" "deleted"] (mapv :kind entries)))
-      (is (= [[] [] []] (mapv :scopes entries))
-          "the associations went with the Recipe, so there is simply nothing to draw")
+      (is (= [["Bread"] ["Bread"] ["Bread"]] (mapv scopes-on entries))
+          "a tombstone keeps its filing, so the badges stay — which is most of what
+           triaging a `deleted` row is")
       (is (every? #(= "Doomed" (:recipe_title %)) entries)
-          "and the snapshot title is what is left naming it"))))
+          "with the snapshot title, as always"))
+    (testing "and the purge is what takes the badges"
+      (is (= 200 (:status (h/API :delete (str "/api/deleted/" id) {}))))
+      (let [entries (inbox)]
+        (is (= ["created" "modified" "deleted"] (mapv :kind entries))
+            "the entries survive it, as events do")
+        (is (= [[] [] []] (mapv :scopes entries))
+            "the associations went with the row, so there is simply nothing to draw")
+        (is (every? #(= "Doomed" (:recipe_title %)) entries)
+            "and the snapshot title is what is left naming it")))))
 
 (deftest a-proposed-entry-carries-its-badges-too
   ;; The composition, which is the half neither `list-unseen` nor

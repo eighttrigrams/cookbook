@@ -516,16 +516,67 @@
                 rely on instead of handling a third case"
         (is (every? #{"ui" "machine"} (map :source versions)))))))
 
-(deftest delete-takes-the-history-with-it
+(deftest delete-keeps-the-history-and-hides-the-recipe
+  ;; Migration 012 turned the delete into a tombstone, and this test turned with it:
+  ;; it used to be `delete-takes-the-history-with-it` and asserted the opposite of
+  ;; every line below. What the owner asked for was to be able to visit a deleted
+  ;; Recipe, and this is that promise at the db layer — gone from the reads, and all
+  ;; of it still there.
   (let [{:keys [id]} (create! "Ciabatta")]
     (db.recipe/update-recipe h/*ds* h/*user-id* id {:description "v2"} nil)
     (is (= 1 (h/history-row-count id)))
     (is (= {:success true} (db.recipe/delete-recipe h/*ds* h/*user-id* id)))
-    (is (nil? (db.recipe/get-recipe h/*ds* h/*user-id* id)))
-    (is (nil? (versions-of id)))
-    (testing "the history rows are gone rather than orphaned — nothing enforces
-              the foreign key on this connection"
-      (is (= 0 (h/history-row-count id))))))
+    (testing "it is off every read that goes through the audience gate"
+      (is (nil? (db.recipe/get-recipe h/*ds* h/*user-id* id)))
+      (is (empty? (filter #(= id (:id %)) (db.recipe/list-recipes h/*ds* h/*user-id*))))
+      (is (nil? (db.recipe/version-split h/*ds* h/*user-id* id))))
+    (testing "and its versions are still readable, which is the point of the tombstone"
+      (is (= 2 (:total (versions-of id))))
+      (is (= "v2" (:description (first (:versions (versions-of id))))))
+      (is (= 1 (h/history-row-count id))))
+    (testing "deleting it again is not a second delete"
+      (is (nil? (db.recipe/delete-recipe h/*ds* h/*user-id* id))))
+    (testing "and it cannot be written any more — every write path finds its row
+              through the same gate the reads do"
+      (is (nil? (db.recipe/update-recipe h/*ds* h/*user-id* id {:description "v3"} nil)))
+      (is (nil? (db.recipe/publish-recipe h/*ds* h/*user-id* id)))
+      (is (= 1 (h/history-row-count id))))))
+
+(deftest purging-a-tombstone-takes-the-history-with-it
+  ;; The other half: what `delete-recipe` used to do, now asked for by name on a
+  ;; Recipe that has already been deleted once.
+  (let [{:keys [id]} (create! "Ciabatta")]
+    (db.recipe/update-recipe h/*ds* h/*user-id* id {:description "v2"} nil)
+    (testing "a live Recipe cannot be purged — this is never the delete nobody meant"
+      (is (nil? (db.recipe/purge-recipe! h/*ds* h/*user-id* id)))
+      (is (= 1 (h/history-row-count id))))
+    (db.recipe/delete-recipe h/*ds* h/*user-id* id)
+    (is (= {:success true} (db.recipe/purge-recipe! h/*ds* h/*user-id* id)))
+    (testing "now there really is nothing left"
+      (is (nil? (versions-of id)))
+      (is (empty? (db.recipe/list-deleted h/*ds* h/*user-id*)))
+      (testing "and the history rows are gone rather than orphaned — nothing
+                enforces the foreign key on this connection"
+        (is (= 0 (h/history-row-count id)))))
+    (testing "purging it twice is not a second purge"
+      (is (nil? (db.recipe/purge-recipe! h/*ds* h/*user-id* id))))))
+
+(deftest the-deleted-listing-is-the-tombstones-newest-first
+  (let [{a :id} (create! "First out")
+        {b :id} (create! "Second out")
+        {c :id} (create! "Still here")]
+    (db.recipe/delete-recipe h/*ds* h/*user-id* a)
+    (h/backdate-deleted-at! a "2020-01-01 00:00:00")
+    (db.recipe/delete-recipe h/*ds* h/*user-id* b)
+    (let [deleted (db.recipe/list-deleted h/*ds* h/*user-id*)]
+      (is (= ["Second out" "First out"] (mapv :title deleted)))
+      (is (every? :deleted_at deleted))
+      (testing "the living are not in it"
+        (is (not-any? #(= c (:id %)) deleted)))
+      (testing "and it is lean: a tombstone's text is read through its versions"
+        (is (not-any? #(contains? % :description) deleted))))
+    (testing "and it is one owner's own"
+      (is (empty? (db.recipe/list-deleted h/*ds* (inc h/*user-id*)))))))
 
 (deftest visible-only-in-its-owners-audience
   (let [{:keys [id]} (create! "Private")

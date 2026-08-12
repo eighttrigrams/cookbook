@@ -97,9 +97,12 @@
       (is (= 2 (:version died)) "at the version the Recipe died on")
       (is (= "Doomed" (:recipe_title died))
           "and the title, which is the only thing left that names it")
-      (testing "the Recipe itself really is gone, so these are orphans by design"
+      (testing "the Recipe is off the shelf and still readable — since 012 a delete
+                is a tombstone, so these entries are not orphans and the `deleted`
+                one can be opened, which is what it was asked for"
         (is (nil? (db.recipe/get-recipe h/*ds* h/*user-id* id)))
-        (is (zero? (h/history-row-count id)))))))
+        (is (= 1 (h/history-row-count id)))
+        (is (= 2 (:total (db.recipe/list-versions h/*ds* h/*user-id* id))))))))
 
 (deftest the-title-on-an-event-is-the-title-as-it-read-then
   ;; A snapshot and not a join: the event has to stay readable after the Recipe is
@@ -246,14 +249,29 @@
 ;; reading the queue
 
 (deftest every-entry-says-whether-its-recipe-is-still-there
+  ;; Two flags since 012, because there are two questions: can this entry be opened,
+  ;; and what is it about. A deleted Recipe answers yes to the first — the tombstone
+  ;; keeps the text — and a purge is what finally makes the answer no.
   (let [alive (:id (machine-create! "Still here"))
         doomed (:id (machine-create! "Gone by the end"))]
     (is (= [1 1] (mapv :recipe_exists (db.event/list-unseen h/*ds* h/*user-id*))))
+    (is (= [0 0] (mapv :recipe_tombstoned (db.event/list-unseen h/*ds* h/*user-id*))))
     (db.recipe/delete-recipe h/*ds* h/*user-id* doomed {:human? false})
     (let [by-recipe (group-by :recipe_id (db.event/list-unseen h/*ds* h/*user-id*))]
       (is (= [1] (mapv :recipe_exists (get by-recipe alive))))
-      (is (= [0 0] (mapv :recipe_exists (get by-recipe doomed)))
-          "both of the dead Recipe's entries, not only the `deleted` one"))))
+      (is (= [0] (mapv :recipe_tombstoned (get by-recipe alive))))
+      (is (= [1 1] (mapv :recipe_exists (get by-recipe doomed)))
+          "both of the tombstoned Recipe's entries: there is text behind them")
+      (is (= [1 1] (mapv :recipe_tombstoned (get by-recipe doomed)))
+          "and both say which kind of existing it is, not only the `deleted` one —
+           the `created` entry above it names the same deleted Recipe"))
+    (testing "purging is what takes the text away, and then neither flag is set"
+      (db.recipe/purge-recipe! h/*ds* h/*user-id* doomed)
+      (let [by-recipe (group-by :recipe_id (db.event/list-unseen h/*ds* h/*user-id*))]
+        (is (= [0 0] (mapv :recipe_exists (get by-recipe doomed))))
+        (is (= [0 0] (mapv :recipe_tombstoned (get by-recipe doomed))))
+        (is (= 2 (count (get by-recipe doomed)))
+            "and the entries themselves survive it, as an event always does")))))
 
 (deftest the-recipe-exists-flag-is-right-for-the-nil-owner-too
   ;; **The case that broke, and the reason this test is separate from the one
@@ -268,6 +286,11 @@
     (is (= [1] (mapv :recipe_exists (db.event/list-unseen h/*ds* nil)))
         "his Recipe exists, and the flag has to say so")
     (db.recipe/delete-recipe h/*ds* nil id {:human? false})
+    (is (= [1 1] (mapv :recipe_exists (db.event/list-unseen h/*ds* nil)))
+        "deleted is not gone since 012: the row is still his and still readable")
+    (is (= [1 1] (mapv :recipe_tombstoned (db.event/list-unseen h/*ds* nil)))
+        "and the second flag has the same nil-owner correlation to get right")
+    (db.recipe/purge-recipe! h/*ds* nil id)
     (is (= [0 0] (mapv :recipe_exists (db.event/list-unseen h/*ds* nil)))
         "and when it is really gone, so must the flag")
     (testing "and his queue is his: the other owner's events are not in it"
@@ -340,11 +363,12 @@
         (is (= [["Bread"] ["Bread"] ["Ops"] ["Bread"]]
                (mapv scope-titles-on (db.event/list-unseen h/*ds* h/*user-id*))))))))
 
-(deftest an-entry-outlives-its-recipe-with-its-title-and-without-the-badges
-  ;; The row this whole snapshot design exists for. The associations are part of a
-  ;; Recipe and go with it (`delete-recipe`), the events are records of what happened
-  ;; and stay — so the entry keeps the title it was written with and simply has no
-  ;; badges. No case for it anywhere, and nothing to apologise for on the page.
+(deftest an-entry-outlives-its-recipe-with-its-title-and-keeps-the-badges-until-a-purge
+  ;; The row this whole snapshot design exists for, and it now has two stages. A
+  ;; **delete** keeps the Recipe and its filing (012), so the entries keep their
+  ;; badges and can be opened; a **purge** is where the associations go, and then the
+  ;; snapshot title really is all that is left naming it. This test used to assert
+  ;; the second stage's answer for the first one, which is what a tombstone changes.
   (let [bread (scope! "Bread")
         {:keys [id]} (machine-create-filed! "Doomed" [bread])]
     (save! id {:description "body v2"} {:human? false})
@@ -355,12 +379,24 @@
     (let [entries (db.event/list-unseen h/*ds* h/*user-id*)]
       (is (= ["created" "modified" "deleted"] (mapv :kind entries))
           "all three entries are still in the queue")
-      (is (= [[] [] []] (mapv :scopes entries))
-          "with no Scopes, because the join rows went with the Recipe")
+      (is (= [["Bread"] ["Bread"] ["Bread"]] (mapv scope-titles-on entries))
+          "and they keep the badges, because a tombstone keeps its filing — which is
+           most of what triaging a `deleted` row is")
       (is (= ["Doomed" "Doomed" "Doomed"] (mapv :recipe_title entries))
-          "and the snapshot title intact, which is all that is left naming it")
-      (is (= [0 0 0] (mapv :recipe_exists entries)))
-      (is (= 0 (h/scope-row-count id nil)) "the associations really are gone"))))
+          "with the snapshot title intact, as it always was")
+      (is (= [1 1 1] (mapv :recipe_exists entries)) "there is text behind them")
+      (is (= 1 (h/scope-row-count id nil)) "the associations really are still there"))
+    (testing "and the purge is what takes them"
+      (db.recipe/purge-recipe! h/*ds* h/*user-id* id)
+      (let [entries (db.event/list-unseen h/*ds* h/*user-id*)]
+        (is (= ["created" "modified" "deleted"] (mapv :kind entries))
+            "the entries survive a purge too — an event is not part of a Recipe")
+        (is (= [[] [] []] (mapv scope-titles-on entries))
+            "now with no Scopes, because the join rows went with the row")
+        (is (= ["Doomed" "Doomed" "Doomed"] (mapv :recipe_title entries))
+            "and the snapshot title is all that is left naming it")
+        (is (= [0 0 0] (mapv :recipe_exists entries)))
+        (is (= 0 (h/scope-row-count id nil)) "the associations really are gone")))))
 
 (deftest the-scopes-on-an-entry-are-current-where-its-title-is-a-snapshot
   ;; The asymmetry, pinned so nobody later makes one half match the other. Refiling a

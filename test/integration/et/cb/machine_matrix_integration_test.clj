@@ -63,7 +63,8 @@
 
 (defn- row [id]
   (jdbc/execute-one! (db/get-conn h/*ds*)
-    (sql/format {:select [:id :title :version :published :published_at :user_id :tags]
+    (sql/format {:select [:id :title :version :published :published_at :user_id :tags
+                          :deleted_at]
                  :from [:recipes] :where [:= :id id]})
     db/jdbc-opts))
 
@@ -254,11 +255,21 @@
                    (= (:version before) (:version after)))
      :unchanged? (= before after)}))
 
-(defn- run-delete [caller id]
-  (let [resp (request caller :delete (str "/api/recipes/" id))]
+(defn- run-delete
+  "A delete, and since 012 what *landing* means is a **tombstone**: the row is still
+  in the table with `deleted_at` set, and gone from every read in the caller's
+  audience. So this asks the table for the stamp rather than for the row's absence —
+  `(nil? (row id))` would now be false for a delete that worked perfectly, and true
+  only after a purge, which is not this route.
+
+  `:unchanged?` is the refusal's half and it has to be read the same way round: a
+  refused delete leaves no stamp."
+  [caller id]
+  (let [resp (request caller :delete (str "/api/recipes/" id))
+        after (row id)]
     {:resp resp
-     :landed? (nil? (row id))
-     :unchanged? (some? (row id))}))
+     :landed? (some? (:deleted_at after))
+     :unchanged? (and (some? after) (nil? (:deleted_at after)))}))
 
 (defn- run-publish [caller id]
   (let [before (row id)

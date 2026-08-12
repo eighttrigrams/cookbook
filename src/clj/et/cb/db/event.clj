@@ -109,12 +109,40 @@
   `db/user-id-where-clause`'s rule met one step further along: that function exists
   because a nil owner needs `IS NULL` instead of `= NULL`, and a column-to-column
   comparison needs SQLite's `IS` for exactly the same reason. It cannot be routed
-  through that function, which compares a column against a *value*."
+  through that function, which compares a column against a *value*.
+
+  **Since 012 it answers 1 for a Recipe that has been deleted**, because a delete is
+  a tombstone and the row really is still there. That is the answer this column is
+  for — *is there anything left to open* — and the reason the tombstone was asked
+  for. Which *kind* of existing it is, is a second question, and it gets a second
+  column rather than a cleverer reading of this one: see `recipe-tombstoned`."
   [[:exists {:select [[[:inline 1]]]
              :from [:recipes]
              :where [:and [:= :recipes.id :recipe_events.recipe_id]
                      [:is :recipes.user_id :recipe_events.user_id]]}]
    :recipe_exists])
+
+(def ^:private recipe-tombstoned
+  "Whether the Recipe an event names has been deleted and kept — 1 or 0, and 0 both
+  for a Recipe on the shelf and for one that was purged and is not there at all.
+
+  **Two columns and not one three-valued answer**, because the two questions have
+  different readers. `recipe_exists` decides whether an entry can be *opened* at all,
+  which is the only thing the title's click handler needs to know; this decides what
+  the row and the surface *say* — a deleted Recipe is still readable but is on no
+  shelf, and a reader who opened it should be told so rather than left to notice that
+  nothing on the page offers to change it. Folding them into one field would make
+  every reader parse a state machine to answer whichever half it cared about.
+
+  Same shape and the same `IS` on the owner as `recipe-still-there`, and for the same
+  reasons — including the one about the dev owner's nil `user_id`, which bites here
+  identically."
+  [[:exists {:select [[[:inline 1]]]
+             :from [:recipes]
+             :where [:and [:= :recipes.id :recipe_events.recipe_id]
+                     [:is :recipes.user_id :recipe_events.user_id]
+                     [:not= :recipes.deleted_at nil]]}]
+   :recipe_tombstoned])
 
 (defn list-unseen
   "The owner's unseen events, **oldest first** — the queue as he asked for it: he
@@ -126,7 +154,10 @@
   is the one fact being served. Migration 009 makes the argument in full.
 
   Every entry also carries `recipe_exists` — see `recipe-still-there`, which is the
-  question a page cannot answer for itself and has to be told.
+  question a page cannot answer for itself and has to be told — and
+  `recipe_tombstoned` beside it, which says which kind of existing it is: since 012 a
+  deleted Recipe still exists and can still be read, and the row that names it can be
+  opened while saying what it is.
 
   And every entry carries `scopes`, the Scopes its Recipe is filed under: he triages
   here, and 'what area is this about' is most of deciding whether an entry matters
@@ -145,9 +176,12 @@
   naming the thing the entry is actually about. Do not 'fix' either half into the
   other.
 
-  For a Recipe that is gone the associations went with it — `db.recipe/delete-recipe`
-  deletes them, unlike the events — so `scopes` is the same empty vector an unfiled
-  Recipe gets. That needs no case of its own and no apology on the page either.
+  **A deleted Recipe keeps its filing and so keeps its badges**, since 012: the
+  associations are part of what a tombstone is for, and an entry for one goes on
+  saying what area it was about — which is most of what triaging a `deleted` row is.
+  Only a *purged* Recipe loses them (`db.recipe/purge-recipe!` deletes them, unlike
+  the events), and then `scopes` is the same empty vector an unfiled Recipe gets.
+  That needs no case of its own and no apology on the page either.
 
   There is no visitor question here, unlike the shelf's `db.recipe/with-scopes`: the
   inbox is the owner's alone (see `server.inbox-handler`), so there is no caller of
@@ -158,7 +192,7 @@
   [ds user-id]
   (db.scope/attach ds user-id
     (jdbc/execute! (db/get-conn ds)
-      (sql/format {:select (conj queue-columns recipe-still-there)
+      (sql/format {:select (conj queue-columns recipe-still-there recipe-tombstoned)
                    :from [:recipe_events]
                    :where [:and [:= :seen [:inline 0]] (db/user-id-where-clause user-id)]
                    :order-by [[:id :asc]]})

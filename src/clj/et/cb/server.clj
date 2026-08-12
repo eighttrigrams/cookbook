@@ -411,6 +411,21 @@
             (DELETE "/:id"          [] recipe-handler/delete-recipe-handler))
           wrap-machine-recipe-rules)))
 
+    ;; The tombstones, and **outside both recipe guards** for the reason the Scopes
+    ;; and the inbox are: those guards are about a recipe id in a `/recipes` path and
+    ;; about the publish latch, and neither question is this context's. Both handlers
+    ;; ask `common/owner-caller?` for themselves, which is stricter than what the
+    ;; recipes context would give them — a machine token is refused outright, because
+    ;; listing what the owner has deleted is the inbox's argument one table along, and
+    ;; purging is the one irreversible act in this app.
+    ;;
+    ;; A context of its own rather than `/recipes/deleted`, which would have had to be
+    ;; declared before `/recipes/:id` and would then read as a Recipe whose id is the
+    ;; word *deleted* — the kind of path that works until somebody reorders two lines.
+    (context "/deleted" []
+      (GET    "/"    [] recipe-handler/list-deleted-handler)
+      (DELETE "/:id" [] recipe-handler/purge-recipe-handler))
+
     ;; Siblings of `/api/recipes` and so **outside both recipe guards** — which is
     ;; deliberate and is why every one of these four handlers asks
     ;; `common/authenticated?` for itself. A Scope is not a Recipe: the 401 guard

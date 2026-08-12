@@ -669,14 +669,33 @@
         (stale-write-response ds user-id id)))))
 
 (defn delete-recipe-handler
-  "DELETE /api/recipes/:id — remove a recipe together with its whole version
-  history. 404 when the id matches nothing you own.
+  "DELETE /api/recipes/:id — delete a recipe. 404 when the id matches nothing you
+  own, and the same 404 for one you have already deleted: deleting twice is not a
+  second delete.
+
+  **It is a tombstone and not a removal** (migration 012). The row, its whole
+  version history and its filing all stay; `deleted_at` is stamped, and that takes
+  it off every read at once — the shelf, the search, this path at its own id, the
+  Scope counts. What that buys is the reason it was asked for: the `deleted` entry
+  in the owner's queue can be *opened*, because there is still text behind it. GET
+  /api/recipes/:id/versions is the one read that sees a tombstone, deliberately.
+
+  A deleted Recipe is **not writable**: no save, no publish, no approving a
+  proposal against it. That is not a rule any of those paths carries — they find
+  their row the same way every read does, and a tombstone is not there.
+
+  A pending proposal is resolved as it always was: a question about a Recipe that
+  has been deleted cannot be answered, and left pending it would block the agent
+  that filed it.
 
   **A machine's delete leaves an entry in the owner's inbox** (see GET /api/inbox)
   saying which Recipe went and at which version; his own delete leaves none, like
-  every other write of his. The Recipe's *events* are the one thing a delete does
-  not take with it — an event is the record that something happened, and it did —
-  so an agent cannot create a Recipe and delete it again to leave no trace."
+  every other write of his. The Recipe's *events* are the one thing no delete has
+  ever taken with it — an event is the record that something happened, and it did —
+  so an agent cannot create a Recipe and delete it again to leave no trace.
+
+  The removal this used to be is now DELETE /api/deleted/:id, on a tombstone, asked
+  for by name."
   [req]
   (let [user-id (common/get-user-id req)
         id (common/recipe-id req)
@@ -685,6 +704,73 @@
     (if (:success result)
       {:status 200 :body result}
       {:status 404 :body {:error "Recipe not found"}})))
+
+(def ^:private deleted-forbidden
+  "One refusal for both tombstone routes, so they cannot come to word it
+  differently. A machine may delete a Recipe — that is a write it is allowed and
+  the queue records it — and it may neither *list* what is deleted nor purge any of
+  it. Listing would tell an agent what the owner has thrown away and not yet dealt
+  with, which is the inbox's argument one table along; purging is the one
+  irreversible act in this app, and the whole point of the tombstone is that a
+  person decides it."
+  {:status 403 :body {:error "Deleted Recipes are the owner's: a machine caller cannot list or purge them"}})
+
+(defn list-deleted-handler
+  "GET /api/deleted — the owner's deleted Recipes, **most recently deleted first**:
+  the lean row plus `deleted_at` and `scopes`, and no description.
+
+  Since 012 a delete is a tombstone (see DELETE /api/recipes/:id), so this is a list
+  of Recipes that still exist and are on no shelf — *we can have a page bringing us
+  to revisit and hard delete data*. Each one can be read at GET
+  /api/recipes/:id/versions, which is the one read that sees a tombstone, and
+  destroyed for good at DELETE /api/deleted/:id.
+
+  **A sibling of /api/recipes and so outside both recipe guards**, like /api/scopes
+  and /api/inbox, and for their reason: those guards are about a recipe id in the
+  path and the publish latch, and this path has neither. It asks
+  `common/owner-caller?` for itself, which is stricter than what the recipes context
+  would give it — 403 for a machine token and for a caller with no credentials.
+
+  There is no `?detail=full` here and no way to ask for one. A tombstone's text is
+  read through its versions, which is where the version it was deleted on is named
+  as such; widening this listing would be a second way to read a body, and the one
+  that counts consumption is deliberately the only one."
+  [req]
+  (if (common/owner-caller? req)
+    {:status 200 :body (db.recipe/list-deleted (common/ensure-ds) (common/get-user-id req))}
+    deleted-forbidden))
+
+(defn purge-recipe-handler
+  "DELETE /api/deleted/:id — destroy a tombstone for good: the row, its whole
+  version history and every association to a Scope. 404 when the id matches no
+  deleted Recipe of yours — **including a live one**, so this can never be the
+  delete a caller did not mean to make.
+
+  This is what DELETE /api/recipes/:id used to do, and it is now a second,
+  deliberate step on something already deleted. There is no undo and nothing serves
+  the text again afterwards.
+
+  **The events survive**, as they always have: an event is the record that something
+  happened to a Recipe, not a part of it, and it carries the title it had at the time
+  so it stays readable with nothing to join to. So a purged Recipe's queue entries go
+  on naming it, and go back to being un-openable — which after this is the honest
+  answer.
+
+  Nothing is written to the queue: purging is not a change to the shelf, which is
+  what the queue is about, and the `deleted` entry that brought the owner here is
+  already in it.
+
+  Owner-only, like the listing, and 403 for a machine caller for the reason given
+  there."
+  [req]
+  (if (common/owner-caller? req)
+    (let [id (common/recipe-id req)
+          result (when id (db.recipe/purge-recipe! (common/ensure-ds)
+                                                   (common/get-user-id req) id))]
+      (if (:success result)
+        {:status 200 :body result}
+        {:status 404 :body {:error "Deleted Recipe not found"}}))
+    deleted-forbidden))
 
 (defn publish-recipe-handler
   "POST /api/recipes/:id/publish — publish a recipe: it becomes visible to

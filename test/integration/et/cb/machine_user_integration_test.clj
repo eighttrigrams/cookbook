@@ -285,7 +285,8 @@
                ["PUT" "/api/scopes/:id"] ["DELETE" "/api/scopes/:id"]
                ["GET" "/api/inbox"] ["POST" "/api/inbox/:id/seen"]
                ["POST" "/api/inbox/:id/approve"] ["POST" "/api/inbox/:id/dismiss"]
-               ["POST" "/api/test/reset"]}
+               ["POST" "/api/test/reset"]
+               ["GET" "/api/deleted"] ["DELETE" "/api/deleted/:id"]}
              paths)))
     (testing "and the destructive one says so, and says who may call it"
       (let [reset (first (filter #(= ["POST" "/api/test/reset"] ((juxt :method :path) %)) routes))]

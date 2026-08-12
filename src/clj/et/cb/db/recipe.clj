@@ -157,11 +157,27 @@
   It used to be called `scope`, which is now reserved for the Scope entity — a
   title and a description a Recipe can be filed under. An audience is not a
   category: it is either a user-id or `visitor-audience`, and it decides which
-  rows exist for the caller at all."
+  rows exist for the caller at all.
+
+  **A tombstone is nobody's row, and that is why the exclusion is here.** Since 012
+  a deleted Recipe keeps its row, its history and its filing (`delete-recipe`), so
+  every read that used to stop finding it because it was gone would find it again —
+  the shelf, the search, one Recipe by id, the provenance split, the machine-write
+  gate, the Scope counts. Each of them already asked this one question about whose
+  rows these are, so `deleted_at IS NULL` rides along on the clause they all share
+  rather than being remembered at a dozen call sites. Adding a read is then safe by
+  default, which is the property worth having: the mistake this shape makes
+  impossible is a new query that forgets.
+
+  The two reads that *want* a tombstone do not come through here — they ask for one
+  by name (`get-deleted-recipe`, `list-deleted`), so wanting one is a decision at
+  the call site and never an omission."
   [audience]
-  (if (visitor? audience)
-    [:= :published 1]
-    (db/user-id-where-clause audience)))
+  [:and
+   (if (visitor? audience)
+     [:= :published 1]
+     (db/user-id-where-clause audience))
+   [:= :deleted_at nil]])
 
 (def lean-select-columns
   "Everything but the body and the tags. This *is* the default API shape for a
@@ -456,9 +472,23 @@
 
   Asking for them is not the same as getting them. A visitor never does, at any
   `lean?` and at any `scopes?` — `with-scopes` refuses, so the flag is a request
-  and the audience is the answer."
+  and the audience is the answer.
+
+  **`tombstones?` is the one way past `audience-clause`'s tombstone exclusion**, and
+  it is a request like `scopes?` rather than a mode: it widens what may be *found*
+  to include a Recipe that has been deleted and kept (012). Every write path in this
+  namespace reaches its row through this function, so leaving the flag off is what
+  makes a deleted Recipe unwritable — no save, no publish, no approving a proposal
+  against it — without any of them having to know that tombstones exist. The callers
+  that pass it are the reads that are *about* the deleted: the history behind a
+  queue's `deleted` entry, and the page that lists and purges them.
+
+  **It is refused to a visitor outright**, not because a visitor path passes it —
+  none does — but because the flag would otherwise be one careless argument away
+  from handing an anonymous caller a deleted Recipe, and this is the cheapest place
+  to make that impossible rather than unlikely."
   ([ds audience id] (get-recipe ds audience id {}))
-  ([ds audience id {:keys [lean? scopes?] :or {lean? true}}]
+  ([ds audience id {:keys [lean? scopes? tombstones?] :or {lean? true}}]
    ;; The nil check is not defensive noise: `with-scopes` on a one-element vector
    ;; holding nil would attach an empty `:scopes` to it and hand back a truthy
    ;; `{:scopes []}` for a recipe that does not exist, turning every 404 in this
@@ -468,7 +498,10 @@
                                          (not (visitor? audience))
                                          (conj (db.proposal/pending-exists-clause :recipes.id)))
                                :from [:recipes]
-                               :where [:and [:= :id id] (audience-clause audience)]})
+                               :where [:and [:= :id id]
+                                       (if (and tombstones? (not (visitor? audience)))
+                                         (db/user-id-where-clause audience)
+                                         (audience-clause audience))]})
                   db/jdbc-opts)]
      (if (and recipe scopes?)
        (first (with-scopes ds audience [recipe]))
@@ -828,60 +861,70 @@
    (update-recipe ds user-id id fields expected-modified-at {}))
   ([ds user-id id fields expected-modified-at {:keys [human?] :as opts}]
    (jdbc/with-transaction [tx (db/get-conn ds)]
-     (let [current (get-recipe tx user-id id {:lean? false})
-           incoming (merge-content current fields)
-           incoming-tags (merge-tags current fields)
-           content-changed? (not= incoming (content-of current))
-           tags-changed? (not= incoming-tags (:tags current))]
-       (if (and expected-modified-at (not= expected-modified-at (:modified_at current)))
-         nil
-         ;; Past the guard, so a write here is one the caller is allowed to make.
-         ;; The associations go first because the row write below is what stamps
-         ;; `modified_at`, and a change to the filing has to move it.
-         (let [scopes-changed? (when (contains? fields :scope_ids)
-                                 (db.scope/set-recipe-scopes! tx user-id id
-                                                              (:scope_ids fields)))
-               result
-               (cond
-                 (not (or content-changed? tags-changed? scopes-changed?))
-                 current
+     ;; **nil for a row this caller cannot write, before anything else happens** —
+     ;; `when-let`, the way `publish-recipe`, `delete-recipe`, `purge-recipe!` and
+     ;; `list-versions` all answer that question. This one used to walk on with a nil
+     ;; `current`: every content field then read as changed, and `archive!` was handed
+     ;; the nil, which came back as `NOT NULL constraint failed: recipe_history
+     ;; .recipe_id` — a constraint violation where every sibling function returns
+     ;; nothing. It was unreachable through the API, because the handler answers 404
+     ;; from its own read first, and it became reachable in a new way with 012: a
+     ;; tombstoned Recipe is now a row that exists and is not writable. Found by the
+     ;; test that asserts a deleted Recipe cannot be saved.
+     (when-let [current (get-recipe tx user-id id {:lean? false})]
+       (let [incoming (merge-content current fields)
+             incoming-tags (merge-tags current fields)
+             content-changed? (not= incoming (content-of current))
+             tags-changed? (not= incoming-tags (:tags current))]
+         (if (and expected-modified-at (not= expected-modified-at (:modified_at current)))
+           nil
+           ;; Past the guard, so a write here is one the caller is allowed to make.
+           ;; The associations go first because the row write below is what stamps
+           ;; `modified_at`, and a change to the filing has to move it.
+           (let [scopes-changed? (when (contains? fields :scope_ids)
+                                   (db.scope/set-recipe-scopes! tx user-id id
+                                                                (:scope_ids fields)))
+                 result
+                 (cond
+                   (not (or content-changed? tags-changed? scopes-changed?))
+                   current
 
-                 (not content-changed?)
-                 (let [result (jdbc/execute-one! tx
-                                (sql/format {:update :recipes
-                                             :set {:tags incoming-tags
-                                                   :modified_at [:raw "datetime('now')"]}
-                                             :where [:= :id id]
-                                             :returning (select-columns false user-id)})
-                                db/jdbc-opts)]
-                   (tel/log! {:level :info :data {:id id :user-id user-id
-                                                  :version (:version result)}}
-                             "Recipe filing saved")
-                   result)
-
-                 :else
-                 (do
-                   (archive! tx current)
+                   (not content-changed?)
                    (let [result (jdbc/execute-one! tx
                                   (sql/format {:update :recipes
-                                               :set (cond-> (assoc incoming
-                                                                   :tags incoming-tags
-                                                                   :version (inc (:version current))
-                                                                   :source (source-of opts)
-                                                                   :modified_at [:raw "datetime('now')"])
-                                                      human? (assoc :has_human_edit 1))
+                                               :set {:tags incoming-tags
+                                                     :modified_at [:raw "datetime('now')"]}
                                                :where [:= :id id]
                                                :returning (select-columns false user-id)})
                                   db/jdbc-opts)]
-                     (when (machine-write? opts)
-                       (db.event/record! tx user-id "modified" result))
                      (tel/log! {:level :info :data {:id id :user-id user-id
-                                                    :version (:version result)
-                                                    :human? (boolean human?)
-                                                    :source (source-of opts)}}
-                               "Recipe saved")
-                     result)))]
-           (db.scope/attach-one tx user-id result)))))))
+                                                    :version (:version result)}}
+                               "Recipe filing saved")
+                     result)
+
+                   :else
+                   (do
+                     (archive! tx current)
+                     (let [result (jdbc/execute-one! tx
+                                    (sql/format {:update :recipes
+                                                 :set (cond-> (assoc incoming
+                                                                     :tags incoming-tags
+                                                                     :version (inc (:version current))
+                                                                     :source (source-of opts)
+                                                                     :modified_at [:raw "datetime('now')"])
+                                                        human? (assoc :has_human_edit 1))
+                                                 :where [:= :id id]
+                                                 :returning (select-columns false user-id)})
+                                    db/jdbc-opts)]
+                       (when (machine-write? opts)
+                         (db.event/record! tx user-id "modified" result))
+                       (tel/log! {:level :info :data {:id id :user-id user-id
+                                                      :version (:version result)
+                                                      :human? (boolean human?)
+                                                      :source (source-of opts)}}
+                                 "Recipe saved")
+                       result)))]
+             (db.scope/attach-one tx user-id result))))))))
 
 (defn approve-proposal!
   "Apply a proposal as the Recipe's next version, in **one transaction**: archive the
@@ -1024,60 +1067,146 @@
             result))))))
 
 (defn delete-recipe
-  "Remove a recipe the user owns together with its whole version history **and
-  every association to a Scope**. Child rows first, like every other delete path
-  in the suite — foreign keys are not enforced on this connection, so ON DELETE
-  CASCADE would be a promise nothing keeps.
+  "Delete a recipe the user owns — by **stamping it** rather than by removing it.
+  Its row, its whole version history and every association to a Scope stay exactly
+  where they are, and `deleted_at` is what takes it off the shelf: since 012 that is
+  one clause in `audience-clause`, so it leaves every read at once.
 
-  The `recipe_scopes` rows are the newer half of that and the easier one to
-  forget, because nothing breaks visibly when they are left behind: the Recipe is
-  gone from every listing and the orphans are only reachable by joining a table
-  that no longer has the row. They would come back as somebody else's badge the
-  day AUTOINCREMENT reuses the id. `deleting-a-recipe-takes-its-associations-with-it`
-  reads the join table after the delete rather than trusting the parent's absence.
+  *lets tombstone instead of actually hard deleting data* — and the reason he wanted
+  it is the sentence before that one: *for deleted, i should also be able to visit.
+  curerntly i cant click.* The queue's `deleted` entry had nothing behind it to open,
+  because this function used to mean it. What it deleted was the row, every
+  `recipe_history` row under it and every `recipe_scopes` association, and the
+  `recipe_title` snapshot on the event was all that was left to name it by. Now the
+  text is still there to be read, and `purge-recipe!` is where the old behaviour
+  went — the same three deletes, asked for deliberately, on the page that lists what
+  is waiting to be purged.
 
-  **`recipe_events` is deliberately not in that list.** A history row and a Scope
-  association are parts of a Recipe and go with it; an event is the record that
-  something happened to it, and the something did happen. Without that, an agent
-  could create a Recipe and delete it again and the inbox — whose one promise is
-  that changes show up there — would record the create and then erase it. What
-  keeps an orphaned event readable is `recipe_title`, the snapshot migration 009
-  takes for exactly this.
+  **What a tombstone still does at once, because it is not a lesser kind of
+  deleted:**
 
-  **A pending proposal is resolved rather than left behind**, and that is the
-  opposite call from the events one line above. An event records that something
-  happened, and it did; a proposal is a question waiting for an answer, and a question
-  about a Recipe that no longer exists cannot be answered — left pending it would sit
-  at the top of his queue unanswerable and go on blocking the agent that filed it.
-  The row is kept with `resolved_at` set and no resolution word, because he did not
-  decide anything. `db.proposal/resolve-for-recipe!` argues it at length.
+  - A pending **proposal is resolved**, exactly as before and for the same reason. An
+    event records that something happened and it did; a proposal is a question
+    waiting for an answer, and a question about a Recipe that has been deleted cannot
+    be answered — left pending it would sit at the top of his queue unanswerable and
+    go on blocking the agent that filed it. The row is kept with `resolved_at` set and
+    no resolution word, because he decided nothing. `db.proposal/resolve-for-recipe!`
+    argues it at length. **Note what does not follow from tombstoning: a deleted
+    Recipe is not writable, so its proposal is no more answerable than before.**
+    Every write path finds its row through `get-recipe` without `tombstones?`, which
+    is what makes that true without any of them testing for it.
+  - The **filing stays and stops counting**. The associations are kept — a tombstone
+    that came back would come back filed, and the page that lists them can say what
+    it was about — while the per-Scope counts on the Scopes page drop the moment it is
+    stamped. That second half is **not** `audience-clause`'s doing, which is worth
+    saying because it is the one place the exclusion had to be written twice:
+    `db.scope/list-scopes` counts from the other side of the join, so it joins
+    `recipes` and skips the tombstones itself. A test found that, not a reading.
+  - **An agent's delete writes one last event, `deleted`**, carrying the version the
+    Recipe was on; the owner's own delete writes none, like every other write of his.
+    Which is why this takes `opts` at all — `:human?`, the same flag the create and
+    the save take.
 
-  **An agent's delete writes one last event, `deleted`**, carrying the version the
-  Recipe died on; the owner's own delete writes none, like every other write of his.
-  Which is why this takes `opts` at all — `:human?`, the same flag the create and
-  the save take, and the reason it is here rather than derived is that there is
-  nothing left afterwards to derive it from.
+  `recipe_events` was never in the deleted list and this changes nothing about that:
+  an event is the record that something happened to a Recipe, not a part of it.
 
-  The row is read for its title and its version rather than only for its id, which
-  is what that event is made of — so the read has to happen before the delete, and
-  it is the same read that decides whether there was anything to delete."
+  **Deleting one twice is not a second delete.** The row is looked up among the
+  living, so a tombstone is nil here and answers the caller the same way a missing id
+  does — one `deleted` event per delete, and no way for an agent to fill the queue by
+  repeating itself.
+
+  The row is read for its title and version rather than only its id, which is what
+  the event is made of — the same read that decides whether there was anything to
+  delete."
   ([ds user-id id] (delete-recipe ds user-id id {}))
   ([ds user-id id opts]
    (jdbc/with-transaction [tx (db/get-conn ds)]
      (let [own [:and [:= :id id] (db/user-id-where-clause user-id)]]
        (when-let [current (jdbc/execute-one! tx
                             (sql/format {:select [:id :title :version]
-                                         :from [:recipes] :where own})
+                                         :from [:recipes]
+                                         :where [:and own [:= :deleted_at nil]]})
                             db/jdbc-opts)]
-         (jdbc/execute-one! tx (sql/format {:delete-from :recipe_history
-                                            :where [:= :recipe_id id]}))
-         (db.scope/delete-recipe-scopes! tx id)
          (db.proposal/resolve-for-recipe! tx user-id id)
-         (jdbc/execute-one! tx (sql/format {:delete-from :recipes :where own}))
+         (jdbc/execute-one! tx (sql/format {:update :recipes
+                                            :set {:deleted_at [:datetime "now"]}
+                                            :where own}))
          (when (machine-write? opts)
            (db.event/record! tx user-id "deleted" current))
-         (tel/log! {:level :info :data {:id id :user-id user-id}} "Recipe deleted")
+         (tel/log! {:level :info :data {:id id :user-id user-id}} "Recipe tombstoned")
          {:success true})))))
+
+(defn list-deleted
+  "The owner's tombstones, **most recently deleted first** — what the page that
+  revisits and purges them is a list of.
+
+  Lean columns plus `deleted_at`, because that is the one fact this list is ordered
+  and read by, and the Scopes because what a deleted Recipe was filed under is how
+  he will recognise it. No description: this is a listing, and the text is one click
+  away on the surface that opens it.
+
+  **The owner's alone and not by an audience.** There is no reading of `published`
+  that would make a visitor's answer here anything but empty, and an endpoint that
+  *could* answer them at all is a question they could ask. So this takes a user-id,
+  like `list-versions`, and the handler is guarded rather than projected."
+  [ds user-id]
+  (->> (jdbc/execute! (db/get-conn ds)
+         ;; Unqualified, unlike the listing's: there is no join here to make a column
+         ;; name ambiguous, and `qualify` exists for that and says so.
+         (sql/format {:select (conj (select-columns true user-id) :deleted_at)
+                      :from [:recipes]
+                      :where [:and (db/user-id-where-clause user-id)
+                              [:not= :deleted_at nil]]
+                      ;; The id breaks a tie, because two Recipes deleted in the same
+                      ;; second is the ordinary case when a page offers 'purge' twice
+                      ;; and the stamp is second-resolution.
+                      :order-by [[:deleted_at :desc] [:id :desc]]})
+         db/jdbc-opts)
+       (with-scopes ds user-id)))
+
+(defn purge-recipe!
+  "Destroy a tombstone: the row, its whole version history and every association to
+  a Scope. **This is what `delete-recipe` used to do**, and it now happens only when
+  it is asked for by name, on a Recipe that has already been deleted once.
+
+  Child rows first, like every other delete path in the suite — foreign keys are not
+  enforced on this connection, so ON DELETE CASCADE would be a promise nothing keeps.
+
+  The `recipe_scopes` rows are the half that is easy to forget, because nothing
+  breaks visibly when they are left behind: the Recipe is gone from every listing and
+  the orphans are only reachable by joining a table that no longer has the row. They
+  would come back as somebody else's badge the day AUTOINCREMENT reuses the id.
+  `purging-a-tombstone-takes-its-associations-with-it` reads the join table
+  afterwards rather than trusting the parent's absence.
+
+  **`recipe_events` is deliberately not in that list**, as it never was. A history
+  row and a Scope association are parts of a Recipe and go with it; an event is the
+  record that something happened to it, and the something did happen. Without that,
+  an agent could create a Recipe and delete it again and the inbox — whose one
+  promise is that changes show up there — would record the create and then erase it.
+  What keeps an orphaned event readable is `recipe_title`, the snapshot migration 009
+  takes for exactly this. So a purged Recipe's queue entries go on naming it, and go
+  back to being un-openable, which is the honest thing: after this there really is
+  nothing left to open.
+
+  **Only a tombstone can be purged**, and that is the whole of the guard: a live
+  Recipe is nil here, so this can never be the delete a caller did not mean to make.
+  Nothing is written to the queue either — purging is not a change to the shelf,
+  which is what the queue is about, and the `deleted` entry that brought him here is
+  already in it."
+  [ds user-id id]
+  (jdbc/with-transaction [tx (db/get-conn ds)]
+    (let [own [:and [:= :id id] (db/user-id-where-clause user-id)]]
+      (when (jdbc/execute-one! tx
+              (sql/format {:select [:id] :from [:recipes]
+                           :where [:and own [:not= :deleted_at nil]]})
+              db/jdbc-opts)
+        (jdbc/execute-one! tx (sql/format {:delete-from :recipe_history
+                                           :where [:= :recipe_id id]}))
+        (db.scope/delete-recipe-scopes! tx id)
+        (jdbc/execute-one! tx (sql/format {:delete-from :recipes :where own}))
+        (tel/log! {:level :info :data {:id id :user-id user-id}} "Tombstone purged")
+        {:success true}))))
 
 (defn list-versions
   "Every state of a recipe, newest first. The current row is included as version
@@ -1097,7 +1226,13 @@
   more, so a reader stepping through a history no longer meets a version whose
   origin is a third thing."
   [ds user-id id]
-  (when-let [current (get-recipe ds user-id id {:lean? false})]
+  ;; **Tombstones included**, which is what makes a deleted Recipe visitable: the
+  ;; queue's `deleted` entry opens the version viewer, and the viewer asks for this.
+  ;; Safe to widen here and nowhere near a write: this read is the owner's at every
+  ;; id — a visitor is answered 404 whether the Recipe is published or not — and the
+  ;; last entry it hands back for a tombstone is the version it was deleted on, which
+  ;; is precisely the thing he wanted to be able to read.
+  (when-let [current (get-recipe ds user-id id {:lean? false :tombstones? true})]
     (let [history (jdbc/execute! (db/get-conn ds)
                     (sql/format {:select [:version :title :useful_when :description :created_at
                                           :source]

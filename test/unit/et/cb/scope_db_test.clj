@@ -271,16 +271,33 @@
       (is (= [] (titles-on (row rye))))
       (is (= "body v1" (:description (row rye)))))))
 
-(deftest deleting-a-recipe-takes-its-associations-with-it
+(deftest deleting-a-recipe-keeps-its-associations-and-stops-them-counting
+  ;; Since 012 a delete is a tombstone, and the filing is one of the things it keeps:
+  ;; the page that lists what has been deleted says what each one was about, and a
+  ;; Recipe that ever comes back comes back filed. What must not survive is the
+  ;; *count* — the Scopes page is about what is on the shelf.
   (let [{bread :id} (scope! "Bread")
         {:keys [id]} (recipe! "Sourdough" [bread])]
     (is (= 1 (h/scope-row-count id nil)))
     (is (= {:success true} (db.recipe/delete-recipe h/*ds* h/*user-id* id)))
+    (testing "the join rows are still there, and the tombstone is still filed"
+      (is (= 1 (h/scope-row-count id nil)))
+      (is (= ["Bread"] (mapv :title (:scopes (first (db.recipe/list-deleted h/*ds* h/*user-id*)))))))
+    (testing "and the Scope is untouched and counts one fewer, because the count is
+              about the shelf and the Recipe has left it"
+      (is (= "Bread" (:title (db.scope/get-scope h/*ds* h/*user-id* bread))))
+      (is (= 0 (:recipe_count (first (scopes))))))))
+
+(deftest purging-a-tombstone-takes-its-associations-with-it
+  (let [{bread :id} (scope! "Bread")
+        {:keys [id]} (recipe! "Sourdough" [bread])]
+    (db.recipe/delete-recipe h/*ds* h/*user-id* id)
+    (is (= {:success true} (db.recipe/purge-recipe! h/*ds* h/*user-id* id)))
     (testing "the join rows are gone rather than orphaned, the same fact
               `recipe-loses-its-history-rows` pins for the history table"
       (is (= 0 (h/scope-row-count id nil)))
       (is (= 0 (h/scope-row-count))))
-    (testing "and the Scope itself is untouched — deleting a Recipe is not
+    (testing "and the Scope itself is untouched — purging a Recipe is not
               deleting the shelf it was filed on"
       (is (= "Bread" (:title (db.scope/get-scope h/*ds* h/*user-id* bread))))
       (is (= 0 (:recipe_count (first (scopes))))))))

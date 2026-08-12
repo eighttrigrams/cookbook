@@ -73,14 +73,27 @@
   confirmation dialog asking whether to delete a Scope that Recipes still use, and
   a count taken from whatever the client happens to have listed would be wrong
   exactly when the shelf is narrowed by a search. The LEFT JOIN is what keeps a
-  Scope nothing is filed under in the answer, at 0."
+  Scope nothing is filed under in the answer, at 0.
+
+  **It counts what is on the shelf, so it joins `recipes` to skip the tombstones.**
+  Since 012 a deleted Recipe keeps its filing — the associations are part of what a
+  tombstone is for — so counting the join rows alone would have this answer, and the
+  confirmation dialog that reads it, claim a Scope is still in use by Recipes that
+  have been deleted. This is the one count in the app that `db.recipe/audience-clause`
+  does not cover, because it is asked from the other side of the join; it was found by
+  a test rather than by reading, which is the honest way round to record it."
   [ds user-id]
   (jdbc/execute! (db/get-conn ds)
     (sql/format {:select (into (mapv #(keyword (str "scopes." (name %))) scope-columns)
-                               [[[:count :recipe_scopes.recipe_id] :recipe_count]])
+                               [[[:count :recipes.id] :recipe_count]])
                  :from [:scopes]
-                 :left-join [:recipe_scopes [:= :recipe_scopes.scope_id :scopes.id]]
-                 :where (db/user-id-where-clause user-id)
+                 :left-join [:recipe_scopes [:= :recipe_scopes.scope_id :scopes.id]
+                             :recipes [:and [:= :recipes.id :recipe_scopes.recipe_id]
+                                       [:= :recipes.deleted_at nil]]]
+                 ;; Qualified, because joining `recipes` brings a second `user_id`
+                 ;; into the query — the two-argument form of that function exists for
+                 ;; exactly this, so the NULL rule stays in the one place that knows it.
+                 :where (db/user-id-where-clause :scopes.user_id user-id)
                  :group-by [:scopes.id]
                  :order-by [[:scopes.title :asc] [:scopes.id :asc]]})
     db/jdbc-opts))

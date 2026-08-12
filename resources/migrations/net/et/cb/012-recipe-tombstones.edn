@@ -1,0 +1,33 @@
+{:up ["ALTER TABLE recipes ADD COLUMN deleted_at DATETIME"]
+ ;; **A tombstone**: a Recipe the owner or an agent deleted, whose row, history and
+ ;; filing are all still here. `deleted_at` null is a Recipe on the shelf; a stamp is
+ ;; one that has been deleted and can still be read.
+ ;;
+ ;; His words: *for deleted, i should also be able to visit. curerntly i cant click.
+ ;; lets tombstone instead of actually hard deleting data (we can have a page bringing
+ ;; us to revisit and hard delete data)*. The `deleted` entry in his queue had nothing
+ ;; behind it to open, because `db.recipe/delete-recipe` really did delete — the row,
+ ;; every `recipe_history` row under it, and every `recipe_scopes` association. What
+ ;; survived was the `recipe_events` row, kept deliberately (an event is the record
+ ;; that something happened, and it did) with a `recipe_title` snapshot so it stays
+ ;; readable with nothing to join to. That snapshot was the whole of what was left of
+ ;; a deleted Recipe, and it is why the row could be named and not opened.
+ ;;
+ ;; **Nothing is backfilled, and there is nothing to backfill.** What was deleted
+ ;; before this column existed is gone; a migration that invented tombstones for the
+ ;; old `deleted` events would be inventing rows whose text nobody kept. Those entries
+ ;; go on being un-openable, correctly, and the flag that says so is the same one the
+ ;; client already reads.
+ ;;
+ ;; **One column and no index.** The reads that have to exclude tombstones all go
+ ;; through `db.recipe/audience-clause`, which every one of them already used to ask
+ ;; whose rows these are — so `deleted_at IS NULL` rides along on a clause that was
+ ;; being evaluated anyway, and the shelf is one user's Recipes on a personal
+ ;; knowledgebase. An index on a column that is null for almost every row would earn
+ ;; its keep only on the page that lists the exceptions, which is the one read where a
+ ;; scan is what you want.
+ ;;
+ ;; **DATETIME and not TEXT**, matching `published_at`, `resolved_at` and every other
+ ;; stamp in this schema, and set with sqlite's own `datetime('now')` at the write so
+ ;; the tombstone is stamped by the same clock as everything it will be sorted beside.
+ :down ["ALTER TABLE recipes DROP COLUMN deleted_at"]}

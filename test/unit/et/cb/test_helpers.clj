@@ -50,6 +50,16 @@
                  :set {:modified_at value}
                  :where [:= :id recipe-id]})))
 
+(defn backdate-deleted-at!
+  "Put a distinguishable tombstone stamp on a row, for the same reason
+  `backdate-published-at!` exists: `datetime('now')` is second-resolution, so two
+  Recipes deleted inside one second cannot show an ordering to assert on."
+  [recipe-id value]
+  (jdbc/execute-one! (db/get-conn *ds*)
+    (sql/format {:update :recipes
+                 :set {:deleted_at value}
+                 :where [:= :id recipe-id]})))
+
 (defn history-row-count
   "Straight at the table, so a test can tell 'the API stopped showing them' from
   'the rows are gone'."
