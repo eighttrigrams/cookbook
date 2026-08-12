@@ -17,6 +17,31 @@
    than the panel's full-size ones. */
 .top-bar-left button { padding: 6px 14px; }
 .brand { display: flex; align-items: baseline; gap: 8px; }
+/* The same name, as a control. It is a `button` on every page but the shelf — where it
+   is a `div`, because a way back to where you already are is not a control — so
+   everything the app's `button` rule gives a button has to come back off: the accent
+   fill, the padding, the radius, the hover lift. What is left of being a button is what
+   it is for, which is the pointer, the keyboard and the screen reader. `align-items`
+   comes from `.brand` and works here too; `font: inherit` is what keeps the two spans
+   sized by their own rules instead of by the button's 0.9em. */
+button.brand-home {
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 0;
+  color: inherit;
+  font: inherit;
+  font-weight: inherit;
+  cursor: pointer;
+}
+button.brand-home:hover {
+  background: none;
+  transform: none;
+}
+/* The one thing hover *does* say, and it is on the word rather than on the box: the
+   glyph is already the accent colour, so tinting the name is what makes the pair read
+   as one thing you can press. */
+button.brand-home:hover .brand-name { color: var(--accent); }
 .brand-mark { color: var(--accent); font-size: 1.4em; }
 .brand-name { font-size: 1.4em; font-weight: 600; letter-spacing: -0.02em; }
 .top-bar-right {

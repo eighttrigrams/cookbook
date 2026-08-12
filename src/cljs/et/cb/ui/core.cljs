@@ -145,10 +145,29 @@
       (when logged-in?
         [recipe/navigation-actions {:id recipe-id}])]
 
+     ;; **The app's name, and on a submode it is also the way back to the shelf.**
+     ;; *when i\'m, coming from the overview, go into any submode (trashcan, settings,
+     ;; inbox) to get out, i must click on such an item in the right hand top side
+     ;; again. make that clicking on the cookbook brand logo takes me also back.* The
+     ;; buttons on the right are toggles, so each of them is its own way out and only
+     ;; its own; the brand is the one thing on the bar that means *the app*, which is
+     ;; exactly what a reader on a submode wants to get back to.
+     ;;
+     ;; **A `button` on a submode and a `div` on the shelf**, rather than a div with a
+     ;; click handler either way. The keyboard and a screen reader get it for free, and
+     ;; on the shelf there is nothing to offer: a control that is already where it goes
+     ;; is a control that answers a press with nothing, and this bar has no other
+     ;; example of one. `.brand` and its two spans are unchanged in both, which is the
+     ;; ns docstring\'s rule about that class kept — what varies is whether the name is
+     ;; also a control, never what the name looks like.
      :else
-     [:div.brand
-      [:span.brand-mark "▤"]
-      [:span.brand-name "Cookbook"]])])
+     (let [home? (= :shelf page)]
+       [(if home? :div.brand :button.brand.brand-home)
+        (cond-> {}
+          (not home?) (assoc :on-click #(state/go-to-page :shelf)
+                             :title "Back to the shelf"))
+        [:span.brand-mark "▤"]
+        [:span.brand-name "Cookbook"]]))])
 
 (defn- top-bar []
   (let [app-state @state/*app-state
