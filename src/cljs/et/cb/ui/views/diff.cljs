@@ -17,8 +17,15 @@
 
   So both readings are drawn by `shell` and neither draws its own overlay. That is
   the load-bearing part: a second surface that merely *resembled* this one is how the
-  two would drift, and the words are the only thing that differs between them —
-  headings, a label, and which buttons are in the header.
+  two would drift, and what differs between them is words — headings, a label — and
+  which of the ← → a history can be stepped through with.
+
+  **What a reading can be *answered* with is no longer among the differences, because
+  it is no longer on the surface at all.** *also, on the inbox/tray. place the Seen
+  Approve/Dismiss buttons in that position* — the top bar's right-hand slot, beside the
+  theme toggle. `answers` is where the three now come from, and `core/surface-actions`
+  is what draws them; `shell` no longer takes them, so the header is what the reading
+  *is* and nothing else.
 
   Modelled on rhizome's `ui.main.diff`, which this follows down to the ← / → header
   and the Split/Unified toggle. Rhizome's `✕` is the one piece of that chrome this no
@@ -363,31 +370,51 @@
     :description (:description proposal)}])
 
 (defn- proposal-actions
-  "The two answers, in the header of the surface he read them on.
+  "The two answers, **in the top bar above the surface he read them on.** *also, on the
+  inbox/tray. place the Seen Approve/Dismiss buttons in that position* — the position
+  being the bar's right-hand slot, immediately left of the dark-mode toggle, which is
+  where a Recipe page's Publish went one commit earlier.
 
-  **They are here as well as on the queue row, and both are wanted.** The row's job
-  is triage — a proposal he already recognises should not cost a round trip through a
-  page to accept — and this one's is deciding having read, which is a decision that
-  must not send him somewhere else to make. `state/resolve-proposal` is where the two
-  entry points become one resolution: it closes this viewer whichever button was
-  pressed, so an answered proposal is never left on screen.
+  **They were 'in the header of the surface he read them on', and the reason survives
+  the move rather than being dropped with the header.** That sentence was about *where
+  a thing is read*: the row's job is triage — a proposal he already recognises should
+  not cost a round trip through a page to accept — and this one's is deciding having
+  read, which is a decision that must not send him somewhere else to make. The bar
+  standing above this surface is still where it is read; nothing about the answers has
+  moved *away* from the reading, they have moved to the top of it. That is the same
+  argument `back-to-origin` made when the `✕` left this header, one control earlier and
+  at the other end of the same bar: the way off a surface and the answers to it are
+  chrome about the surface, and this app's chrome is the bar.
+
+  **And it is the same rule as Publish**, which is why neither of them is a special
+  case: what a surface offers on the thing it is about goes in that slot, and
+  `core/surface-actions` orders them so a Recipe page's own action is replaced by the
+  viewer's while the viewer is up — never joined by it.
 
   Approve goes dead on the first click, like every confirm button in this app and for
   the same reason: only the response closes this out, so two quick clicks would send
   two POSTs and the second would 409 over a decision that in fact went through.
   Dismiss opens the confirmation instead, because the agent's text is not served
-  anywhere afterwards — the same modal the row opens, which is why it renders above
-  this surface rather than under it."
+  anywhere afterwards. **That confirmation is now opened from the bar**, and it still
+  renders above this surface rather than under it — `.modal-backdrop` at 30 over
+  `.diff-overlay` at 25 is the stylesheet's answer and it is unchanged by which
+  stacking context the button that opened it was in.
+
+  `.bar-action` for both, plus the colour each already wore: Approve keeps the accent,
+  because it is the one button in this app that writes a version, and Dismiss keeps the
+  red it borrowed from the delete buttons, because what it removes does not come back."
   [_entry]
   (let [sending? (r/atom false)]
     (fn [{:keys [id]}]
       [:<>
-       [:button.proposal-approve
+       [:button.bar-action.proposal-approve
         {:disabled @sending?
+         :title "Approve — the agent's text becomes this Recipe's next version"
          :on-click #(do (reset! sending? true) (state/approve-proposal id nil))}
         (if @sending? "Approving…" "Approve")]
-       [:button.secondary.danger.proposal-dismiss
-        {:on-click #(state/start-dismissing-proposal id)} "Dismiss"]])))
+       [:button.bar-action.proposal-dismiss
+        {:title "Dismiss — the agent's text goes, and the Recipe is untouched"
+         :on-click #(state/start-dismissing-proposal id)} "Dismiss"]])))
 
 ;; ---------------------------------------------------------------------------
 ;; the surface, and what it has to take out of the tab order
@@ -432,13 +459,40 @@
   The way off this surface is now the bar's left slot — `back-to-origin` — so a bar
   taken out of the tab order would be a dialog whose one exit the keyboard cannot
   reach, which is the exact failure this function was written to fix, arrived at from
-  the other side. Exempting the *whole* bar rather than that one button is right
-  because `core/focused-surface?` has already emptied it: while this surface is up the
-  bar holds the back button and the theme toggle and nothing else, so there is no
-  page selector, no Sign out and no third control hiding in there to Tab onto. The two
-  facts hold each other up — if a widget is ever added to the bar unconditionally,
-  this exemption is where it becomes reachable from a dialog, and that is the moment
-  to make the exemption narrower rather than to argue with it.
+  the other side. Exempting the *whole* bar rather than that one button was right
+  because `core/focused-surface?` has already emptied it of the app's own chrome:
+  there is no page selector, no Sign out and no third control hiding in there to Tab
+  onto.
+
+  **This paragraph used to end by predicting the moment that has now arrived, and it
+  is rewritten rather than left predicting the past.** It said: *if a widget is ever
+  added to the bar unconditionally, this exemption is where it becomes reachable from
+  a dialog, and that is the moment to make the exemption narrower rather than to argue
+  with it.* What arrived is not an unconditional widget. It is this surface's **own
+  answers** — *also, on the inbox/tray. place the Seen Approve/Dismiss buttons in that
+  position* — so being reachable from the dialog is exactly right for them, and the
+  exemption is doing its job rather than being abused by a stranger. The bar is no
+  longer emptied to *back + theme*, and the sentence that mattered was never the count:
+  it is that **everything the bar holds while this surface is up either belongs to this
+  surface or is the theme toggle**. That is still true, and it is now true by
+  construction rather than by emptiness, because `core/surface-actions` is an ordered
+  `cond` in which the viewer outranks the page underneath — a Recipe page's Publish
+  cannot be up there while this is open, which is the half of it that would otherwise
+  be one Tab and one Enter from a one-way latch.
+
+  **So the exemption keeps its width, and here is why narrowing it is not the move.**
+  `inert` is inherited and cannot be lifted on a descendant — there is no
+  `inert=\"false\"` — so 'name what it exempts' cannot mean exempting a subtree inside
+  an inert bar. It could only mean descending into `.top-bar` and inerting each child
+  that is *not* the back button, this surface's answers or the theme toggle; and while
+  this surface is up those are the only children there are, so the descent would inert
+  nothing at all. That is a mechanism with no effect today, one more thing to keep in
+  step with whatever the bar renders tomorrow, and — this is the part that decides it —
+  it would enforce the rule in the place least able to see it. What actually holds the
+  line is the census: `checks.js` 11 asserts the **exact set** of focusable elements
+  outside this overlay, by name, and reddens when it changes for any reason at all,
+  including one nobody predicted. The narrowing lives there rather than in a longer
+  `matches` string here.
 
   Everything else behind stays inert, which is the part not to break: the page under
   the overlay, the error banner, the login form. Proven with real Tab presses rather
@@ -470,10 +524,31 @@
   an agent's wording into a Recipe**, and a reader who has just opened a page to read
   it has read nothing yet. It has `tabindex=\"-1\"` for that and for nothing else.
 
-  The example used to be *the ✕ or Approve*, and the ✕ has gone to the top bar's left
-  slot. The reason survives it and is sharper without it: what the first Tab now
-  reaches is that back button, which is the one control up there that is safe to land
-  on, and Approve is still two stops away rather than one.
+  **The paragraph that used to be here claimed the first Tab reaches the back button,
+  and it was wrong — measured, with real presses, which is the only way this file
+  admits an answer.** `.diff-page` holds the focus and the header was *inside* it, so
+  the first Tab went to the first tabbable thing in the header, which on a proposal was
+  **Approve**: one press and one Enter from the write, from the state this function
+  puts the reader in. That is the arrangement this change ended, and the measurement
+  that says so is a mutation in the browser README (M59, the answers put back in the
+  header) rather than an argument here.
+
+  **What the ring is now**, from the moment it opens, on a proposal with three Scopes:
+
+      .diff-page → chip → chip → chip → Split/Unified → (body) → ← Inbox
+                 → Approve → Dismiss → ☀ → back into the surface
+
+  Approve is the **seventh** stop rather than the first, and everything before it is a
+  thing you can press twice with nothing happening. It is not arranged here and could
+  not be: it falls out of `.top-bar` preceding the overlay in the document, so the
+  answers, having gone up into the bar, are reached *after* the whole surface and after
+  the wrap — the reader passes what there is to read on the way to what can be done
+  about it. That the move made this property better rather than worse is the argument
+  `proposal-actions` makes from the other end.
+
+  The `(body)` stop is the browser's own: with the document's last tabbable behind it,
+  Chromium focuses `body` before wrapping. It is not a control, Enter does nothing on
+  it, and it was a stop here before this change as well.
 
   The opener is read **before** anything is inerted, because inerting an ancestor of
   the focused element blurs it, and restored on the way out only if it is still in the
@@ -617,11 +692,18 @@
        " page, where it can be destroyed for good."])))
 
 (defn- seen-action
-  "**Seen, in the header of the surface the entry was opened on** — *when we go from
-  the tray/inbox, to the versions, we can approve/dismiss but not set \"Seen\". add
-  that.* The proposal reading has had its two answers here since the panes moved onto
-  a page of their own; this is the third kind's one answer, in the same place, so that
-  whatever a queue entry can be answered with can be answered where it is read.
+  "**Seen, in the top bar above the surface the entry was opened on** — *when we go
+  from the tray/inbox, to the versions, we can approve/dismiss but not set \"Seen\".
+  add that.* The proposal reading has had its two answers beside it since the panes
+  moved onto a page of their own; this is the third kind's one answer, in the same
+  place, so that whatever a queue entry can be answered with can be answered where it
+  is read.
+
+  **That last clause is why the move up into the bar leaves this argument standing.**
+  It said *where it is read* and not *in the header*, and the bar over this surface is
+  still where it is read — see `proposal-actions`, which makes the same point at
+  length about the two answers it kept company with. What moved is which band of the
+  reading the button sits in; what did not is that it sits with the thing it answers.
 
   And since the queue's rows no longer carry any of the three, this is the **only**
   place a `created`, `modified` or `deleted` entry can be acknowledged from.
@@ -637,11 +719,46 @@
   [_event-id]
   (let [sending? (r/atom false)]
     (fn [event-id]
-      [:button.secondary.diff-seen
+      [:button.bar-action.diff-seen
        {:disabled @sending?
         :title "Acknowledge this change — it leaves your queue"
         :on-click #(do (reset! sending? true) (state/mark-seen event-id))}
        (if @sending? "Marking…" "Seen")])))
+
+(defn answers
+  "**What the surface on screen can be answered with**, for the top bar to draw in its
+  right-hand slot: Approve and Dismiss on a proposal, Seen on the other three kinds,
+  and **nothing at all** on a version viewer that was not opened from the queue.
+
+  *also, on the inbox/tray. place the Seen Approve/Dismiss buttons in that position.*
+
+  **It reads the state rather than being handed anything, and it reads exactly what
+  `component` reads.** Which reading is up is this namespace's own question — the two
+  fields that decide it are `:diffing-proposal` and `:diffing-event`, and neither means
+  anything to the bar — so `core/surface-actions` calls this and places the result,
+  the way `left-slot` calls `back-to-origin` and places that. The slot places controls
+  and does not know what any of them do.
+
+  **The proposal's entry is looked up here, and that lookup is load-bearing.**
+  `component` renders nothing at all when `:diffing-proposal` names an entry the queue
+  no longer holds — that `when-let` is what keeps an answered proposal from being drawn
+  out of nothing — so a bar that offered Approve without making the same lookup could
+  be offering an answer to a surface that is not on screen. One question, asked the
+  same way in both places.
+
+  **Nothing for the version viewer opened from a Recipe's own page or from the Deleted
+  page**, which is `:diffing-event` being nil: there is no queue entry behind those, so
+  there is nothing to acknowledge, and the bar's slot is drawn only when it has
+  something to hold. That is the case the empty answer exists for, and it is the one a
+  stray button would be most visible in — a Seen button on a Recipe's own version
+  history, acknowledging nothing."
+  []
+  (let [{:keys [diffing-proposal diffing-event inbox]} @state/*app-state]
+    (if diffing-proposal
+      (when (first (filter #(= diffing-proposal (:id %)) inbox))
+        [proposal-actions {:id diffing-proposal}])
+      (when diffing-event
+        [seen-action diffing-event]))))
 
 (defn- shell
   "The surface: the overlay, the page, the header, and whatever the reading puts
@@ -651,10 +768,15 @@
   this namespace. The chrome, the Split/Unified toggle and the dark-mode
   wiring are written once, so a proposal cannot come to be read on a page that merely
   looks like the version viewer. What a reading supplies is words — a `heading`, the
-  `subject` it is about, a `label` — and, in the two places where the readings really
-  do differ, hiccup: `nav` for the ← → a history can be stepped through, and
-  `actions` for the buttons a proposal can be answered with. A reading that has
-  neither passes nil, and nothing is rendered where they would be.
+  `subject` it is about, a `label` — and, in the one place where the readings really do
+  differ in shape, hiccup: `nav`, for the ← → a history can be stepped through. A
+  reading with no history passes nil and nothing is rendered where it would be.
+
+  **`actions` was the second such place and is gone from here entirely.** The buttons a
+  reading can be answered with are in the top bar now — *also, on the inbox/tray. place
+  the Seen Approve/Dismiss buttons in that position* — so they are neither passed in
+  nor drawn here, and `answers` is where they come from. What is left in this header is
+  what the reading **is**.
 
   `toggle-disabled?` rather than a toggle each: there is no merge view to lay out
   either way on a Recipe's first version, and that is the only case.
@@ -666,22 +788,24 @@
   [_opts _body]
   (let [ref (surface-ref (atom nil))]
     (fn [{:keys [heading subject label label-title nav unified? toggle-disabled?
-                 actions recipe-id]} body]
+                 recipe-id]} body]
       [:div.diff-overlay
        {:ref ref
         :role "dialog"
         :aria-modal true
         :aria-label (str heading (when (seq (str subject)) (str " — " subject)))}
        [:div.diff-page {:tab-index -1}
+        ;; **What this reading is, and nothing you can do about it.** No `✕` — the way
+        ;; off this surface is `back-to-origin`, in the top bar's left slot — and no
+        ;; Approve, Dismiss or Seen either, which went to the bar's right slot for the
+        ;; same reason and are `answers`' now. So the header begins with what the
+        ;; reading is and ends with it, and the two ends of the bar above carry the two
+        ;; things you can do: leave, and answer.
         [:div.diff-header
-         ;; No `✕`. The way off this surface is `back-to-origin`, in the top bar's
-         ;; left slot, which is where every other surface's is — so the header begins
-         ;; with what this reading *is* rather than with a way to leave it.
          [:h2 heading]
          [:span.diff-recipe-title subject]
          nav
-         [:span.diff-version-label {:title label-title} label]
-         actions]
+         [:span.diff-version-label {:title label-title} label]]
         ;; Under the header and above the reading: the filing is what this Recipe
         ;; is *about*, which belongs with the heading that names it rather than
         ;; among the two texts it is not part of. Same order as the Recipe's own
@@ -690,11 +814,18 @@
         [deleted-note recipe-id]
         ;; **Split/Unified on a row of its own** — *the unified/split view button
         ;; belongs not in that row. but should go below on its own.* It was in the
-        ;; header, at the far right, among what the reading *is* and what can be
-        ;; done about it: a heading, a title, a version label, Approve, Dismiss. It
-        ;; is neither of those. It changes how the two texts below are laid out and
-        ;; nothing else, so it sits with them — the last thing before the panes,
-        ;; over the pane it re-lays-out.
+        ;; header, at the far right, among what the reading *is* and what could be
+        ;; done about it: a heading, a title, a version label, and — as the header
+        ;; stood then — Approve and Dismiss. It is neither of those. It changes how
+        ;; the two texts below are laid out and nothing else, so it sits with them —
+        ;; the last thing before the panes, over the pane it re-lays-out.
+        ;;
+        ;; The two answers have since left the header as well, in the other
+        ;; direction: they are in the top bar, with the way off the surface. So the
+        ;; row this button was taken out of now holds only the first half of that
+        ;; list, and the argument is the sharper for it — the header is what the
+        ;; reading *is*, and this changes how it is laid out, which is a third thing
+        ;; that is neither.
         ;;
         ;; Dead where there is no merge view to lay out either way, rather than
         ;; live and doing nothing: the ← and → in the header go grey for the same
@@ -710,7 +841,9 @@
   newest-first: index 0 is the step into today's text, so ← walks backwards in time
   and → forwards, as in rhizome."
   [recipe-id]
-  (let [{:keys [diff-version-idx diff-unified? dark-mode recipes versions diffing-event]}
+  ;; `:diffing-event` is not read here any more: what it decided was whether this
+  ;; reading offered a Seen button, and that answer is `answers`' now — the bar's.
+  (let [{:keys [diff-version-idx diff-unified? dark-mode recipes versions]}
         @state/*app-state
         recipe (first (filter #(= recipe-id (:id %)) recipes))
         entries (get versions recipe-id)
@@ -747,11 +880,7 @@
       :label (step-label older newer (zero? idx))
       :label-title (str "Where each version came from — " provenance/explanation)
       :unified? diff-unified?
-      :toggle-disabled? (nil? older)
-      ;; Only when this surface was opened from a queue entry. The Versions button on
-      ;; a Recipe's page and the Deleted page open the same reading with nothing to
-      ;; acknowledge, and `:diffing-event` is nil for both.
-      :actions (when diffing-event [seen-action diffing-event])}
+      :toggle-disabled? (nil? older)}
      (cond
        (nil? entries)
        [:p.diff-loading "Loading…"]
@@ -799,8 +928,7 @@
       :label (str "Version " (:recipe_version proposal) " → proposed")
       :label-title "The Recipe's current version, and the rewrite waiting on it —
                     which is not a version until you approve it"
-      :unified? diff-unified?
-      :actions [proposal-actions {:id id}]}
+      :unified? diff-unified?}
      [:<>
       [published-note proposal]
       [staleness-note proposal]

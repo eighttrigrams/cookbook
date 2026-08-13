@@ -210,7 +210,18 @@
   than joining it — which is also how Publish comes to be unreachable while a dialog is
   up: it falls out of the order rather than being a condition somebody has to remember.
   `views.diff/inert-behind!` is where that consequence is argued from the other side,
-  and it is the reason this is an order at all.
+  and it is the reason this is an order at all: that function exempts the whole top bar
+  from the overlay's `inert`, so anything standing here is reachable by keyboard from
+  inside the dialog. The viewer's own answers being reachable from it is right; a
+  Recipe's one-way latch being reachable from it is one Tab and one Enter from a
+  publish nobody asked for.
+
+  **The viewer's answers are the viewer's to name.** *also, on the inbox/tray. place
+  the Seen Approve/Dismiss buttons in that position.* Which of the two readings is up,
+  and whether the entry behind it is still in the queue, are `views.diff`'s questions —
+  `views.diff/answers` answers them, and this places the result. The same division as
+  the left slot's, where `back-to-origin` derives its own label and the slot only puts
+  it somewhere.
 
   **Publish shows when all five of these hold**, and each one is something that would
   otherwise be a lie up there:
@@ -250,11 +261,19 @@
   (when-let [actions
              (cond
                ;; **The viewer outranks the page it was opened over**, as it does in
-               ;; `left-slot`. It offers nothing here today — the version viewer's own
-               ;; answers are still in its header — so what this branch does is keep
-               ;; Publish out of a bar standing above a dialog.
+               ;; `left-slot`, and it answers for this corner with its own answers:
+               ;; Approve and Dismiss on a proposal, Seen on the other three kinds,
+               ;; and nothing at all on a version viewer opened from a Recipe's page
+               ;; or from the Deleted page, where there is no queue entry behind it.
+               ;; Which of those it is, is `views.diff`'s question and not the bar's.
+               ;;
+               ;; **Called, not mounted as `[diff/answers]`.** A component vector is
+               ;; truthy whatever it renders, so the `when-let` below would draw the
+               ;; box for a viewer with no answers and put an empty flex child in the
+               ;; bar — the leftover this whole slot is careful about. Calling it lets
+               ;; a nil answer *be* nil here.
                (some? diffing)
-               nil
+               (diff/answers)
 
                (and (= :recipe page) (not recipe-page-edit?) logged-in?)
                (when-let [recipe (get details recipe-page-id)]

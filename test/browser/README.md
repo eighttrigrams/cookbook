@@ -18,6 +18,13 @@ a file nothing unrelated is appended to.
     focus-probe.js one line, evaluated between *real* Tab presses
     cleanup.py     takes every CHECK- Recipe back out again
 
+`seed.py` takes an optional machine token as its one argument, for the reason
+`draftProvenance()` does: `machine-user` / `pw` is what a fresh dev database is seeded
+with, and this one's password had been rotated by hand, so the login answered 401 and
+the seed died on a `KeyError` with nothing wrong in the app. Mint one on the backend
+nREPL — `(et.cb.auth/create-machine-token nil "machine-user")` — and pass it in. It
+prints which of the two routes it took.
+
     recipe-page-checks.js   a second suite: a Recipe's own page, its address and
                             its two modes
     provenance-seed.py      the one Recipe two of that suite's phases cannot find
@@ -35,17 +42,36 @@ a file nothing unrelated is appended to.
 5. The focus trap is the one property real keystrokes are needed for, because a
    synthetic `KeyboardEvent` does not move focus and nothing inside the page can send
    a real one. Drive it from the session instead: click a `proposed` row's title, then
-   for each of six presses of `Tab`, evaluate `focus-probe.js` and read
+   for each of ten presses of `Tab`, evaluate `focus-probe.js` and read
    `insideOverlay`. Check 11 makes the same claim structurally, in one evaluate, by
    counting what is focusable in the document at all — the two together are the
    census and the keystroke.
+
+   **What the ring looks like now the answers are in the bar**, measured on a proposal
+   whose Recipe is filed under three Scopes:
+
+       .diff-page → chip → chip → chip → Split/Unified → (body) → ← Inbox
+                  → Approve → Dismiss → ☀ → back into the surface
+
+   Ten presses is what it takes to come round. The stop worth checking is the first
+   one: it is a Scope chip, and **Approve is the seventh** — where before this change
+   it was the first, because the header was inside the focused `.diff-page`. `(body)`
+   is Chromium's own stop before the wrap, not a control. Nothing in the ring is
+   outside the bar and the overlay, which is the assertion: not the queue behind, not
+   the error banner, not the login form.
 6. `python3 test/browser/cleanup.py` — sqlite and not `DELETE /api/recipes/:id`,
    because the API's delete is right to leave a `deleted` entry in his queue and a
    cleanup must not add one.
 
-The suite assumes the dev queue also holds at least one `modified` entry, which check
-5 opens to compare the two readings' markup. `seed.py` does not create one: a
-`modified` entry needs a Recipe with a history, and the dev database has several.
+**`seed.py` makes the `modified` entry too, and that changed with checks 15 and 16.**
+It used to borrow one out of the dev database — check 5 opens a `modified` row to
+compare the two readings' markup, and reading one costs nothing. 16 *answers* one, and
+an entry marked Seen leaves the queue for good; borrowing one of his and consuming it
+would take something that is not the suite's and leave the next run with nothing to
+open. So `CHECK-MOD` is the machine's own Recipe, written and then saved again by the
+machine — which is the only way to get a `modified` entry, since a Recipe whose current
+version came from the ui is one an agent may not overwrite, and that rule is what makes
+the other eight fixtures proposals rather than saves.
 
 A check's **number is its name and not its position**. 1–9 keep the numbers they had
 when the mutation table was first published, so the two can be compared; 10, 11 and 12
@@ -53,6 +79,20 @@ were added afterwards, and 11 sits in the middle of the file because it is about
 viewer that is open and that is where one is. **13 and 14** came with the versions
 view joining the shell — the ✕ becoming a back button in the top bar's left slot — and
 they sit beside 11 and 4 for its reason: both are about a viewer that is *up*.
+**15 and 16** came with the answers joining it at the other end of that bar, and they
+sit beside 5 because 5 is where a `modified` entry is already open.
+
+**Three checks have changed sides rather than been deleted, and two of them had gone
+quietly red before this pass.** 11 is the old one (see below). 6 asserted that
+dismissing *from a queue row* asked first and 12 that a warned proposal's row had a
+*dead* Approve; both gestures were removed when every answer moved onto the page an
+entry opens, and neither check was revised with them — so they had been failing on
+`nothing to click: .proposal-dismiss` and on `approveDisabled: undefined` ever since,
+which is the cost of a suite that is run but not read. They assert the negatives now:
+no row can dismiss, no row answers at all, and the words a row does carry — the
+`published` flag and the `v1 → v3` relationship — are still there, because those are
+what triage was left with. A step belonging to old 6 was removed with it; it had been
+failing into the notes with nothing to cancel.
 
 14 replaced a bare `close the viewer` step. Closing was something this suite did in
 order to get to the next check; now that where you land is a claim, it is a check, and
@@ -88,15 +128,45 @@ a table in a document goes stale silently, and this list is the part that does n
 | **M9** | drop `.top-bar` from `inert-behind!`'s skip test, so the bar goes inert under the viewer again |
 | **M10** | render `[:button.diff-close …]` back into `shell`'s header |
 | **M11** | make `views/diff/back-to-origin` ignore `page` and always say `← Back` |
+| **M59** | draw `(answers)` at the end of `shell`'s `.diff-header` as well, which is where Approve, Dismiss and Seen used to be |
+| **M60** | mount the viewer's answers as `[diff/answers]` in `core/surface-actions` instead of calling `(diff/answers)` |
 
 **11 changed sides rather than being deleted**, which is the entry in this table worth
 reading first. It used to assert `topBarInert` and that *nothing at all* outside the
 overlay is focusable. Both are now false by design: the way off the viewer is the top
 bar's left slot, so a bar taken out of the tab order would be a dialog whose one exit
-the keyboard cannot reach. It asserts the exact set instead — the back button and the
-theme toggle, both inside `.top-bar`, and the page behind still inert. **M9** is that
-decision's mutation: with the exemption gone the bar is unreachable and 11 reddens on
-`topBarInert`, where before it would have gone green.
+the keyboard cannot reach. It asserts the exact set instead, and that set is now
+**four** — `← Inbox`, Approve, Dismiss and the theme toggle — since the answers moved
+up there beside the way out. **M9** is that decision's mutation and it has got sharper
+with them: with the exemption gone the bar is unreachable, `focusableOutsideOverlay`
+comes back **empty**, and the dialog has neither an exit nor an answer the keyboard can
+reach. It reddens 11 and nothing else in the file, because every other check here
+drives the mouse — which is the whole reason 11 and `focus-probe.js` exist.
+
+**`inert-behind!`'s prediction came true in this pass, and the exemption kept its
+width.** Its docstring said that if a widget were ever added to the bar
+unconditionally, the exemption is where it would become reachable from a dialog, and
+that this would be the moment to narrow it. What arrived is not a widget: it is the
+dialog's *own answers*, for which being reachable from the dialog is the point. The
+sentence that mattered was never the count of things up there but that **everything in
+the bar while the viewer is up either belongs to that surface or is the theme toggle**
+— still true, and now true by construction, since `core/surface-actions` is an ordered
+`cond` in which the viewer outranks the Recipe page underneath. Narrowing was also
+looked at and rejected on its mechanics: `inert` is inherited and cannot be lifted on a
+descendant, so a narrower exemption would have to mean descending into `.top-bar` and
+inerting the children that are not the back button, the answers or the toggle — and
+while the viewer is up there are no others, so it would inert nothing at all. **11 is
+the narrowing**: it names the four by class and reddens on a fifth, whatever the fifth
+turns out to be.
+
+**M59 is the move undone**, and it reddens 13 (`inTheHeader: ["Approve","Dismiss"]`)
+and 15 (`headerButtons: ["←","→","Seen"]`) and nothing else — the buttons work in both
+places, which is exactly why a half-finished move needs a check that looks at the place
+they left. It is also the measurement behind `surface-ref`'s rewritten paragraph: with
+the answers in the header, a real Tab press from `.diff-page` lands on
+`bar-action proposal-approve`, first stop. **M60** puts an empty `.top-bar-actions` box
+in the corner of a viewer with no answers to offer, and reddens `recipe-page-checks.js`
+42.
 
 **M10** puts the ✕ back and reddens 13 alone; **M11** flattens the derived label and
 reddens 13 (`← Inbox`) here and `recipe-page-checks.js` 25 (`← Recipe`) there — the two

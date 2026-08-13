@@ -22,6 +22,23 @@ For the stale cases the owner PUTs again afterwards, which bumps the Recipe past
 proposal's `base_version` and leaves the proposal pending — that is the whole of what
 "stale" is. For the published ones he publishes.
 
+And one entry of the **other** kind:
+
+  CHECK-MOD    a `modified` entry — the agent's own Recipe, saved twice
+
+**It is here because a check answers it, and answering is destructive.** The suite
+used to borrow a `modified` row out of the dev database for check 5, which only *read*
+it; 15 and 16 press its Seen button, and an entry marked Seen leaves the queue for
+good. Borrowing one and consuming it would take something of his and leave the next
+run with nothing to open — so the suite makes its own, and `cleanup.py` takes it back
+out with everything else called CHECK-.
+
+Making one takes the machine twice, and that is the rule this fixture is built out of
+rather than around: a Recipe whose current version came from the ui is one an agent may
+not overwrite, which is what turns the eight cases above into proposals. So here the
+**machine** writes v1 — a `created` entry — and then PUTs again, which it may, because
+the version it is overwriting is its own. That second save is the `modified` entry.
+
 Every title starts with CHECK- so cleanup.py can find them again.
 """
 import json, sys, urllib.request, urllib.error
@@ -52,8 +69,35 @@ def req(path, data=None, method=None, token=None):
         return e.code, json.loads(e.read() or b'null')
 
 
+def machine_token():
+    """The machine's token, minted or borrowed.
+
+    `machine-user` / `pw` is what a fresh dev database is seeded with, and a dev
+    database is where passwords get rotated by hand — this one's had been, and the
+    login answered a 401 with no `token` key, so the seed died on a `KeyError` with
+    nothing wrong in the app. `recipe-page-checks.js`' `draftProvenance()` had already
+    met that and takes a token as an argument; this does the same, and says which of
+    the two routes it took so a run is on the record either way.
+
+        ;; on :nrepl-port from config.edn
+        (et.cb.auth/create-machine-token nil "machine-user")
+
+        python3 test/browser/seed.py <the token>
+    """
+    if len(sys.argv) > 1:
+        print('using the token given on the command line')
+        return sys.argv[1]
+    status, body = req('/auth/login', {'username': 'machine-user', 'password': 'pw'})
+    if status != 200 or 'token' not in (body or {}):
+        sys.exit('could not log in as machine-user / pw (status ' + str(status) + '). '
+                 'The dev password has probably been rotated — mint a token on the '
+                 'backend nREPL and pass it as an argument. See machine_token().')
+    print('logged in as machine-user / pw')
+    return body['token']
+
+
 def main():
-    token = req('/auth/login', {'username': 'machine-user', 'password': 'pw'})[1]['token']
+    token = machine_token()
     made = []
     for name, publish, stale in CASES:
         s, recipe = req('/recipes', {
@@ -85,6 +129,26 @@ def main():
             assert s == 200, (s, body)
         made.append({'recipe_id': rid, 'title': recipe['title'],
                      'published': publish, 'stale': stale})
+
+    # CHECK-MOD: the agent's own Recipe, saved twice. The first POST files a `created`
+    # entry and the PUT a `modified` one — both as the machine, which is what makes the
+    # second call a save rather than a proposal.
+    s, recipe = req('/recipes', {
+        'title': 'CHECK-MOD an agent wrote this and then changed it',
+        'useful_when': 'the queue needs a modified entry the suite may answer',
+        'description': ('An agent wrote this paragraph, and it is version 1.\n\n'
+                        'A second paragraph, so the save below has somewhere to change '
+                        'something that is not the first line.\n')}, token=token)
+    assert s == 201, (s, recipe)
+    rid = recipe['id']
+    s, body = req(f'/recipes/{rid}', {
+        'description': ('An agent wrote this paragraph, and it is version 1.\n\n'
+                        'And then the same agent rewrote the second paragraph, which is '
+                        'a save and not a proposal, because the version it replaced was '
+                        'its own.\n')}, method='PUT', token=token)
+    assert s == 200, (s, body)
+    made.append({'recipe_id': rid, 'title': recipe['title'], 'kind': 'created + modified'})
+
     print(json.dumps(made, indent=1))
 
 
