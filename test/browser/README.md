@@ -138,6 +138,8 @@ which is what reading a Recipe *is*.
     (<contents of the file>).draftProvenance([token])
                                            — the draft preview; builds its own two
     (<contents of the file>).clampedBody() — the shelf's abbreviation; builds its own
+    (<contents of the file>).barActions()  — Publish in the top bar; builds its own,
+                                             and publishes it
 
 The two cold loads cannot share a context with the others, or with each other: the load
 each is about replaces the JS context, which is the whole point of them. There are two
@@ -212,6 +214,11 @@ Recipe would half-run from a Recipe page and produce two false reds.
     39  the abbreviation keeps a fenced code block whole
     38  See more shows the rest of the body, and goes
     40  a short body is shown whole, with nothing to press
+    41  Publish is in the bar, immediately left of the theme toggle    (barActions)
+    42  the versions viewer takes Publish out of the bar
+    44  an address that names no Recipe offers no Publish
+    45  signed out, an unpublished Recipe offers no Publish
+    43  Publish from the bar publishes, and the button goes
 
 6 is out of sequence for the reason 11 is in `checks.js`: it is about a page that is
 *open*, and that is where one is. It was written after the fact — the first version of
@@ -271,9 +278,13 @@ and reads as a rendering bug nobody can name. It measures against the **row** an
 the title, because the title carries `margin-right: auto` and its box ends where its
 text does.
 
-**14 has now been revised three times** — off the card, into the slot, and now that
-Delete has gone to the bottom right — so its shape is built for a fourth: set equality
-**per container, per mode**. It also **moved** in the file, to sit after 3a/3b/5: it
+**14 has now been revised four times** — off the card, into the slot, when Delete went
+to the bottom right, and now that Publish has gone up into the bar's *other* slot, so
+that the panel has no actions row at all any more. Its shape is what made the fourth
+revision one table and no new mechanism: set equality **per container, per mode**, with
+the panel's vanished row asserted as the *absence of the element* rather than as an
+empty list. What it cannot assert is the mode gate, because `SUBJECT` is published —
+see `barActions()` 41. It also **moved** in the file, to sit after 3a/3b/5: it
 navigates now (Edit, then Cancel), and those three read a history stack of exactly
 `[/, /recipe/<id>]`. Above them it reddens 3a and then eight checks in a row, which is
 how the constraint was rediscovered.
@@ -415,6 +426,80 @@ drift without somebody editing this file, and it is an assertion rather than a n
 abbreviated reading. 40 is the control, and it is not ceremony: *every* card wearing a
 See more is what a threshold of zero looks like, and M52 is that mistake — it passes
 37, 38 and 39 without any of them noticing.
+
+### `barActions()` — Publish moves into the top bar's right-hand slot
+
+*In the Page view, put the Publish button in the top right, to the left of the dark
+mode switcher.*
+
+**A phase of its own because the button only exists on a Recipe that is not
+published, and `SUBJECT` is.** That is not a detail: 14 and 22 assert that a Recipe
+page's corner holds the theme toggle and nothing else, and on a published Recipe both
+of them go on passing whether or not Publish was ever built. So this phase builds
+`CHECK-BAR`, an ordinary owner's Recipe with a body, and asserts the five conditions
+where they can actually fail. `cleanup.py` takes it out with everything else called
+`CHECK-`.
+
+It is the only phase in either suite that presses a **latch**: 43 publishes the
+fixture, and there is no unpublish. That is the reason it builds its own rather than
+borrowing one — the same reason `save()` does, one step further, since what this
+leaves behind cannot be undone even in principle.
+
+41 asserts a *position* and not a container: the button is inside `.top-bar-actions`,
+that box is the toggle's immediately preceding sibling, and the two sit on one line at
+one height. It also carries the mode, which is the line of 14's table that cannot be
+tested on a published Recipe.
+
+**Two of these came out of the mutation run rather than out of the design**, which is
+the part worth reading:
+
+- dropping the mode gate reddened **nothing** at first — all thirteen of `shelf()`
+  green, 14's `publishAbsentWhileEditing: true` in its evidence, and the button sitting
+  in the bar over the editor the whole time. 14 is on a published Recipe, where that
+  line is vacuous. The editing arm moved into 41, where the button exists.
+- 41 itself then reddened under M56, a mutation that has nothing to do with what 41
+  asserts. It had captured `.top-bar-actions` as a **node** and asked it for its
+  sibling at the end, after a mode round trip had unmounted and remounted it — a
+  detached element answers `null` however right the bar is. It measures at the moment
+  and keeps booleans now.
+
+And the phase's own first wait was the house rule's first hazard, met with the wrong
+consequence rather than with no wait at all: it waited for `.recipe-page-body`, which
+the Recipe it was *leaving* also has, so 41 read a bar that was still the previous
+page's — no Publish, no container, red — while 42 one check later saw the button
+perfectly well. It waits on this Recipe's own title.
+
+### The bar's mutations
+
+| | the edit |
+|---|---|
+| **M53** | drop the `(some? diffing) nil` branch from `core/surface-actions`, so the page's own action stays in the bar while the viewer is over it |
+| **M54** | render `(surface-actions app-state)` after the dark-mode toggle instead of before it |
+| **M55** | drop `(not recipe-page-edit?)` from the gate — Publish survives into the editor |
+| **M56** | `when-let` to `let` on the row lookup, so a missing row reads as *not published yet* |
+| **M57** | drop `logged-in?` from the gate |
+| **M58** | render `[:div.recipe-page-actions]` back into `views/recipe/found`, empty |
+
+**M53 is the one part 2 depends on**, and it reddens 42 alone with
+`top-bar-actions:Publish` sitting in the corner above a dialog. That is not only a
+tidiness failure: `views.diff/inert-behind!` exempts the whole top bar from the
+overlay's `inert`, so a Publish left standing there is one Tab and one Enter from a
+one-way latch, from inside a surface that is not about publishing.
+
+**M54** reddens 41 alone on `leftOfIt` and the sibling test, which is what makes 41 a
+check about *to the left of the dark mode switcher* rather than about a class being
+present somewhere in the bar. **M55** reddens 41 on its editing arm — and reddened
+nothing at all before that arm existed. **M56** reddens 44 with a Publish button over
+*No such Recipe here*. **M57** reddens 45 alone. **M58** is the leftover container, and
+it is the only one that reddens two checks in two phases — 41 and 14 — which is what
+that assertion is for.
+
+**22 says which case it is looking at now.** The corner is no longer only ever the
+theme toggle — a Recipe page carries Publish up there — but `SUBJECT` is published, so
+what 22 sees is a corner with nothing in it but the toggle, and reading its `=== 1` as
+*the rule* would be reading a happenstance. It asserts `subject.published === 1`
+alongside, so a run against a database where that Recipe is not published says which it
+was rather than going red about a control that is behaving.
 
 **22 was found red before any of this was written, and it is worth knowing why.** Its
 last conjunct was `barOnTheShelf.right.length === 4` — three page selectors and the

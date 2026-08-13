@@ -38,13 +38,19 @@
 ;;   button, or save cancel on the left hand side and a couple of widgets on the right
 ;;   hand side, of which only dark light mode is shown in every view.*
 ;;
-;; Two rules fall out of that, and they are the two functions below:
+;; Two rules fall out of that, and there are three functions below, because the second
+;; rule turned out to have two halves:
 ;;
 ;; - **The left slot holds one of three things**: the brand, a back button, or Save
 ;;   and Cancel. Never two of them, and never the brand beside a back button — which
 ;;   is why it is a slot with an ordered decision in it rather than a row of `when`s.
 ;; - **The right-hand side is conditional, and the theme toggle is the only widget in
-;;   every view.** Everything else up there answers to `focused-surface?`.
+;;   every view.** Everything else up there answers to `focused-surface?`: the app's
+;;   widgets are there while the app's chrome is (`chrome?`, in `top-bar`), and where
+;;   they are not, **the surface on screen puts its own actions in the space they
+;;   left** — `surface-actions`. So the right-hand side is a second slot with an
+;;   ordered decision in it, for `left-slot`'s reason exactly: two focused surfaces
+;;   can be on screen at once, and only one of them may answer for that corner.
 
 (defn- focused-surface?
   "Whether what is on screen is a **focused surface**: about one thing, arrived at by
@@ -85,11 +91,20 @@
 
   **Reading a Recipe, it holds three: `← Shelf`, Edit and Versions.** *edit and
   versions can now move to the top, next to the back to shelf button.* And the rule
-  that decides what may join them — **the slot carries ways of *looking* at the thing,
-  the surface keeps what *changes* it** — is `views.recipe/navigation-actions`', because
-  it is that page's rule about its own controls. Publish and Delete stay down in the
-  panel: a destructive control in a row of navigation is a mis-aimed click that costs a
-  Recipe rather than a step.
+  that decides what may join them — **this slot carries ways of *looking* at the thing,
+  and what *changes* it is not in here** — is `views.recipe/navigation-actions`',
+  because it is that page's rule about its own controls. A destructive control in a row
+  of navigation is a mis-aimed click that costs a Recipe rather than a step.
+
+  **The rule used to end 'the surface keeps what changes it', and that half has been
+  overruled — for Publish, and at the bar's other end.** *In the Page view, put the
+  Publish button in the top right, to the left of the dark mode switcher.* It is
+  `surface-actions` that draws it, in the right-hand slot, which is what leaves this
+  paragraph intact rather than merely outlived: the two slots are not one row, and
+  nothing a mis-aimed click here can reach writes anything. Delete did not go with it
+  and stays at the bottom right of the panel, out of the reading path, because its
+  worst outcome is losing the Recipe — see `views.recipe/publish-action`, which is
+  where the two are told apart.
 
   **And while a Recipe is being edited it holds Save and Cancel, with no way back.**
   *when we go to edit, the save and cancel buttons should go where the back button
@@ -169,6 +184,84 @@
         [:span.brand-mark "▤"]
         [:span.brand-name "Cookbook"]]))])
 
+(defn- surface-actions
+  "The top bar's right-hand slot, at the end of it nearest the middle: **what the
+  surface on screen offers on the thing it is about, immediately left of the dark-mode
+  toggle.**
+
+  *In the Page view, put the Publish button in the top right, to the left of the dark
+  mode switcher.*
+
+  **This is the other half of `chrome?`, and it is what makes that corner more than
+  simply narrower on a focused surface.** `top-bar` gates the app's widgets — the page
+  selectors, Sign in / Sign out — on there being no focused surface, so a Recipe page
+  and the version viewer have shown the theme toggle alone up here since that rule was
+  written. What stands there now is this: the app's controls step aside for a surface
+  about one thing, and that surface's own controls take the space they left.
+  `focused-surface?` says the chrome steps aside and `left-slot` says what replaces it
+  on the left; this is the same answer for the right, and it takes the whole state for
+  `focused-surface?`'s reason — `:diffing` is not a `:page`, so a function of `page`
+  would have needed widening rather than extending.
+
+  **An ordered `cond` and not a row of `when`s**, exactly as `left-slot` is and for the
+  same reason: the version viewer opens *over* a Recipe page, so both surfaces are live
+  at once and the bar must not carry both of their answers. The viewer outranks the page
+  underneath, so a focused surface's actions **replace** whatever the bar had rather
+  than joining it — which is also how Publish comes to be unreachable while a dialog is
+  up: it falls out of the order rather than being a condition somebody has to remember.
+  `views.diff/inert-behind!` is where that consequence is argued from the other side,
+  and it is the reason this is an order at all.
+
+  **Publish shows when all five of these hold**, and each one is something that would
+  otherwise be a lie up there:
+
+  - **the page is `:recipe`** — it is one Recipe's control and there is no other
+    surface it means anything on.
+  - **`logged-in?`** — and this gate is *not* cosmetic the way the header badges' are:
+    it is a write, and the server refuses it to anybody else. A visitor who followed a
+    link to a published Recipe has the theme toggle up here and nothing else.
+  - **the Recipe is there**, read as a row in `:details` under `:recipe-page-id`. That
+    is the same lookup `views.recipe/recipe-page` draws the reading from, so the bar and
+    the panel cannot come to be about different Recipes, or disagree about whether there
+    is one — `left-slot`'s argument about `:recipe-page-id`, one field along. The page's
+    other two states have no row, and a Publish button over `Loading…` or over *No such
+    Recipe here* is the failure this replaces: those two used to get it right for free,
+    by having the button drawn inside `found`.
+  - **it is not published yet** — off that same row's `published`, which is
+    `mutating-actions`' `(when-not (= 1 published) …)` moved rather than re-derived, for
+    the reason above: one fact, read once, in the place the panel reads it. The latch is
+    one-way and the API has no unpublish, so this button's whole life is the moment
+    before it is pressed.
+  - **not `recipe-page-edit?`**, and this is the one of the five that is a decision
+    rather than a reading. Publish was never on the edit page, and it is deliberately
+    not put there now that the bar is where it lives: publishing is a one-way latch, and
+    pressing it over a draft that has not been saved would make a Recipe public in a
+    state its own editor disagrees with. The left slot already treats the two modes as
+    different — editing has Save and Cancel and no way back, because *leaving an editor
+    is a question with two answers* — and a Publish standing beside them would be a
+    third answer that means neither of them. The reading is where a Recipe is what it
+    says it is, and that is where it can be published.
+
+  **The container is drawn only when there is something to put in it**, which is this
+  run of work's leftover container met once more: an empty flex child in a bar with an
+  8px gap moves the theme toggle in from the edge for nothing.
+  `views.recipe/publish-action` keeps the list."
+  [{:keys [page recipe-page-edit? recipe-page-id logged-in? diffing details]}]
+  (when-let [actions
+             (cond
+               ;; **The viewer outranks the page it was opened over**, as it does in
+               ;; `left-slot`. It offers nothing here today — the version viewer's own
+               ;; answers are still in its header — so what this branch does is keep
+               ;; Publish out of a bar standing above a dialog.
+               (some? diffing)
+               nil
+
+               (and (= :recipe page) (not recipe-page-edit?) logged-in?)
+               (when-let [recipe (get details recipe-page-id)]
+                 (when-not (= 1 (:published recipe))
+                   [recipe/publish-action recipe])))]
+    [:div.top-bar-actions actions]))
+
 (defn- top-bar []
   (let [app-state @state/*app-state
         {:keys [auth-required? logged-in? show-login? dark-mode page
@@ -194,8 +287,23 @@
         ;; consequence rather than just a tidier corner: a visitor who followed a
         ;; link to a published Recipe has no Sign in button *on that page* and has to
         ;; go through `← Shelf` first. That is one click, it is the control standing
-        ;; where the brand would be, and it is the trade the rule comes with — the
-        ;; right-hand side is widgets, and only the theme toggle is in every view.
+        ;; where the brand would be, and it is the trade the rule comes with.
+        ;;
+        ;; **The rule was 'the right-hand side is widgets, and only the theme toggle is
+        ;; in every view', and the first half of that has been overruled** — *In the
+        ;; Page view, put the Publish button in the top right, to the left of the dark
+        ;; mode switcher.* Publish is not a widget and it is not global: it is one
+        ;; Recipe's one-way latch, on that Recipe's page. So the sentence is now two,
+        ;; and the second half of it is untouched — **the theme toggle is still the only
+        ;; thing in every view**, and it is still the only thing here that is not gated
+        ;; on something. What the corner holds is the app's widgets while the app's
+        ;; chrome is up, and otherwise the focused surface's own actions, which are as
+        ;; conditional as the widgets they replace and conditional on something else:
+        ;; `surface-actions` above, which is the one place that decides. And the
+        ;; narrowing this `chrome?` was written for stands exactly as it did — **the
+        ;; owner's configuration surfaces are still reached from the global view**, and
+        ;; a control that belongs to one Recipe arriving up here is not a reason to send
+        ;; the Inbox back after it.
         chrome? (not (focused-surface? app-state))]
     [:div.top-bar
      [left-slot page recipe-page-edit? recipe-page-id logged-in? diffing]
@@ -249,9 +357,16 @@
           :class (when (= :settings page) "active")
           :title "Machine user"}
          "⚙"])
-      ;; **The one widget in every view**, and the only thing on this side of a
-      ;; focused surface. Not gated, because reading in the wrong theme is a reason
-      ;; to change it wherever you are.
+      ;; **What the surface on screen offers on the thing it is about**, in the space
+      ;; the app's widgets vacate on a focused surface — Publish on a Recipe page. Last
+      ;; before the toggle, because *to the left of the dark mode switcher* is where he
+      ;; asked for it and because the toggle is the fixed point of this corner: a
+      ;; control that moved the one thing present in every view would be paid for on
+      ;; every page. `surface-actions` decides what this is and whether there is any.
+      (surface-actions app-state)
+      ;; **The one widget in every view**, and on a focused surface the only thing here
+      ;; that is not that surface's own. Not gated, because reading in the wrong theme
+      ;; is a reason to change it wherever you are.
       [:button.dark-mode-toggle
        {:on-click state/toggle-dark-mode
         :title (if dark-mode "Switch to light" "Switch to dark")}

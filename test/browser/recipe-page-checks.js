@@ -247,16 +247,25 @@
                                         + (c2.classList.contains('on') ? ' (on)' : ''))}};
       });
 
-      // 22. **on a focused surface the right-hand side keeps the theme toggle and
-      //     nothing else**, and the left slot holds the page's own way out instead of
-      //     the brand. *a couple of widgets on the right hand side, of which only
-      //     dark light mode is shown in every view.*
+      // 22. **on a focused surface the app's widgets go and the theme toggle stays**,
+      //     and the left slot holds the page's own way out instead of the brand. *a
+      //     couple of widgets on the right hand side, of which only dark light mode is
+      //     shown in every view.*
       //
       //     Asserted as the **set** on both sides, against what the same bar held on
       //     the shelf a moment ago, so that a fourth widget appearing here reddens
       //     this rather than passing three presence tests. The shelf's own set is
       //     asserted too — a bar that lost the selectors *everywhere* would otherwise
       //     look like a pass.
+      //
+      //     **`SUBJECT` is published, which is why the right-hand side is still one
+      //     thing.** The corner is no longer only ever the toggle — *In the Page view,
+      //     put the Publish button in the top right, to the left of the dark mode
+      //     switcher* — but a published Recipe has no Publish to offer and the
+      //     container it would sit in is not drawn at all. So this check is now about
+      //     the *page selectors* being gone, and it says which case it is looking at
+      //     rather than reading a count as if it were the rule: `barActions()` is where
+      //     the unpublished case is, on a fixture of its own.
       //
       //     Sign in / Sign out is not in either list, and cannot be: dev runs with
       //     `:dangerously-skip-logins?`, so `auth-required?` is false and that button
@@ -268,8 +277,12 @@
         const selectorsHere = ['.inbox-toggle', '.scopes-toggle', '.settings-toggle']
           .filter(s => !!document.querySelector(s));
         return {pass: !!page()
+                      && subject.published === 1
                       && here.right.length === 1
                       && here.right[0].startsWith('dark-mode-toggle')
+                      // published, so no surface action and no empty box for one
+                      && !document.querySelector('.recipe-publish')
+                      && !document.querySelector('.top-bar-actions')
                       && selectorsHere.length === 0
                       // the slot holds the reading's three and no brand
                       && here.left.length === 3
@@ -290,7 +303,10 @@
                       && barOnTheShelf.right.some(s => s.startsWith('dark-mode-toggle'))
                       && barOnTheShelf.left.some(s => s.startsWith('brand')),
                 evidence: {onTheShelf: barOnTheShelf, onTheRecipePage: here,
-                           selectorsStillHere: selectorsHere}};
+                           selectorsStillHere: selectorsHere,
+                           subjectPublished: subject.published === 1,
+                           publishOffered: !!document.querySelector('.recipe-publish'),
+                           actionsContainerDrawn: !!document.querySelector('.top-bar-actions')}};
       });
 
       // 3. Back and Forward. Nothing reloads — every move so far was a pushState —
@@ -372,28 +388,50 @@
         clickIn(cardFor(SUBJECT), '.card-actions button', 'Page'));
       await until(() => page() && document.querySelector('.recipe-page-body'), 8000);
 
-      // 14. **the four actions are reachable, across three containers now.** Still the
+      // 14. **the four actions are reachable, across three containers.** Still the
       //     other half of 13 — stripping the card's footer would have made all four
       //     unreachable, since it was the only caller of the four `state/start-*` fns —
-      //     and this is its **third** revision: once when they moved off the card, once
-      //     when Edit and Versions moved into the slot, and now that Delete has gone to
-      //     the bottom right.
+      //     and this is its **fourth** revision: once when they moved off the card, once
+      //     when Edit and Versions moved into the slot, once when Delete went to the
+      //     bottom right, and now that Publish has gone up into the bar's *other* slot.
       //
-      //     So the shape is built to survive a fourth: **set equality per container, in
-      //     both modes.** A check that counted one container would go green with another
+      //     The shape was built for exactly this: **set equality per container, in both
+      //     modes.** A check that counted one container would go green with another
       //     empty, which is the unreachability it exists to catch; a check that only
-      //     summed them would miss a control appearing somewhere absurd.
+      //     summed them would miss a control appearing somewhere absurd. This revision
+      //     is the one that shows the shape earning its keep — a container was swapped
+      //     for a different container and only the table below had to change.
       //
-      //       container                 reading                      editing
-      //       the slot                  ← Shelf · Edit · Versions    Save · Cancel
-      //       panel, under the header   Publish, absent once published   absent
-      //       panel, bottom right       Delete                       Delete
+      //       container                 reading                          editing
+      //       the bar, left slot        ← Shelf · Edit · Versions        Save · Cancel
+      //       the bar, right slot       Publish, absent once published   absent
+      //       panel, bottom right       Delete                           Delete
+      //       panel, under the header   — nothing, and no container —
+      //
+      //     **The panel's own actions row is gone rather than empty**, which is the
+      //     assertion this check gained: *In the Page view, put the Publish button in
+      //     the top right, to the left of the dark mode switcher.* Publish was the last
+      //     thing in `.recipe-page-actions`, so the row went with it — and a row left
+      //     standing with nothing in it keeps the panel's spacing and reads as a
+      //     rendering bug nobody can name, which is the leftover this run of work has
+      //     met six times. Asserted as the *absence of the element*, so putting the
+      //     container back empty reddens this even though every label would still be
+      //     in the right place.
       //
       //     **Publish is absent while editing, and that is not the order's table.** It
-      //     was never on the edit page and it is deliberately not put there: publishing
-      //     is a one-way latch, and pressing it over a draft that has not been saved
-      //     would make a Recipe public in a state its own editor disagrees with. The
-      //     order says *Publish stays where it is*, and where it is, is the reading.
+      //     was never on the edit page and it is deliberately not put there now that
+      //     the bar is where it lives: publishing is a one-way latch, and pressing it
+      //     over a draft that has not been saved would make a Recipe public in a state
+      //     its own editor disagrees with. The reading is where a Recipe is what it
+      //     says it is, and that is where it can be published.
+      //
+      //     **That line of the table is vacuous here and is asserted in `barActions()`
+      //     41 instead**, which is a limit of this phase and not of the rule: `SUBJECT`
+      //     is published, so the corner is empty in both modes whatever the mode gate
+      //     says, and a run with `(not recipe-page-edit?)` deleted from
+      //     `core/surface-actions` leaves all thirteen checks here green. The empty
+      //     `barRight` below is still worth asserting — it is what a Publish appearing
+      //     on a *published* Recipe would redden — but it is not the mode's evidence.
       //
       //     **It sits after 3a/3b/5 because it navigates.** Entering the editor and
       //     cancelling out pushes two history entries, and those three read a stack of
@@ -405,7 +443,8 @@
           .map(b => b.textContent.trim());
         const published = subject.published === 1;
         const shot = () => ({slot: labelsIn('.top-bar-left'),
-                             underTheHeader: labelsIn('.recipe-page-actions'),
+                             barRight: labelsIn('.top-bar-actions'),
+                             underTheHeader: !!document.querySelector('.recipe-page-actions'),
                              bottomRight: labelsIn('.recipe-page-delete'),
                              danger: [...document.querySelectorAll('.recipe-page button.danger')]
                                .map(b => b.textContent.trim()),
@@ -419,24 +458,28 @@
         clickIn(document.querySelector('.top-bar-left'), '.recipe-edit-cancel');
         await until(() => document.querySelector('.recipe-page-body'));
 
-        const expectedHeader = published ? [] : ['Publish'];
+        const expectedBarRight = published ? [] : ['Publish'];
         const allFour = ['Publish', 'Edit', 'Versions', 'Delete'].filter(l =>
           published && l === 'Publish'
             ? true
-            : reading.slot.concat(reading.underTheHeader, reading.bottomRight).includes(l));
+            : reading.slot.concat(reading.barRight, reading.bottomRight).includes(l));
         return {pass: reading.slot.join(',') === '← Shelf,Edit,Versions'
-                      && reading.underTheHeader.join(',') === expectedHeader.join(',')
+                      && reading.barRight.join(',') === expectedBarRight.join(',')
+                      && !reading.underTheHeader
                       && reading.bottomRight.join(',') === 'Delete'
                       && reading.danger.join(',') === 'Delete'
                       && reading.deleteIsLast
                       && editing.slot.join(',') === 'Save,Cancel'
-                      && editing.underTheHeader.length === 0
+                      && editing.barRight.length === 0
+                      && !editing.underTheHeader
                       && editing.bottomRight.join(',') === 'Delete'
                       && editing.danger.join(',') === 'Delete'
                       && editing.deleteIsLast
                       && allFour.length === 4,
-                evidence: {reading, editing, expectedHeader, published,
-                           publishAbsentWhileEditing: editing.underTheHeader.length === 0,
+                evidence: {reading, editing, expectedBarRight, published,
+                           publishAbsentWhileEditing: editing.barRight.length === 0,
+                           noActionsRowInThePanel:
+                             !reading.underTheHeader && !editing.underTheHeader,
                            allFourReachableInTheReading: allFour}};
       });
 
@@ -707,11 +750,13 @@
           const before = (stateGet('recipes') || []).length;
           c.swap_BANG_(st._STAR_app_state, m => c.assoc(m, kw('recipes'), c.vector()));
           await until(() => (stateGet('recipes') || []).length === 0);
-          // Three containers now, and this check does not care which is which — the
-          // split is 14's subject. Delete is at the bottom right (`.recipe-page-delete`),
-          // Publish under the header, Edit in the bar's slot.
+          // Three containers, and this check does not care which is which — the split
+          // is 14's subject. Delete is at the bottom right (`.recipe-page-delete`),
+          // Edit in the bar's left slot, Publish in its right one. Both of the bar's
+          // slots are named here rather than the two this check presses, so that a
+          // control moving between them costs 14 a column and not this one a run.
           const act = label => [...document.querySelectorAll(
-              '.recipe-page-actions button, .recipe-page-delete button, .top-bar-left button')]
+              '.top-bar-left button, .top-bar-actions button, .recipe-page-delete button')]
             .find(b => b.textContent.trim() === label);
           const modal = () => document.querySelector('.modal-backdrop');
           const form = () => document.querySelector('.recipe-page-edit');
@@ -2088,6 +2133,308 @@
       });
       notes.push('left on ' + path());
       return done({fixture: {id: made.body.id, title: TITLE, blocks: TOTAL}});
+    },
+
+    // ---- the bar's right-hand slot, on a Recipe that can still be published ----
+    // *In the Page view, put the Publish button in the top right, to the left of the
+    // dark mode switcher.*
+    //
+    // **A phase of its own because it needs a Recipe that is not published**, and
+    // `SUBJECT` is — which is exactly what makes `shelf()` 14 and 22 the *published*
+    // case: both of them assert that the corner is the theme toggle alone, and both
+    // would go on passing if Publish had never arrived. So this builds `CHECK-BAR`,
+    // an ordinary owner's Recipe with a body, and it is the only phase in this file
+    // that presses a **latch**: check 43 publishes the fixture and there is no
+    // unpublish. Nothing of his is ever what it publishes, and `cleanup.py` takes the
+    // fixture out with everything else called `CHECK-`.
+    //
+    // The three checks are three claims about one move and each is green while the
+    // other two are broken: where the button *is*, what it does to a surface opened
+    // over it, and that pressing it still publishes.
+    barActions: async () => {
+      const {check, step, done, notes} = runner();
+      const api = async (p, {method, body} = {}) => {
+        const r = await fetch('/api/' + p, {
+          method: method || (body ? 'POST' : 'GET'),
+          headers: {'Content-Type': 'application/json'},
+          body: body === undefined ? undefined : JSON.stringify(body)});
+        let parsed = null;
+        try { parsed = JSON.parse((await r.text()) || 'null'); } catch (e) { parsed = null; }
+        return {status: r.status, body: parsed};
+      };
+      const TITLE = 'CHECK-BAR a Recipe with a Publish button';
+      const made = await api('recipes', {body: {
+        title: TITLE,
+        useful_when: 'the bar has to offer Publish, and then stop offering it',
+        description: 'A fixture for the top bar\'s right-hand slot.\n\n'
+                     + 'It is unpublished, which is the state the button exists in, and it '
+                     + 'has a body so that the page under the bar is the ordinary reading '
+                     + 'rather than the blank case.'}});
+      if (made.status !== 201)
+        throw new Error('could not build the fixture: ' + JSON.stringify(made));
+      const id = made.body.id;
+      notes.push('built ' + TITLE + ' as recipe ' + id + ' and left it for cleanup.py');
+
+      // **Waited on this Recipe's own title, not on `.recipe-page-body`.** The first
+      // version of this waited for a body and went straight through: the phase can be
+      // entered from another Recipe's page, which already has one, so the wait was
+      // satisfied by the render that was on screen before the click. 41 then read a bar
+      // that was still the previous page's — no Publish, no container — and 42, one
+      // check later, saw the button perfectly well. That is the house rule's first
+      // hazard exactly (`networkidle` and its cousins answer *the data arrived*, not
+      // *reagent has re-rendered*), met with the wrong consequence rather than with no
+      // wait at all, and it is the shape to be careful of: a selector that matches on
+      // both sides of the move cannot tell you the move happened.
+      await step('open the fixture at its own address', () => st.open_recipe_page(id));
+      await until(() => page() && text('.recipe-page-title') === TITLE
+                        && !!((stateGet('details') || {})[id]), 8000);
+      if (text('.recipe-page-title') !== TITLE)
+        throw new Error('the fixture never came up: the page says ' + text('.recipe-page-title'));
+
+      const labelsIn = sel => [...document.querySelectorAll(sel + ' button')]
+        .map(b => b.textContent.trim());
+      const corner = () => ({right: barSlots('.top-bar-right'),
+                             actions: labelsIn('.top-bar-actions'),
+                             publish: !!document.querySelector('.recipe-publish')});
+
+      // 41. **Publish is in the bar's right-hand slot, immediately left of the toggle,
+      //     and nowhere else.** Three things, because *in the top right, to the left of
+      //     the dark mode switcher* is a position and not just a container: the button
+      //     is inside `.top-bar-actions`, that box is the toggle's immediately
+      //     preceding sibling, and the two sit on one line at one height. A check that
+      //     only looked for the class would pass with the button at the far end of the
+      //     bar or wrapped under it.
+      //
+      //     And the negative half in the same breath: no Publish anywhere in the panel,
+      //     and no `.recipe-page-actions` to hold one. That is 14's assertion made
+      //     where it can actually fail — 14 runs on a published Recipe, where an
+      //     actions row put back would be empty and a Publish put back would be
+      //     `when-not`-ed away.
+      //
+      //     **The editor is the third thing it asserts, and it is here for the same
+      //     reason.** 14's table says Publish is absent while editing, and on a
+      //     published Recipe that line is vacuous: the button is absent in both modes
+      //     whatever the mode gate says. Found by mutation — dropping
+      //     `(not recipe-page-edit?)` from `core/surface-actions` left 14 green with
+      //     all thirteen of `shelf()` passing. So the mode is exercised where the
+      //     button exists, and both directions are asserted: gone on Edit, back on
+      //     Cancel. One direction alone passes for a corner that never changes.
+      await check('41 Publish is in the bar, immediately left of the theme toggle',
+        async () => {
+          // **Measured now and kept as booleans, never as nodes.** The mode round
+          // trip below unmounts `.top-bar-actions` and mounts a new one, so a
+          // `box.nextElementSibling` evaluated at the end would be asking a detached
+          // element who its neighbour is — which answers `null` however right the bar
+          // is. Found by mutation: M56 reddened this check on a conjunct that had
+          // nothing to do with M56, which is the shape of a check failing for a reason
+          // inside itself.
+          const position = (() => {
+            const pub = document.querySelector('.recipe-publish');
+            const box = document.querySelector('.top-bar-actions');
+            const tog = document.querySelector('.dark-mode-toggle');
+            if (!pub || !box || !tog) return {publishThere: !!pub, boxThere: !!box};
+            const p = pub.getBoundingClientRect(), t = tog.getBoundingClientRect();
+            return {publishThere: true, boxThere: true,
+                    insideTheBox: box.contains(pub),
+                    boxIsTheTogglesSibling: box.nextElementSibling === tog,
+                    sameLine: Math.abs(p.top - t.top) < 4,
+                    leftOfIt: p.right <= t.left,
+                    sameHeight: Math.abs(p.height - t.height) < 2,
+                    heights: [Math.round(p.height), Math.round(t.height)]};
+          })();
+          const reading = corner();
+          clickIn(document.querySelector('.top-bar-left'), 'button', 'Edit');
+          await until(() => document.querySelector('.recipe-page-edit'), 8000);
+          const editing = {...corner(),
+                           slot: labelsIn('.top-bar-left'),
+                           formUp: !!document.querySelector('.recipe-page-edit')};
+          clickIn(document.querySelector('.top-bar-left'), '.recipe-edit-cancel');
+          await until(() => document.querySelector('.recipe-page-body'), 8000);
+          const backToReading = corner();
+          return {pass: position.publishThere && position.insideTheBox
+                        && position.boxIsTheTogglesSibling
+                        && position.sameLine && position.leftOfIt && position.sameHeight
+                        && reading.actions.join(',') === 'Publish'
+                        // and nowhere in the panel, container included
+                        && !document.querySelector('.recipe-page .recipe-publish')
+                        && !document.querySelector('.recipe-page-actions')
+                        && ![...document.querySelectorAll('.recipe-page button')]
+                             .some(b => b.textContent.trim() === 'Publish')
+                        // the editor is not a place to publish from — and it comes
+                        // back on Cancel, or this passes for a corner that never fills
+                        && editing.formUp && editing.slot.join(',') === 'Save,Cancel'
+                        && !editing.publish && editing.actions.length === 0
+                        && editing.right.length === 1
+                        && backToReading.publish
+                        && backToReading.actions.join(',') === 'Publish',
+                  evidence: {corner: reading, position, editing, backToReading,
+                             panelActionsRow: !!document.querySelector('.recipe-page-actions'),
+                             panelButtons: labelsIn('.recipe-page')}};
+        });
+
+      // 42. **the version viewer replaces Publish rather than joining it.** The viewer
+      //     is opened *over* this page and both surfaces are live at once, so the bar
+      //     has to answer for one of them — `core/surface-actions` is an ordered `cond`
+      //     and the viewer outranks the page underneath, exactly as the left slot's is.
+      //
+      //     Two claims in one, and the second is the one this suite is the only place
+      //     for: while the viewer is up the corner is the theme toggle **alone** —
+      //     Publish is gone *and* the viewer put nothing there, because a version
+      //     viewer opened from a Recipe's own page has nothing to approve, dismiss or
+      //     acknowledge. `checks.js` has the other origin, where the viewer does have
+      //     answers to offer.
+      //
+      //     It matters more than a tidy corner: `views.diff/inert-behind!` exempts the
+      //     whole top bar from the dialog's `inert`, so anything up there is reachable
+      //     by keyboard from inside the dialog. A Publish button left standing would be
+      //     one Tab and one Enter from a latch, over a surface that is not about
+      //     publishing.
+      await check('42 the versions viewer takes Publish out of the bar', async () => {
+        clickIn(document.querySelector('.top-bar-left'), 'button', 'Versions');
+        await until(() => document.querySelector('.diff-overlay'), 8000);
+        await until(() => document.querySelector('.diff-header h2'));
+        const inTheViewer = {...corner(),
+                             slot: labelsIn('.top-bar-left'),
+                             heading: text('.diff-header h2'),
+                             barNotInert: document.querySelector('.top-bar').inert !== true,
+                             pageBehindInert: !!page()?.inert};
+        clickIn(document.querySelector('.top-bar-left'), '.diff-back');
+        await until(() => !document.querySelector('.diff-overlay'));
+        await until(() => document.querySelector('.recipe-page-body'));
+        const afterBack = corner();
+        return {pass: inTheViewer.right.length === 1
+                      && inTheViewer.right[0].startsWith('dark-mode-toggle')
+                      && !inTheViewer.publish
+                      && inTheViewer.actions.length === 0
+                      && inTheViewer.slot.join(',') === '← Recipe'
+                      && inTheViewer.heading === 'Versions'
+                      && inTheViewer.barNotInert && inTheViewer.pageBehindInert
+                      // and the page's own action comes back with the page
+                      && afterBack.publish
+                      && afterBack.actions.join(',') === 'Publish',
+                evidence: {inTheViewer, afterBack}};
+      });
+
+      // 44. **a page with no Recipe on it offers nothing.** The bar reads the row out
+      //     of `:details` under `:recipe-page-id` — the same lookup the panel draws
+      //     the reading from — so the two cannot come to be about different Recipes,
+      //     and the page's other two states have no row at all. That used to be free:
+      //     the button was drawn *inside* `found`, so loading and not-found could not
+      //     have one. Up in the bar it has to be said, and a gate written as
+      //     `(not= 1 published)` alone reads a missing row as *not published yet* and
+      //     puts a Publish button over **No such Recipe here**.
+      //
+      //     Asserted on the 404 and not on the spinner, because the spinner is a
+      //     moment and this is a state: `4b` is the same id and the same sentence.
+      await check('44 an address that names no Recipe offers no Publish', async () => {
+        st.open_recipe_page(999999);
+        await until(() => document.querySelector('.recipe-page-missing'), 8000);
+        await wait(200);
+        const onTheMissingPage = {...corner(),
+                                  sentence: text('.recipe-page-missing p')?.slice(0, 40),
+                                  status: stateGet('recipe-page-status')};
+        st.open_recipe_page(id);
+        await until(() => text('.recipe-page-title') === TITLE, 8000);
+        return {pass: onTheMissingPage.status === 'missing'
+                      && !onTheMissingPage.publish
+                      && onTheMissingPage.actions.length === 0
+                      && onTheMissingPage.right.length === 1
+                      && text('.recipe-page-title') === TITLE
+                      && !!document.querySelector('.recipe-publish'),
+                evidence: {onTheMissingPage, backOnTheFixture: corner()}};
+      });
+
+      // 45. **a visitor gets no Publish, on a Recipe he would otherwise be offered
+      //     one for.** The gate here is `logged-in?` and it is *not* cosmetic the way
+      //     the header badges' are — it is a write, and the API refuses it to anybody
+      //     else — so the check has to be made against the case that can actually
+      //     fail: an **unpublished** Recipe, where the other four conditions all hold
+      //     and the session is the only thing saying no.
+      //
+      //     Dev cannot produce a genuine visitor — `:dangerously-skip-logins?` serves
+      //     every request in the owner's audience — so this does what check 12 does
+      //     for `caution`: it makes the exact condition the failure needs and leaves
+      //     the rest of the session alone. `state/logout` is the fn the Sign out
+      //     button calls, the page is opened again as that client, and the server
+      //     still hands over the row because dev is dev. What is being asserted is the
+      //     **client** rule, which is the only one that can be observed from in here.
+      //
+      //     And then it signs back in and asserts the button **comes back**, which is
+      //     the half that keeps this from passing for a page that simply broke: an
+      //     absence is not evidence of a gate until the presence returns with the
+      //     condition.
+      await check('45 signed out, an unpublished Recipe offers no Publish', async () => {
+        st.logout();
+        await until(() => stateGet('logged-in?') === false);
+        st.open_recipe_page(id);
+        await until(() => text('.recipe-page-title') === TITLE, 8000);
+        await wait(200);
+        const asVisitor = {...corner(),
+                           loggedIn: stateGet('logged-in?'),
+                           pageRendered: !!page(),
+                           bodyRendered: !!text('.recipe-page-body'),
+                           published: ((stateGet('details') || {})[id] || {}).published};
+        st.fetch_auth_required();
+        await until(() => stateGet('logged-in?') === true, 8000);
+        st.open_recipe_page(id);
+        await until(() => text('.recipe-page-title') === TITLE
+                          && !!document.querySelector('.recipe-publish'), 8000);
+        const signedInAgain = corner();
+        return {pass: asVisitor.loggedIn === false
+                      // the page is there — the absence below is the gate, not a blank
+                      && asVisitor.pageRendered && asVisitor.bodyRendered
+                      && asVisitor.published === 0
+                      && !asVisitor.publish && asVisitor.actions.length === 0
+                      && asVisitor.right.length === 1
+                      && signedInAgain.publish,
+                evidence: {asVisitor, signedInAgain}};
+      });
+
+      // 43. **pressing it still publishes, and then the button is gone.** The end of
+      //     the move: the confirmation is opened from the bar now, and the button that
+      //     opened it disappears on the answer — not because anything hides it, but
+      //     because `core/surface-actions` reads `published` off the same row the panel
+      //     draws from, so the latch closing is what takes the control away.
+      //
+      //     Asserted on the **state** as well as the screen. A button that vanished
+      //     while the row still said `published: 0` would be the bar and the panel
+      //     disagreeing about the Recipe, which is the failure that reading one row in
+      //     one place exists to prevent — and it is the assertion a check that only
+      //     looked at the DOM would have got right for the wrong reason.
+      //
+      //     This is the latch, and it is why the fixture is the suite's own.
+      await check('43 Publish from the bar publishes, and the button goes', async () => {
+        const before = ((stateGet('details') || {})[id] || {}).published;
+        clickIn(document.querySelector('.top-bar-actions'), '.recipe-publish');
+        const m = await until(() => document.querySelector('.modal-backdrop'));
+        const confirmation = {shown: !!m,
+                              subtitle: m?.querySelector('.modal-subtitle')?.textContent?.trim(),
+                              note: m?.querySelector('.modal-note')?.textContent?.trim()};
+        clickIn(m, '.publish-confirm');
+        await until(() => !document.querySelector('.modal-backdrop'), 8000);
+        await until(() => ((stateGet('details') || {})[id] || {}).published === 1);
+        await wait(200);
+        const after = ((stateGet('details') || {})[id] || {}).published;
+        return {pass: before === 0 && confirmation.shown
+                      && (confirmation.subtitle || '').includes('CHECK-BAR')
+                      && /no unpublish/.test(confirmation.note || '')
+                      && after === 1
+                      && !document.querySelector('.recipe-publish')
+                      && !document.querySelector('.top-bar-actions')
+                      && !document.querySelector('.error')
+                      // the page is still the page, and now says it is published
+                      && !!document.querySelector('.recipe-page-body')
+                      && !!document.querySelector('.published-badge'),
+                evidence: {publishedBefore: before, publishedAfter: after, confirmation,
+                           corner: corner(),
+                           publishedBadge: !!document.querySelector('.published-badge'),
+                           errorBanner: text('.error') || null}};
+      });
+
+      await step('go back to the shelf', () => st.go_to_page(kw('shelf')));
+      await until(() => shelf(), 8000);
+      notes.push('left on ' + path());
+      return done({fixture: {id, title: TITLE}});
     },
   };
 })()

@@ -51,6 +51,41 @@ button.brand-home:hover .brand-name { color: var(--accent); }
   margin-left: auto;
 }
 
+/* **What a focused surface puts in this corner**, in the register of the corner it is
+   in rather than the register of the panel it came from. `.top-bar-actions` is the slot
+   — `core/surface-actions` draws it only when it has something to hold — and
+   `.bar-action` is one control in it: Publish on a Recipe page.
+
+   Its neighbours are 32px icon-ish toggles (`.settings-toggle`, `.dark-mode-toggle`)
+   and these are *words*, so the shape is the toggles' — 32px tall, the bar's 8px
+   radius, transparent — with an outline and side padding, which is what makes a word
+   read as something to press beside a bare glyph. That is `.diff-header button`'s
+   answer to the same question one band lower, and deliberately the same one: an outline
+   says pressable without claiming to be the point of the page. A `.secondary` panel
+   button up here would have read as exactly what it was, one that wandered out of the
+   panel: full-size, glass, and taller than everything beside it.
+
+   The `gap` is the bar's own 8px, so a surface with three answers spaces them the way
+   the page selectors are spaced — this corner has one rhythm whatever is standing in
+   it. */
+.top-bar-actions { display: flex; align-items: center; gap: 8px; }
+.bar-action {
+  height: 32px;
+  padding: 0 12px;
+  background: none;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-size: 0.85em;
+  line-height: 1;
+}
+.bar-action:hover:not(:disabled) {
+  background: var(--surface-subtle);
+  color: var(--text-primary);
+  transform: none;
+}
+.bar-action:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
 /* Mirrors tracker's toggle: a bare glyph, ☾ to go dark and ☀ to come back. */
 .dark-mode-toggle {
   display: flex;
@@ -1297,24 +1332,13 @@ html.dark-mode .inbox-kind.kind-proposed { background: rgba(245, 158, 11, 0.18);
    accent, Cancel a `.secondary` — sized by `.top-bar-left button` along with
    everything else that slot holds. */
 
-/* Publish, under the header — `views/recipe`'s `found` argues the placement, and
-   records the argument that Delete's move to the bottom right overruled. Left-aligned,
-   where `.card-actions` is pushed right by a `margin-left: auto` inside the card's
-   footer: on a card the footer is shared with the date and the buttons are the far end
-   of a line, and here they are a row of their own at the start of the text column,
-   under the useful-when line they read on from.
-
-   No padding or font-size of their own, which is the density argument the panel
-   itself makes: a card's buttons are shrunk to 6px/0.9em because a card is one of
-   thirteen, and these are the same size as this page's other two controls — the way
-   back and the provenance toggle. Wrapping, for the same reason the badges above
-   them wrap: four buttons and a narrow window is a phone. */
-.recipe-page-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 18px;
-}
+/* Publish is in the top bar's right-hand slot now — *In the Page view, put the Publish
+   button in the top right, to the left of the dark mode switcher.* — so there is no
+   actions row under the header and no rule for one, exactly as Save and Cancel left no
+   rule under the form. `.recipe-page-actions` went with the last button in it rather
+   than being kept for a container nothing fills; `views/recipe/publish-action` argues
+   the deletion, and `.bar-action` at the top of this file is the register the button
+   wears up there instead of `.secondary`. */
 
 /* Delete, at the end of the panel and pushed to its right edge — *on both edit and
    view pages the delete button goes to the bottom right*. `flex-end` and not

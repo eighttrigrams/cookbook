@@ -20,12 +20,15 @@
   buttons go to that page then*. So the shelf is the retrieval index it says it is,
   and the one surface that is about one Recipe is the one that can change it.
 
-  They live in **two** places on it, and the line between them is the page's own rule:
-  the ways of *looking* at this Recipe — `← Shelf`, Edit, Versions — are in the top
-  bar's left slot, and what *changes* it stays in the panel. See `navigation-actions`
-  for the argument and `mutating-actions` for the other half, and
-  `views.recipe-modals` for why the overlays they open are mounted at the app root
-  rather than by whichever page opened them.
+  They live in **three** places on it, and the line between them is still the page's
+  own rule about its own controls: the ways of *looking* at this Recipe — `← Shelf`,
+  Edit, Versions — are in the top bar's **left** slot; **Publish is in the bar's
+  right-hand slot, beside the theme toggle** — *In the Page view, put the Publish
+  button in the top right, to the left of the dark mode switcher.*; and Delete stays
+  down in the panel, at its bottom right. See `navigation-actions` for the rule and
+  what the last move did to it, `publish-action` for that move, `delete-action` for the
+  one control that did not make it, and `views.recipe-modals` for why the overlays they
+  open are mounted at the app root rather than by whichever page opened them.
 
   Three states, and all three are real:
 
@@ -196,14 +199,31 @@
   "**Edit and Versions, in the top bar's left slot beside `← Shelf`.** *edit and
   versions can now move to the top, next to the back to shelf button.*
 
-  **The rule the split makes, because it answers where the next button goes: the slot
-  carries ways of *looking* at this Recipe, and the panel keeps what *changes* it.**
+  **The rule the split makes, because it answers where the next button goes: this slot
+  carries ways of *looking* at this Recipe, and what *changes* it is not in here.**
   `← Shelf` leaves the Recipe, Edit switches which mode you are reading it in,
   Versions opens its history — none of the three touches it. Publish is a one-way
   latch with no unpublish in the API, and Delete takes the Recipe and its whole
-  history with it, so both stay down in `mutating-actions` where a mis-aimed click
-  costs a step rather than a Recipe. That is the same argument the publish and delete
+  history with it, so a mis-aimed click among three ways of looking would cost a
+  Recipe rather than a step. That is the same argument the publish and delete
   confirmations are already making one layer down, one layer up.
+
+  **The rule as first written said 'and the panel keeps what changes it', and that
+  half has now been overruled — it is rewritten here rather than quietly reversed.**
+  *In the Page view, put the Publish button in the top right, to the left of the dark
+  mode switcher.* So Publish is in the bar after all, at the bar's **other end**, which
+  is what keeps the paragraph above true rather than merely surviving it: the two slots
+  are not one row, nothing in the right-hand corner can be aimed at by mistake from
+  here, and a reader stepping through `← Shelf`, Edit and Versions still meets no
+  write. What is left of the original rule is exactly this slot's half of it, and
+  `publish-action` and `core/surface-actions` carry the other.
+
+  **Delete has not moved, and the reason it stays is still good** — its worst outcome
+  is losing the Recipe, and that is what earns it a place out of the reading path at
+  the bottom right of the panel (`delete-action`). Publish going up is not licence to
+  send Delete after it: publishing is a step in a Recipe's life, taken on purpose and
+  at a moment of the owner's choosing, and deleting is the one control on this page
+  that can lose one.
 
   `secondary` for both, which is `back-to-shelf`'s register and therefore the slot's:
   three controls that sit in a row have to look like three of a kind, and this page
@@ -225,38 +245,55 @@
      :title "Step through every version and see what each save changed"}
     "Versions"]])
 
-(defn- mutating-actions
-  "**Publish: what changes the Recipe, under the header.** It was four buttons here,
-  then two, and is one — Edit and Versions went up into the bar's left slot, and
-  **Delete has gone to the bottom right** (`delete-action`). `navigation-actions`
-  writes down the rule that decided the first move; this is the second.
+(defn publish-action
+  "**Publish, in the top bar's right-hand slot, immediately left of the dark-mode
+  toggle.** *In the Page view, put the Publish button in the top right, to the left of
+  the dark mode switcher.*
 
-  **It renders nothing at all for a published Recipe**, which is the case to get right
-  rather than to leave to `when-not`: Publish is the only thing in here now, so a
-  published Recipe has no mutation to offer under the header, and a `div` with the
-  panel's spacing around it and nothing in it is a gap a reader has to account for.
-  That leftover has turned up four times in this run of work — music's card footer,
-  this panel's top edge, the diff header's `✕`, and here — so it is the one thing this
-  function checks before it draws.
+  It was four buttons under the header, then two, then one, and now there is no row
+  there at all: Edit and Versions went up into the bar's left slot, Delete went to the
+  bottom right (`delete-action`), and Publish was the last thing left in
+  `.recipe-page-actions`. `navigation-actions` writes down the rule that decided the
+  first move and what this one did to it; `found` keeps the argument this one overruled.
 
-  **The same word as the card's footer, deliberately.** `header` argues that a reader
+  **The row is gone rather than left standing with the one thing missing**, and the
+  argument for that was already written: `mutating-actions`, the function this replaces,
+  drew nothing at all for a *published* Recipe, because Publish was the only thing in
+  there and a `div` with the panel's spacing around it and nothing in it is a gap a
+  reader has to account for. That case has become every case, so the function is
+  deleted rather than emptied — a `when-not` guarding a container nothing can ever fill
+  is the same leftover one indirection along. It is the **sixth** time this run of work
+  has met that: music's card footer, this panel's top edge, the diff header's `✕`, the
+  Publish-only row, `.recipe-page-body-tools` with only the legend left in it, and now
+  the row itself. `core/surface-actions` pays it once more, one level up, for the
+  container that holds this button.
+
+  **`views.recipe`'s own component, drawn by `core/top-bar`** — exactly as
+  `back-to-shelf` and `navigation-actions` are drawn by `core/left-slot`, and for that
+  reason: the bar places controls and knows nothing about what any of them do, and the
+  record of why *this page* offers this belongs with the page. Which is also why the
+  conditions are not in here. `core/surface-actions` is the one place that decides when
+  the bar carries a surface's own actions, and it says at length what Publish is gated
+  on — including what happens in the editor and under the version viewer, neither of
+  which this component can see.
+
+  **The same word the card's footer had, deliberately.** `header` argues that a reader
   who knows the shelf can read this page without learning anything, about the six
-  facts; it holds for the controls too. *Publish changes* would be a thing to learn
-  about a Recipe he has already learnt on the card.
+  facts; it holds for the controls too, and it has to hold across a move as well — the
+  word did not change when the place did.
 
-  **Publish stays here, and only Delete moved**, because he named Delete only and the
-  two are not the same kind of thing. Publishing is a latch the API cannot undo, which
-  is why it asks first — but it is an ordinary step in a Recipe's life, taken on purpose
-  and at a moment of the owner's choosing. Deleting is the one control on this page
-  whose worst outcome is losing the Recipe, and that is what earns it a place out of
-  the reading path.
-
-  Owner-only at the call site, and here the gate is **not** merely cosmetic the way the
-  header's two are: this is a write, and the server refuses it to anybody else."
-  [{:keys [id published]}]
-  (when-not (= 1 published)
-    [:div.recipe-page-actions
-     [:button.secondary {:on-click #(state/start-publishing id)} "Publish"]]))
+  `.bar-action` and not `.secondary`, which is the one thing about it that is new. The
+  neighbours in that corner are 32px icon-ish toggles and this is a *word*; the
+  stylesheet's rule is that register for everything a focused surface puts up there, so
+  a word reads as a control beside a glyph without a panel-sized glass button wandering
+  into a bar. Owner-only and unpublished-only, both decided at the call site, and the
+  first of those gates is **not** cosmetic the way the header's two are: this is a
+  write, and the server refuses it to anybody else."
+  [{:keys [id]}]
+  [:button.bar-action.recipe-publish
+   {:on-click #(state/start-publishing id)
+    :title "Publish this Recipe — anyone can then read it, and there is no unpublish"}
+   "Publish"])
 
 (defn- delete-action
   "**Delete, at the bottom right of the panel — in both of this page's modes.** *on
@@ -276,8 +313,8 @@
 
   **The tab order comes out right without being arranged here**, and moving it made
   that stronger rather than weaker: the bar precedes the panel in the document, so
-  `← Shelf`/Edit/Versions — or Save/Cancel — are reached first, and Delete is now the
-  *last* stop on the page rather than the fourth.
+  `← Shelf`/Edit/Versions — or Save/Cancel — and Publish at the bar's other end are
+  reached first, and Delete is now the *last* stop on the page rather than the fourth.
 
   On the edit page it appears for the first time, and it means deleting a Recipe you
   have unsaved edits to. Three mechanisms already cooperate to make that safe rather
@@ -406,14 +443,25 @@
   for this, and a second wording of a scale is how two surfaces come to explain it
   differently.
 
-  **What the owner can *do* to the Recipe is split across three places now**, by the
-  rule `navigation-actions` writes down and one decision that came after it: the ways of
-  *looking* at it are in the top bar's left slot beside `← Shelf`; **Publish** is under
-  the header; and **Delete is at the bottom right**, after the body.
+  **What the owner can *do* to the Recipe is split across three places, and none of
+  them is under the header any more**: the ways of *looking* at it are in the top bar's
+  left slot beside `← Shelf`; **Publish is in the bar's right-hand slot**, beside the
+  theme toggle; and **Delete is at the bottom right**, after the body. So between the
+  useful-when line and the body this function now draws no controls at all.
 
-  `mutating-actions` is Publish, and under the header is where a control that changes
-  the Recipe belongs — with the facts that say which Recipe it is, and a row apart from
-  the chrome.
+  **Publish under the header was an argument too, and it is rewritten here because it
+  was overruled rather than mistaken.** It ran: under the header is where a control
+  that *changes* the Recipe belongs — with the facts that say which Recipe it is, and a
+  row of its own apart from the chrome. He asked for the corner instead — *In the Page
+  view, put the Publish button in the top right, to the left of the dark mode
+  switcher.* — and what the old paragraph had not reckoned with is that by then the row
+  was down to **one** button: the two controls Publish used to read as a set with had
+  already gone up into the bar, so what was being kept apart from the chrome was a
+  single word in a row of one. A row of one is not a place. The corner it went to is
+  the corner the provenance toggle was moved to for the neighbouring reason — a control
+  level with the chrome is about the page, where one in the text column reads as being
+  about the text — and what the panel keeps is the one control whose worst outcome is
+  losing the Recipe.
 
   **Delete used to be beside it, and the argument for keeping it there is recorded here
   because it was overruled rather than mistaken.** It ran: a page's body is *not* a
@@ -438,10 +486,10 @@
   being about the body. Only the **legend** stayed down there, with the tints it
   explains.
 
-  The tab order comes out right without being arranged here, and the move made it
+  The tab order comes out right without being arranged here, and both moves made it
   stronger: the bar precedes the panel in the document, so `← Shelf`, Edit and Versions
-  are reached first, and Delete is now the **last** stop on the page rather than sitting
-  beside Publish near the top.
+  are reached first and Publish after them at the bar's other end, and Delete is the
+  **last** stop on the page rather than sitting beside Publish near the top.
 
   **The Scope picker sits between the header and the useful-when line**, where the
   card's header wears the badges it replaces — the filing is part of what says which
@@ -465,8 +513,6 @@
        [scope-filing recipe])
      (when (seq (:useful_when recipe))
        [:div.recipe-page-useful-when [markdown/render-inline (:useful_when recipe)]])
-     (when logged-in?
-       [mutating-actions recipe])
      (when showing?
        [provenance-legend legend])
      (cond
