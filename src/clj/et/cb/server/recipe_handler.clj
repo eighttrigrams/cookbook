@@ -35,6 +35,21 @@
   [req]
   (common/parse-id-list (common/query-param req "exclude-scopes")))
 
+(defn- included-scope-ids
+  "`?include-scopes=3,7` — narrow the listing to the Recipes filed under at least
+  one of those Scopes. `excluded-scope-ids`' mirror, and every word of that
+  docstring applies: ids and not names, because the id is the currency a caller
+  names a Scope in everywhere else in this app, and parsed leniently by
+  `common/parse-id-list` because a read may drop junk where a write may not.
+
+  **Named `include-scopes` for the symmetry and not `scopes`**, which was the
+  shorter option and the worse one: `scopes` is already the name of a *key on a
+  row* in this API's responses, and a query parameter with the same name as a
+  field means two things a page apart. The pair reads as a pair, which is what a
+  reader needs, since the two do opposite things to the same listing."
+  [req]
+  (common/parse-id-list (common/query-param req "include-scopes")))
+
 (defn- human-write?
   "Whether this write is one to record as a human edit: the caller carries no
   *machine* token. `common/machine-caller?` reads the token's `:machine?` claim,
@@ -206,30 +221,52 @@
   and not saved since reads as not-human-edited even if the owner wrote every word
   of it: what was never recorded is not asserted. It composes with ?search.
 
-  **?exclude-scopes=3,7 hides the Recipes filed under those Scopes** — a
-  comma-separated list of **Scope ids**, from GET /api/scopes. It is a *negative*
-  filter and the only one here: there is no way to ask for the Recipes *of* a
-  Scope, because the owner asked to hide rather than to select. Several ids take
-  more away and never less — a Recipe survives only if it carries none of them, so
-  one carrying an excluded Scope alongside a kept one is still gone. **A Recipe
-  filed under no Scope at all is never hidden by this**, which is the case worth
-  saying rather than leaving to be discovered. It composes with ?search and
-  ?human=true, because all three are clauses on the one query.
+  **There are two Scope filters and they point opposite ways** — a *negative* one
+  and a *positive* one, each taking a comma-separated list of **Scope ids** from
+  GET /api/scopes.
 
-  Junk narrows by nothing rather than being refused: a non-numeric id, an empty
-  list, and an id you do not own all answer 200 with the listing unchanged. That
-  last one is deliberate and not an oversight — a 404 for it would say which ids
-  exist, which is the same call `scope_ids` already gets on a write.
+  **?exclude-scopes=3,7 hides the Recipes filed under those Scopes**, and is the
+  negative one. Several ids take more away and never less — a Recipe survives only
+  if it carries none of them, so one carrying an excluded Scope alongside a kept one
+  is still gone. **A Recipe filed under no Scope at all is never hidden by this**,
+  which is the case worth saying rather than leaving to be discovered.
 
-  **An anonymous visitor's ?exclude-scopes is ignored entirely**, and that is a
-  refusal rather than the filter applied to fewer rows. A visitor is sent no
-  `scopes` key on anything, and — unlike the tags, whose presence is testable
-  through ?search — the Scopes' presence is not testable either, because nothing
-  searches them. Honouring this for a visitor would hand that back: rows vanishing
-  on request is a way to ask which published Recipes carry Scope 4, one id at a
-  time. Scopes are a stronger boundary than the tags on purpose, and the owner said
-  so in as many words: *to logged in users only, no matter what*. A machine token
-  reads in the owner's audience and is honoured, like every other Scope read.
+  **?include-scopes=3,7 keeps only those Recipes**, and is the positive one: a
+  Recipe is listed if it carries **at least one** of the named Scopes — *an OR
+  filter for scopes* — so several ids take *less* away and never more, which is the
+  one thing about the pair that reads backwards until you have said it out loud.
+  **A Recipe filed under no Scope at all falls out of this one**, which is the same
+  mechanism as the sentence above producing the opposite answer, and the wanted one:
+  asked for the Recipes in Baking, nobody is asking for the unfiled ones too.
+
+  This used to say there was no way to ask for the Recipes *of* a Scope, because the
+  owner had asked to hide rather than to select. He has since asked to select as
+  well — *and on the main page, below the searchbar, list all scopes and have them be
+  an OR filter for scopes* — so both exist, and the sentence that replaces it is that
+  the two are **independent clauses**: passing both means *in these and not in
+  those*, and this endpoint has no opinion about whether a caller should. The UI's
+  rule that the two never operate at once is a rule about gestures and lives there.
+
+  All four narrowings compose, because all four are clauses on the one query.
+
+  Junk narrows by nothing rather than being refused, for both: a non-numeric id, an
+  empty list, and an id you do not own all answer 200. **What that means differs
+  between them and is worth knowing before you rely on it** — an unowned id
+  *excludes* nothing, so the listing is unchanged, and *includes* nothing, so the
+  listing is empty. Neither is an error, for the same reason: a 404 would say which
+  ids exist, which is the call `scope_ids` already gets on a write.
+
+  **An anonymous visitor's ?exclude-scopes and ?include-scopes are ignored
+  entirely**, and that is a refusal rather than the filter applied to fewer rows. A
+  visitor is sent no `scopes` key on anything, and — unlike the tags, whose presence
+  is testable through ?search — the Scopes' presence is not testable either, because
+  nothing searches them. Honouring either would hand that back, and the positive one
+  hands it back **directly**: rows vanishing on request is a way to ask which
+  published Recipes carry Scope 4 one id at a time, and rows *arriving* on request is
+  the same question answered in one call. Scopes are a stronger boundary than the
+  tags on purpose, and the owner said so in as many words: *to logged in users only,
+  no matter what*. A machine token reads in the owner's audience and is honoured,
+  like every other Scope read.
 
   **Every row carries the provenance split**: `machine_versions` and
   `ui_versions`, counting how many of that Recipe's versions an agent wrote and how
@@ -275,15 +312,18 @@
   approved state."
   [req]
   {:status 200
-   ;; The exclusion is passed for every caller and the db layer is what refuses a
-   ;; visitor it — `list-recipes` decides that off the audience, the way
+   ;; Both Scope narrowings are passed for every caller and the db layer is what
+   ;; refuses a visitor them — `list-recipes` decides that off the audience, the way
    ;; `with-scopes` decides whether the Scopes are attached at all. Asking the
    ;; question here as well would be two places answering it, which is how they
-   ;; come to disagree; the flag is a request and the audience is the answer.
+   ;; come to disagree; the flag is a request and the audience is the answer. That
+   ;; matters more with two parameters than it did with one: a guard written here
+   ;; would have had to be remembered twice.
    :body (db.recipe/list-recipes (common/ensure-ds) (read-audience req)
                                  {:search-term (common/query-param req "search")
                                   :human-only? (human-only? req)
                                   :excluded-scope-ids (excluded-scope-ids req)
+                                  :included-scope-ids (included-scope-ids req)
                                   :lean? (lean? req)})})
 
 (defn get-recipe-handler
@@ -307,11 +347,13 @@
   `[{id, title, description}]`, empty for an unfiled Recipe; a visitor gets no
   `scopes` key at any ?detail, and there is no query that would produce one for
   them — the join is not run rather than run and then hidden. Unlike the tags,
-  their presence is not testable either: nothing searches them, and the one
-  parameter that could have made them testable by omission — ?exclude-scopes on
-  the listing — is ignored outright for an anonymous caller rather than applied to
-  their published rows. Watching rows vanish is a way of asking, so it is refused
-  as one.
+  their presence is not testable either: nothing searches them, and the two
+  parameters that could have made them testable — ?exclude-scopes and
+  ?include-scopes on the listing — are both ignored outright for an anonymous caller
+  rather than applied to their published rows. Watching rows vanish is a way of
+  asking, so it is refused as one; **asking for the rows of a Scope is the same
+  question with the answer handed over**, so it is refused by the same line, in
+  `list-recipes`, off the audience.
 
   **`pending`** rides along here too, 1 when a proposal is waiting on this Recipe —
   see GET /api/recipes for what it does and does not say. A visitor gets no such key.

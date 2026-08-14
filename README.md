@@ -297,13 +297,17 @@ rests on now that publishing is allowed while a proposal pends. They are not tol
 proposal exists either: `pending` is absent from their rows, like the tags.
 
 **How the owner files his shelf is not theirs at any `?detail`** — *to logged in users
-only, no matter what*. A visitor's rows carry no `scopes` key at all, and
-`?exclude-scopes` is **ignored for them entirely** rather than applied to their published
-rows. That second half is what makes the first hold: a caller who could watch rows vanish
-on request could binary-search which published Recipes carry a given Scope, one id at a
-time. It is also where the Scopes are a stronger boundary than the tags — a tag's
-*presence* is testable through `?search=` even though its value is never sent, while
-nothing searches the Scopes and nothing narrows by them for an anonymous caller.
+only, no matter what*. A visitor's rows carry no `scopes` key at all, and **both** Scope
+filters — `?exclude-scopes` and `?include-scopes` — are **ignored for them entirely**
+rather than applied to their published rows. That second half is what makes the first
+hold: a caller who could watch rows vanish on request could binary-search which published
+Recipes carry a given Scope, one id at a time, and a caller who could ask for the Recipes
+*of* a Scope would be handed the same answer in one call — which is why the positive
+filter is refused by the same line as the negative one rather than by a second decision
+that could come to differ. It is also where the Scopes are a stronger boundary than the
+tags — a tag's *presence* is testable through `?search=` even though its value is never
+sent, while nothing searches the Scopes and nothing narrows by them for an anonymous
+caller.
 
 ## Recipes
 
@@ -475,11 +479,17 @@ are the interface, not decoration.
   `cd` does not find `abcd`. A word is a run of letters and digits, so `heating`
   finds `Re-heating`. `%` and `_` are ordinary characters. `?human=true` narrows to
   the Recipes a human has edited. `?exclude-scopes=3,7` **hides** the Recipes filed
-  under those Scope ids — the only *negative* filter here, and there is deliberately
-  no positive one; several ids take more away, a Recipe filed under no Scope at all
-  is never hidden by it, and an id you do not own hides nothing rather than erroring.
-  All three narrowings compose, being clauses on one query. **An anonymous caller's
-  `?exclude-scopes` is ignored entirely** — see *What a visitor sees*. **Lean**: no
+  under those Scope ids — the *negative* one; several ids take more away, a Recipe
+  filed under no Scope at all is never hidden by it, and an id you do not own hides
+  nothing rather than erroring. `?include-scopes=3,7` is its mirror and the
+  *positive* one: it keeps the Recipes carrying **at least one** of those Scopes, an
+  OR and not an AND, so several ids take *less* away — and both of the sentences
+  above invert with it, since a Recipe filed under nothing falls out and an id you do
+  not own keeps nothing, which is an **empty** listing rather than an unchanged one.
+  Passing both means *in these and not in those*; the endpoint has no opinion about
+  whether you should. All four narrowings compose, being clauses on one query. **An
+  anonymous caller's `?exclude-scopes` and `?include-scopes` are both ignored
+  entirely** — see *What a visitor sees*. **Lean**: no
   `description` key at all. Each row carries `machine_versions` / `ui_versions`,
   `view_count`, and `pending` — whether a proposal is waiting on it.
 - `GET /api/recipes/:id` — one recipe, lean the same way.

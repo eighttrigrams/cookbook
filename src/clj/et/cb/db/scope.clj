@@ -26,12 +26,19 @@
   agentic memory store.
 
   **The same boundary covers narrowing by them, not only reading them.**
-  `exclusion-clause` below hides the Recipes filed under given Scopes, and
-  `db.recipe/list-recipes` does not run it for a visitor at all — because a caller
-  who can watch rows vanish can test which published Recipes carry a Scope, which
-  is the very thing not sending the key withholds. Absent values and an untestable
-  presence are two halves of one refusal, and this is the half the tags
-  deliberately do not have.
+  `exclusion-clause` below hides the Recipes filed under given Scopes,
+  `inclusion-clause` beside it keeps only those, and `db.recipe/list-recipes` runs
+  **neither** for a visitor — because a caller who can watch rows vanish can test
+  which published Recipes carry a Scope, which is the very thing not sending the key
+  withholds. Absent values and an untestable presence are two halves of one refusal,
+  and this is the half the tags deliberately do not have.
+
+  **The positive one leaks the same fact more directly**, which is worth saying here
+  rather than only at the clause: excluding Scope 4 asks *which rows go away*, and a
+  reader has to diff two listings to learn anything; including it asks *which rows
+  carry it*, and the answer is the response. Same refusal, less inference — so if the
+  two ever came to be gated differently, this is the one that would have to be the
+  stricter, and they are gated in one place so that they cannot.
 
   **One query per listing, not one per row.** `scopes-by-recipe` fetches every
   association for the whole page in one statement and `attach` puts them on the
@@ -396,3 +403,56 @@
                             [:= :recipe_scopes.recipe_id recipe-id-column]
                             [:in :recipe_scopes.scope_id (vec scope-ids)]
                             (db/user-id-where-clause :scopes.user_id user-id)]}]]))
+
+(defn inclusion-clause
+  "A `:where` clause keeping **only** the Recipes filed under at least one of
+  `scope-ids`, or nil when the caller named none. `exclusion-clause`'s mirror, and
+  the second thing this namespace does that narrows a listing rather than attaching
+  to it.
+
+  > and on the main page, below the searchbar, list all scopes and have them be an
+  > OR filter for scopes, i.e. it filters when one or more are selected for all
+  > recipes which match one or more selectd scopes
+
+  **The `IN` *is* the OR.** One clause over the whole set and not one clause per id
+  ANDed together, which would be an AND filter — *carries all of these* — and is the
+  thing he named the opposite of. Its sibling emits the same `IN` for the same
+  reason and reads as the same sentence negated: a Recipe survives if it carries at
+  least one of them, or, there, only if it carries none.
+
+  Every argument `exclusion-clause` makes about its shape holds here unchanged —
+  `EXISTS` correlated on the passed-in qualified `recipe-id-column` rather than a
+  second join (the listing already left-joins `recipe_history` under a `GROUP BY`,
+  and another multi-row join would multiply those counts), and a clause rather than a
+  filter over the rows because the shelf is ranked and sliced by the query. **Two of
+  its arguments invert, and both are worth stating:**
+
+  **A Recipe filed under no Scope at all now falls out**, where the exclusion always
+  kept one. It drops out of `EXISTS` on its own, exactly as it drops out of `NOT
+  EXISTS` on its own — the same mechanism, and here it is the *wanted* answer rather
+  than the exception the negative one had to spell out. Asked to see the Recipes in
+  Baking, a reader is not asking to also see the ones filed nowhere.
+
+  **An id the caller does not own narrows to nothing rather than excluding
+  nothing.** The subquery joins through `scopes` and narrows on its `user_id`, so an
+  unowned id matches no association — which under `NOT EXISTS` means *takes nothing
+  away* and under `EXISTS` means *keeps nothing*. So the failure mode of a stale id
+  inverts with the clause: an exclusion carrying one is a full shelf, an inclusion
+  carrying one is an **empty** one. That is why the client drops a deleted Scope from
+  its selection more urgently than from its exclusions (`state/delete-scope`), and
+  why the shelf's chip row keeps a way to clear the whole selection even when a
+  chip's Scope is gone.
+
+  It takes a `user-id` and never an audience, exactly as its sibling and `attach` do,
+  and for the same reason: there is no value of this argument that means 'a visitor'.
+  Who may narrow by Scopes at all is `db.recipe/list-recipes`' decision, made from the
+  audience, and this cannot be handed a caller it should have refused."
+  [user-id recipe-id-column scope-ids]
+  (when (seq scope-ids)
+    [:exists {:select [[[:inline 1]]]
+              :from [:recipe_scopes]
+              :join [:scopes [:= :scopes.id :recipe_scopes.scope_id]]
+              :where [:and
+                      [:= :recipe_scopes.recipe_id recipe-id-column]
+                      [:in :recipe_scopes.scope_id (vec scope-ids)]
+                      (db/user-id-where-clause :scopes.user_id user-id)]}]))

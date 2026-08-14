@@ -159,10 +159,16 @@
     (testing "named, with what it takes"
       (is (re-find #"\?exclude-scopes" doc))
       (is (re-find #"(?i)scope\s+ids" doc)))
-    (testing "and the two things a caller cannot guess: that it only ever hides,
-              and that a Recipe filed under nothing is never hidden by it"
+    (testing "and the two things a caller cannot guess: that this one only ever
+              hides, and that a Recipe filed under nothing is never hidden by it"
       (is (re-find #"(?i)negative" doc))
       (is (re-find #"(?i)no\s+scope\s+at\s+all\s+is\s+never\s+hidden" doc)))
+    ;; **This regex was loosened rather than deleted when ?include-scopes arrived.**
+    ;; It read `visitor's ?exclude-scopes is ignored`, and the catalogue now refuses
+    ;; both parameters in one sentence — so the assertion that survives is that this
+    ;; parameter is named in whatever sentence does the refusing. Its mirror for
+    ;; ?include-scopes is in `et.cb.scope-inclusion-integration-test`, where that
+    ;; parameter's subject is.
     (testing "and that an anonymous caller is refused it, since an agent reading
               this is being told what the API does and not only what it wants"
-      (is (re-find #"(?i)visitor'?s?\s+\?exclude-scopes\s+is\s+ignored" doc)))))
+      (is (re-find #"(?i)visitor'?s?[^.]*\?exclude-scopes[^.]*(?:is|are)\s+ignored" doc)))))
