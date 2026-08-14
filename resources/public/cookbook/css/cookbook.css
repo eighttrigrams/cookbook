@@ -721,6 +721,13 @@ html.dark-mode .pending-badge { background: rgba(245, 158, 11, 0.18); }
 .deleted-toggle { font-size: 0.65em; }   /* 🗑 ink 21 → an emoji fallback */
 .machine-toggle { font-size: 0.98em; }   /* ⚙ ink 14 */
 .shelf-add { font-size: 1.05em; }        /* ✚ ink 13, chosen because it needs no fix */
+/* The way out has no `font-size` at all: it is tracker's stroked `log-out` icon, an
+   **svg**, so it draws exactly as tall as its own `height` and the 14 in `logout-icon`
+   is the ink. A rule here would be a size applied to nothing. It keeps the toggles'
+   32px box and hover, and it is `disabled` in dev rather than absent — see
+   `core/logout-button`, which is where that decision lives. */
+.logout-toggle:disabled { opacity: 0.4; cursor: not-allowed; }
+.logout-toggle:disabled:hover { background: none; color: var(--text-secondary); }
 
 /* The count rides on the ✉ and must not ride its font-size up with it — see
    `.inbox-count` below, which is a fixed px for that reason. */

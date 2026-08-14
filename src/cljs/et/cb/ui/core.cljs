@@ -217,6 +217,72 @@
         [:span.brand-mark "▤"]
         [:span.brand-name "Cookbook"]]))])
 
+(defn- logout-icon
+  "The way out, as **tracker's own icon** — *for the signout use the same symbol as
+  tracker does.*
+
+  Feather's `log-out`: a doorway with an arrow leaving it, drawn stroked in
+  `currentColor` so it takes the button's colour and its hover with no second rule.
+  The path data is `et.tr.ui.components.controls/logout-icon`'s, character for
+  character.
+
+  **Copied and not shared, which is the one thing to say about it.** Every other
+  borrowing from tracker in this app is a *gesture* or a *number* — the shift+click
+  exclusion, `visible-blocks`, `badge-gesture`'s matrix — and the argument each time is
+  that being the same finger in both apps is the point. That argument is stronger for
+  an icon, not weaker: a reader who has learnt one door learns nothing new here. What is
+  weaker is the mechanism, because two apps' cljs builds share no code and this is
+  markup rather than a rule that could live in `src/cljc`. So it is a copy, and the way
+  a copy stays honest is that it is nine numbers with a name — if tracker's door ever
+  changes, this is the file to change with it.
+
+  **An SVG rather than a character, which is why it needs no font-size of its own.**
+  The five glyphs beside it each take a size computed from how tall that particular
+  character draws (see the stylesheet); a stroked box draws exactly as tall as it is
+  told, so `14` is the ink and there is nothing to correct. 14 and not tracker's 18,
+  because *all simbols have the same height* is this corner's rule and 13–14px is what
+  the rest of the row agreed on."
+  []
+  [:svg {:width 14 :height 14 :viewBox "0 0 24 24" :fill "none"
+         :stroke "currentColor" :stroke-width 2
+         :stroke-linecap "round" :stroke-linejoin "round"
+         :aria-hidden true}
+   [:path {:d "M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"}]
+   [:polyline {:points "16 17 21 12 16 7"}]
+   [:line {:x1 21 :y1 12 :x2 9 :y2 12}]])
+
+(defn- logout-button
+  "Sign out, as the door — and **on screen in dev as well, dead.**
+
+  *even in dangerously skip persmissions local mode show it (but make it inert). reason
+  is that i want to always confirm visually.*
+
+  **That is a rule about what dev is for, and it overrules a comment that used to sit
+  here.** The old one said the sign-in/sign-out rule *is only observable by making
+  `auth-required?` true in the atom, which is what the check does* — true, and it meant
+  the corner he looks at every day was one control short of the corner that ships. A
+  control he cannot see is a control he cannot check the alignment, the height or the
+  hover of, and this row has just had every glyph in it measured to one height. So dev
+  draws it, and `disabled` is what keeps it honest: there is genuinely nothing to sign
+  out of when logins are skipped, and a live button would either error or log him out of
+  a session that does not exist.
+
+  `disabled` and not `inert` the attribute, though he said inert: `disabled` is what
+  this app already uses for a control that is present and refuses — the Scope chips
+  while an exclusion is up, Approve while its POST is in flight — so it comes with the
+  dimming, the cursor and the tab-order skip already argued for. The tooltip says which
+  of the two states it is in, because a dim button with no explanation is the trap
+  `excluded-scopes-strip` exists to prevent, one control wide."
+  [{:keys [live?]}]
+  [:button.settings-toggle.logout-toggle
+   {:on-click (when live? state/logout)
+    :disabled (not live?)
+    :title (if live?
+             "Sign out"
+             (str "Sign out — nothing to sign out of in this mode, since logins are "
+                  "skipped. Shown so the bar looks here as it does in production"))}
+   [logout-icon]])
+
 (defn- surface-actions
   "The top bar's right-hand slot, at the end of it nearest the middle: **what the
   surface on screen offers on the thing it is about, immediately left of the dark-mode
@@ -443,14 +509,18 @@
        (if dark-mode "☀" "☾")]
       ;; Signing in and out is gated with the selectors, not with the theme toggle —
       ;; see `chrome?` above for the consequence, which is a visitor going through
-      ;; `← Shelf` to find Sign in. Dev never draws either of these
-      ;; (`:dangerously-skip-logins?` leaves `auth-required?` false), so the rule
-      ;; here is only observable by making `auth-required?` true in the atom, which
-      ;; is what the check does.
+      ;; `← Shelf` to find Sign in.
+      ;;
+      ;; **Dev draws Sign out too, disabled** — *even in dangerously skip persmissions
+      ;; local mode show it (but make it inert). reason is that i want to always confirm
+      ;; visually.* `logout-button` argues that at length; the short version is that a
+      ;; corner one control shorter than production is a corner he cannot check. Sign
+      ;; **in** is the one that still cannot appear here: it is drawn only for a caller
+      ;; who is not signed in, and in this mode everybody is.
       (when chrome?
         (cond
-          (not auth-required?) nil
-          logged-in? [:button.secondary {:on-click state/logout} "Sign out"]
+          (not auth-required?) [logout-button {:live? false}]
+          logged-in? [logout-button {:live? true}]
           show-login? nil
           :else [:button.secondary
                  {:on-click #(swap! state/*app-state assoc :show-login? true)} "Sign in"]))]]))

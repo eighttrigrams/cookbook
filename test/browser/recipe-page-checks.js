@@ -2270,7 +2270,16 @@
           const right = [...document.querySelectorAll('.top-bar-right button')];
           const add = document.querySelector('.shelf-add');
           const ctx = document.createElement('canvas').getContext('2d');
+          // **Two kinds of symbol in one row, measured two ways.** Five are characters,
+          // whose ink only `canvas` can see, and one is tracker's stroked `log-out`
+          // svg, which draws exactly as tall as its own box. Measuring the svg's button
+          // as *text* reads an empty node and answers 0, which would have made this
+          // check red about a row that is level — so the shape of the thing decides how
+          // it is measured.
           const inks = right.map(b => {
+            const svg = b.querySelector('svg');
+            if (svg) return {glyph: 'svg', size: 'n/a',
+                             ink: Math.round(svg.getBoundingClientRect().height)};
             const glyph = [...b.childNodes].filter(n => n.nodeType === 3)
               .map(n => n.textContent).join('').trim();
             const cs = getComputedStyle(b);
@@ -2280,6 +2289,14 @@
                     ink: Math.round(m.actualBoundingBoxAscent + m.actualBoundingBoxDescent)};
           });
           const spread = Math.max(...inks.map(i => i.ink)) - Math.min(...inks.map(i => i.ink));
+          // and the way out, which dev draws **dead** so that the corner he looks at is
+          // the corner that ships: *even in dangerously skip persmissions local mode
+          // show it (but make it inert).*
+          const out = document.querySelector('.logout-toggle');
+          const signOut = {present: !!out, disabled: out?.disabled,
+                           trackersIcon: !!out?.querySelector('svg polyline'),
+                           last: right[right.length - 1] === out,
+                           explains: /nothing to sign out of/i.test(out?.title || '')};
           return {pass: !document.querySelector('.compose')
                         && !document.querySelector('.compose-title')
                         && !!add
@@ -2291,6 +2308,11 @@
                         && !document.querySelector('.top-bar-actions')
                         // one height for all of them, within a pixel of rounding
                         && spread <= 1
+                        // **the way out is on screen in dev, and dead.** A control he
+                        // cannot see is one whose alignment and height he cannot
+                        // check, which is the whole point of the row above
+                        && signOut.present && signOut.disabled === true
+                        && signOut.trackersIcon && signOut.last && signOut.explains
                         // and the shelf now begins with the controls that narrow it
                         && document.querySelector('.shelf').firstElementChild
                            === document.querySelector('.shelf-controls'),
@@ -2298,7 +2320,7 @@
                              firstInTheRow: right[0] === add,
                              addGlyph: add?.textContent.trim(),
                              surfaceActionSlot: !!document.querySelector('.top-bar-actions'),
-                             inks, inkSpread: spread,
+                             inks, inkSpread: spread, signOut,
                              barRight: barSlots('.top-bar-right'),
                              shelfStartsWith: document.querySelector('.shelf')
                                ?.firstElementChild?.className}};
