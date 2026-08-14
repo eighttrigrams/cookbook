@@ -179,20 +179,32 @@
   the top of the panel, would have put the one control that leaves the shelf inside the
   thing it leaves.
 
-  **It stands *beside* the page selectors rather than in their place**, which is what
-  makes it different from every other thing in that slot so far: the shelf is not a
-  focused surface, so `chrome?` is true and the Inbox, Scopes, Deleted and Settings
-  buttons are all up there with it. Five controls in one corner, four of them glyphs
-  and this one a word — see the report, where the alternative of a separator or a
-  different position is the thing to overrule.
+  **A glyph and the first of the page buttons, which is where he put it.** It was the
+  word *Add* in the surface-action slot for one commit — the position Publish, Approve
+  and Seen occupy — and the corner it made was four glyphs and a word: *lets have the
+  ADd button become a plus and go to the left of this list.* So it is `✚` in
+  `.settings-toggle`'s register, at the head of the row rather than at its tail, and it
+  is **not** a surface action any more: the shelf is not a focused surface, and what he
+  has done is make Add one of the app's own widgets rather than the shelf's answer to
+  the thing it is about. `core/surface-actions` is the poorer for it and the rule is the
+  clearer: that slot is what a *focused* surface offers, and the shelf is not one.
+
+  **`✚` and not `+` or `➕`, and the difference is measured.** At the row's size the
+  ink heights are `+` 12px, `✚` 13px and `➕` 21px — the last because it is an emoji and
+  falls back to a font that draws it half again as tall as everything beside it. `✚` is
+  the only one of the three whose ink is exactly the ▦ and ☾ cluster's, so it needs no
+  correction to sit level with them: see the stylesheet, where the other four glyphs do.
+
+  A glyph needs its tooltip to be the label, which is why this one says what pressing it
+  *does* rather than naming the page.
 
   Owner-only at the call site. The gate is **not** cosmetic: this button leads to a
   page that exists to POST, and the API answers a signed-out POST 401."
   []
-  [:button.bar-action.shelf-add
+  [:button.settings-toggle.shelf-add
    {:on-click state/open-new-recipe
-    :title "Write a new Recipe on a page of its own"}
-   "Add"])
+    :title "Add — write a new Recipe on a page of its own"}
+   "✚"])
 
 (def ^:private visible-blocks
   "How many blocks of a body an unexpanded card shows. Tracker's number, from
@@ -468,6 +480,56 @@
            :title "Open this Recipe on a page of its own, at an address you can keep"}
           "Page"]]])]))
 
+(defn- order-switcher
+  "Which of the two orders the shelf is in — *i also need a switcher on the main page
+  between the ranked order we have now, and one order which is most recently added
+  first.*
+
+  **Two named buttons and not a checkbox or a `select`.** The human filter beside it is
+  a checkbox because it is one narrowing that is either on or off; this is a choice
+  between two things that both have names, and a checkbox would have made one of them
+  the unlabelled default — *Newest first ☐* leaves 'and otherwise what?' on the screen
+  unanswered. Two buttons with the current one lit says both names and which is on, in
+  the width a `select` would have taken to say one.
+
+  **Not a narrowing, so nothing else has to know about it.** `empty-message` gets no
+  case: reordering an empty result leaves it empty for whatever reason it already was,
+  and a fifth sentence there would be one that could never be true. It is also why the
+  switcher does not live with the two Scope filters in `filter-gate`'s world — there is
+  no gate between an order and a filter, they compose the way the search and the human
+  filter do.
+
+  **The words say what the order is, and the tooltips carry what a word cannot.**
+  *Ranked* alone does not say ranked by *what*, and the weights are the one thing a
+  reader cannot infer from a shelf — `db.recipe/ranking-score` has that sentence, so
+  the tooltip is this file's paraphrase of it rather than a new claim. *Added* is worded
+  to keep it distinct from most-recently-**touched**: the shelf used to be ordered by
+  `modified_at` outright, that is still the ranking's first tiebreaker, and a Recipe
+  edited this morning is first by it and among the last by this one.
+
+  **Shown signed out**, like the search box and the human filter, and for the reason
+  `recipe-badges/views-badge` gives about the count that drives the ranking: it explains
+  the order of the shelf a visitor is looking at, so a visitor may choose that order
+  too. Both orders are the endpoint's for every caller."
+  [shelf-order]
+  [:div.order-switcher
+   [:span.order-switcher-label {:title "What order the shelf is in"} "Order"]
+   (for [[order label title]
+         [[:ranked "Most used"
+           (str "The default: how often each Recipe has been read, weighted with how "
+                "often it has been edited — 0.7 × reads + 0.3 × versions. The shelf "
+                "leads with what has proved useful")]
+          [:newest "Newest"
+           (str "Most recently added first, by when each Recipe was created — which is "
+                "not the same as most recently edited")]]]
+     ^{:key order}
+     [:button.order-option
+      {:type "button"
+       :class (when (= order shelf-order) "on")
+       :title title
+       :on-click #(state/set-shelf-order order)}
+      label])])
+
 (defn- scope-filter-row
   "Every Scope the owner has, as toggles under the search box: the shelf's positive
   filter.
@@ -678,7 +740,7 @@
   merely careful."
   []
   (let [{:keys [recipes search human-only? excluded-scopes included-scopes
-                logged-in? open details]
+                shelf-order logged-in? open details]
          :as app-state}
         @state/*app-state
         gate (filter-gate app-state)]
@@ -705,7 +767,13 @@
        [:input {:type "checkbox"
                 :checked (boolean human-only?)
                 :on-change #(state/set-human-only (-> % .-target .-checked))}]
-       "Human-edited only"]]
+       "Human-edited only"]
+      ;; **On the controls line and not on a row of its own**, unlike the Scope
+      ;; filter: it is one control of a fixed width — two short words — where that is
+      ;; every Scope the owner has and wraps. It is last on the line because it is the
+      ;; one control that does not *narrow*: search, then narrow, then how to order
+      ;; what is left, which is also the order a reader would say them in.
+      [order-switcher shelf-order]]
      ;; **The permanent row first, the transient one under it**, and that order is
      ;; the one thing about the placement worth arguing. *below the searchbar, list
      ;; all scopes* puts the picker here, directly under the search box, and it is

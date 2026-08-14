@@ -87,7 +87,10 @@ button.brand-home:hover .brand-name { color: var(--accent); }
 }
 .bar-action:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
 
-/* Mirrors tracker's toggle: a bare glyph, ☾ to go dark and ☀ to come back. */
+/* Mirrors tracker's toggle: a bare glyph, ☾ to go dark and ☀ to come back. Its
+   `font-size` is the page-button row's now rather than a tenth larger — see the ink
+   measurements beside `.settings-toggle`, and *make sure all simbols have the same
+   height*, which includes this one. */
 .dark-mode-toggle {
   display: flex;
   align-items: center;
@@ -98,7 +101,7 @@ button.brand-home:hover .brand-name { color: var(--accent); }
   background: transparent;
   border: none;
   border-radius: 8px;
-  font-size: 1.1em;
+  font-size: 1.05em;
   color: var(--text-secondary);
   cursor: pointer;
   transition: all 0.2s ease, color 2s ease;
@@ -183,6 +186,56 @@ textarea:focus {
   user-select: none;
 }
 .human-filter input { accent-color: var(--accent); cursor: pointer; }
+
+/* **The order switcher, last on the controls line** — *a switcher on the main page
+   between the ranked order we have now, and one order which is most recently added
+   first.* Two named options rather than a checkbox, because both orders have names and
+   a checkbox would leave one of them unlabelled; `views/recipes/order-switcher` argues
+   that where the words are.
+
+   Segmented rather than two loose buttons: one border round the pair says they are one
+   choice, where two outlines side by side read as two things to press. The lit half
+   borrows `.scope-chip.on`'s accent, so 'this one is on' looks the same here as it does
+   on a chip — the two controls sit inches apart and a second idiom for *selected* is
+   how they come to drift.
+
+   `white-space: nowrap` on the label for `.human-filter`'s reason: a wrapped word in a
+   row of controls reads as a stray. */
+.order-switcher {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.order-switcher-label {
+  color: var(--muted-text);
+  font-size: 0.8em;
+  cursor: help;
+}
+.order-option {
+  padding: 4px 10px;
+  background: transparent;
+  border: 1px solid var(--input-border);
+  border-radius: 0;
+  color: var(--text-secondary);
+  font-size: 0.8em;
+  font-weight: 400;
+  cursor: pointer;
+}
+/* One border round the pair, so the two halves are one control. */
+.order-option:first-of-type { border-radius: 999px 0 0 999px; }
+.order-option:last-of-type { border-radius: 0 999px 999px 0; border-left: none; }
+.order-option:hover { background: var(--surface-subtle); color: var(--text-primary);
+                      transform: none; }
+.order-option.on {
+  border-color: var(--accent);
+  background: var(--surface-subtle);
+  color: var(--accent);
+  font-weight: 600;
+}
+/* The lit half owns the border it shares, or the unlit one's edge cuts across it. */
+.order-option.on + .order-option { border-left: none; }
+.order-option.on:last-of-type { border-left: 1px solid var(--accent); }
 
 /* **The positive Scope filter, directly under the search box** — *and on the main
    page, below the searchbar, list all scopes and have them be an OR filter for
@@ -641,6 +694,36 @@ html.dark-mode .pending-badge { background: rgba(245, 158, 11, 0.18); }
   transform: none;
 }
 .settings-toggle.active { color: var(--accent); background: var(--surface-subtle); }
+
+/* **One ink height for every glyph in that corner** — *make sure all simbols have the
+   same height* — and it takes a size per glyph, because one `font-size` does not give
+   one height. Each of these characters comes out of a different part of a different
+   font and draws to a different fraction of the em box; two of them are not in the text
+   font at all and fall back to an emoji face that draws half again as tall.
+
+   Measured rather than eyeballed, with `canvas`' `actualBoundingBox` at the row's own
+   16.8px, and the numbers are the whole argument:
+
+       ✉  9px    ▦ 13px    🗑 21px    ⚙ 14px    ☾/☀ 13px    ✚ 13px
+
+   So the target is **13px of ink**, which is what the cluster already agrees on, and
+   each size below is `13 ÷ (that glyph's ink at 16.8px) × 1.05em`. ▦ and ✚ need nothing;
+   the envelope is scaled up by half; the wastebasket down to two thirds, because at
+   the same nominal size it was the one thing in the row that read as a different
+   design. The theme toggle loses its 1.1em and joins them — *all* symbols, including
+   the one that is in every view.
+
+   The consequence to know before changing a glyph: **swap the character and this rule
+   is wrong**, silently, because a size here is a statement about one character's
+   drawing. The measurement is a canvas one-liner and the report has it. */
+.inbox-toggle { font-size: 1.52em; }     /* ✉ ink 9  → the smallest drawing */
+.scopes-toggle { font-size: 1.05em; }    /* ▦ ink 13 → the reference */
+.deleted-toggle { font-size: 0.65em; }   /* 🗑 ink 21 → an emoji fallback */
+.machine-toggle { font-size: 0.98em; }   /* ⚙ ink 14 */
+.shelf-add { font-size: 1.05em; }        /* ✚ ink 13, chosen because it needs no fix */
+
+/* The count rides on the ✉ and must not ride its font-size up with it — see
+   `.inbox-count` below, which is a fixed px for that reason. */
 
 .settings {
   padding: 16px 18px;
@@ -1213,7 +1296,10 @@ html.dark-mode .inbox-kind.kind-proposed { background: rgba(245, 158, 11, 0.18);
   border-radius: 8px;
   background: var(--accent);
   color: var(--opaque-bg);
-  font-size: 0.6em;
+  /* **Fixed and not `em`**, because the ✉ it rides on is scaled to 1.52em to match the
+     other glyphs' ink: `0.6em` of that is a badge half again too big. The glyph is
+     sized to be level with its neighbours and the number is sized to be a number. */
+  font-size: 9.5px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   line-height: 15px;

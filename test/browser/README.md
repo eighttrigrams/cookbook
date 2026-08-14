@@ -214,6 +214,7 @@ which is what reading a Recipe *is*.
                                              the gate; builds its own, cleans its Scopes
     (<contents of the file>).newRecipe()   — Add, and the page a Recipe is made on;
                                              creates one and leaves it
+    (<contents of the file>).shelfOrder()  — the order switcher; writes nothing
 
 The two cold loads cannot share a context with the others, or with each other: the load
 each is about replaces the JS context, which is the whole point of them. There are two
@@ -288,6 +289,8 @@ Recipe would half-run from a Recipe page and produce two false reds.
     39  the abbreviation keeps a fenced code block whole
     38  See more shows the rest of the body, and goes
     40  a short body is shown whole, with nothing to press
+    54  the switcher offers two named orders with the ranking lit     (shelfOrder)
+    55  the switcher flips the shelf between the two orders
     51  no compose form on the shelf, and Add is in the bar          (newRecipe)
     52  the new page has the fields and none of the three inherited lies
     53  Save creates and lands on the Recipe, Cancel drops the draft
@@ -613,6 +616,50 @@ still held the disabled Save button from before the first keystroke, and a click
 disabled button does nothing at all, silently. The evidence said it in one line:
 `savable: true, disabled: true`. It waits for `.new-recipe-save` to be *rendered* enabled
 now. State-shaped waits look safer than DOM-shaped ones and are not.
+
+### `shelfOrder()` — the two orders, and one lesson learned twice
+
+*i also need a switcher on the main page between the ranked order we have now, and one
+order which is most recently added first.*
+
+**55 asserts the DOM against the endpoint's own two answers**, which it fetches itself,
+rather than against a list of titles: what each order *means* is
+`shelf-order-db-test`'s and `shelf-order-integration-test`'s, and what a browser can add
+is that the control asks for it and the shelf renders what came back in that order. It
+also asserts that the two orders **differ on this database** — a shelf where they
+coincide would make the check vacuous, and it reports that as a red rather than a pass.
+
+**It writes nothing and needs no fixture.** Both directions are pressed, because either
+alone passes for a control that is stuck: a switcher wedged on `newest` satisfies the
+first half.
+
+**And it met check 53's hazard from the other side, which is why the rule is now stated
+in one line.** 53 clicked a button the DOM had not yet enabled; 55 read a *class* the
+DOM had not yet repainted, after waiting on the order and the titles — both of which are
+readable out of app-state the instant `swap!` returns. Its evidence said
+`order: ranked` beside `lit: ["Newest"]`. **The wait has to name the thing the
+assertion reads**, and half of these assertions read the DOM: a state-shaped wait in
+front of a DOM-shaped assertion is not a wait at all.
+
+### `shelfOrder()`'s mutations
+
+| | the edit |
+|---|---|
+| **U1** | drop `[:recipes.id :desc]` from `newest-order-by`, leaving `created_at` alone |
+| **U2** | order `newest-order-by` by `modified_at` instead of `created_at` |
+
+**U1 is the one to run**, and its evidence is the argument for the tiebreaker: with the
+id gone, six Recipes written inside one second came back in *ascending* insertion order —
+the exact reverse of what was asked for — because `created_at` is second-resolution and
+SQLite is then free to answer however it likes. It reddens the totality test at both
+layers.
+
+**U2 is the conflation both docstrings are careful about**: most recently *added* is
+`created_at` and most recently *touched* is `modified_at`, which is still the ranking's
+first tiebreaker. It reddens `added-is-not-touched` — the one test written specifically
+to tell them apart, since a `modified_at` ordering satisfies every other assertion in
+that file — and, as a bonus, the default's test, because that fixture's ranked order was
+built out of reads and its `modified_at` order is a third thing again.
 
 ### `newRecipe()`'s mutations
 

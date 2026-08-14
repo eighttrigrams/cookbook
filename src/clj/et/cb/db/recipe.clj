@@ -336,6 +336,44 @@
   saved in the same second are still a tie one level down."
   [[ranking-score :desc] [:recipes.modified_at :desc] [:recipes.id :desc]])
 
+(def ^:private newest-order-by
+  "The other order: **most recently added first** — *i also need a switcher on the
+  main page between the ranked order we have now, and one order which is most
+  recently added first.*
+
+  **`created_at` desc then `id` desc, and the second is what makes it total**, which
+  is `ranking-order-by`'s rule applied rather than a new one: `created_at` takes
+  sqlite's `datetime('now')` and is **second-resolution**, so two Recipes added in
+  the same second tie — and a tie here is not a corner case at all, since a seeding
+  script or an agent writing a handful of Recipes does it inside one second. Without
+  the `id` the shelf would shuffle between two reloads for no reason a reader could
+  see, which is the bug that docstring exists to prevent.
+
+  `id` alone would have been *exactly* insertion order — `INTEGER PRIMARY KEY
+  AUTOINCREMENT` — and naming `created_at` first is the deliberate choice: the column
+  says what the order means, and the id says which of two Recipes that share a second
+  came second. Ordering by the id alone would have been the same answer arrived at
+  through a coincidence of the schema.
+
+  **Most recently *added* is not the order this shelf used to have.** Before the
+  ranking it was most-recently-*touched* first, which is `modified_at` — still the
+  ranking's first tiebreaker — and that is a different question: a Recipe he edited
+  this morning is the most recently touched and one of the oldest added. The two must
+  not be conflated, in a docstring or in the words on the control."
+  [[:recipes.created_at :desc] [:recipes.id :desc]])
+
+(def orders
+  "The two orders a caller may ask for, by name. `:ranked` is the default and
+  `:newest` is most-recently-added-first.
+
+  A map rather than a `case` in the query, so that the set of orders is a value:
+  `recipe-handler` reads a query parameter against its keys and the client's control
+  offers exactly these two, which means a third one would be one entry here and not a
+  branch in three files. Public for that reason — it is the vocabulary, not an
+  implementation detail."
+  {:ranked ranking-order-by
+   :newest newest-order-by})
+
 (defn- published? [recipe]
   (= 1 (:published recipe)))
 
@@ -364,12 +402,26 @@
   leaves the description out of the projection entirely, and a visitor's
   projection leaves out the tags — see `select-columns`.
 
-  **The order is `0.7 × view_count + 0.3 × version` descending**, then
-  `modified_at` descending, then `id` descending — one order for everybody, the
-  UI and the machine listing alike, because both come through here. It used to be
-  most-recently-touched-first outright, which is now the first tiebreaker.
-  `ranking-score` says what the weights mean and what follows from summing raw
-  counts; `ranking-order-by` says why the tiebreakers are not optional.
+  **The default order is `0.7 × view_count + 0.3 × version` descending**, then
+  `modified_at` descending, then `id` descending. `ranking-score` says what the
+  weights mean and what follows from summing raw counts; `ranking-order-by` says why
+  the tiebreakers are not optional.
+
+  **There are two orders now, and `order` chooses** — *i also need a switcher on the
+  main page between the ranked order we have now, and one order which is most recently
+  added first.* `:ranked` is that sum and the default; `:newest` is `created_at` desc
+  then `id` desc. Both are in `orders`, both are total, and **either is available to
+  any caller** — the UI's switcher and a machine listing ask the same way, which is
+  what this docstring used to say in a sentence that is now false: it read *one order
+  for everybody, the UI and the machine listing alike, because both come through here*.
+  What survives of it is the part that mattered — there is one function, so an order
+  cannot be something the UI has and an agent does not.
+
+  It also used to note that the shelf *used to be most-recently-touched-first
+  outright, which is now the first tiebreaker*. That is still true and it is **not**
+  the new order: most recently *touched* is `modified_at` and most recently *added* is
+  `created_at`, and a Recipe edited this morning is the first by one and among the last
+  by the other. `newest-order-by` keeps that distinction where a reader will meet it.
 
   Every whitespace-separated term of the search has to be the prefix of some
   word in *one of the two searched columns*, case-insensitively, and different
@@ -455,8 +507,8 @@
   query chose; `excluded-scope-ids` is what decides which rows it chose."
   ([ds audience] (list-recipes ds audience {}))
   ([ds audience {:keys [search-term human-only? excluded-scope-ids included-scope-ids
-                        lean?]
-                 :or {lean? true}}]
+                        order lean?]
+                 :or {lean? true order :ranked}}]
    ;; The search clause names `recipes.title` for the same reason the projection
    ;; is qualified: `recipe_history` has a `title` too, and an unqualified one
    ;; would have SQLite refuse the query as ambiguous. `recipes.tags` is
@@ -511,7 +563,16 @@
                          :left-join [:recipe_history [:= :recipe_history.recipe_id :recipes.id]]
                          :where where
                          :group-by [:recipes.id]
-                         :order-by ranking-order-by})
+                         ;; **The order is looked up and never branched on**, and an
+                         ;; unknown name falls back to the ranking rather than to no
+                         ;; order at all: a `nil` here would leave the shelf in
+                         ;; whatever order SQLite felt like, which is the untotal
+                         ;; ordering both of these are written to avoid. The handler
+                         ;; already refuses to pass a name that is not one of the two,
+                         ;; so this is the second of two agreements rather than the
+                         ;; only one — and it is the one that also covers an internal
+                         ;; caller passing a typo.
+                         :order-by (get orders order ranking-order-by)})
             db/jdbc-opts)
           (with-scopes ds audience)))))
 

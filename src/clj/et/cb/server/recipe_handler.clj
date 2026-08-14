@@ -50,6 +50,23 @@
   [req]
   (common/parse-id-list (common/query-param req "include-scopes")))
 
+(defn- listing-order
+  "`?order=newest` — which of the two orders the listing comes back in, defaulting to
+  the ranking.
+
+  **Read the way `?detail=full` and `?human=true` are read**: one exact value means
+  the other thing and everything else means the default, so absent, `?order=`,
+  `?order=NEWEST` and `?order=whatever` all get the ranked shelf. That is this API's
+  established way of reading a parameter, and the alternative — a 400 for a name it
+  does not know — would be a read that refuses to answer, which no other narrowing or
+  ordering here does.
+
+  It is a keyword out of `db.recipe/orders`' own keys rather than a string compared
+  twice, so the vocabulary lives in one place: the day there is a third order, this
+  function needs nothing but the entry that already has to exist over there."
+  [req]
+  (if (= "newest" (common/query-param req "order")) :newest :ranked))
+
 (defn- human-write?
   "Whether this write is one to record as a human edit: the caller carries no
   *machine* token. `common/machine-caller?` reads the token's `:machine?` claim,
@@ -177,16 +194,29 @@
   "GET /api/recipes — the caller's recipes, **ranked by how much they are used**,
   optionally narrowed by ?search over the **title and the tags**.
 
-  **The order is a weighted sum: `0.7 × view_count + 0.3 × version`, highest
+  **The default order is a weighted sum: `0.7 × view_count + 0.3 × version`, highest
   first**, then most recently modified, then highest id. `view_count` is how often
   the Recipe's description was actually fetched (see GET /api/recipes/:id) and
   `version` is how many times it has been edited, so the shelf leads with what has
-  proved useful rather than with whatever was touched last. The same order is
-  served to every caller — this UI, an agent, an anonymous visitor — so a listing
-  is a recommendation and not just an inventory: the first entries are the ones
-  somebody has kept coming back to. The weights are on the raw counts, so once a
-  Recipe has been read a few dozen times the version term stops being able to move
-  it. There is no ?sort parameter; if you want a different order, sort the rows
+  proved useful rather than with whatever was touched last. A listing is therefore a
+  recommendation and not just an inventory: the first entries are the ones somebody
+  has kept coming back to. The weights are on the raw counts, so once a Recipe has
+  been read a few dozen times the version term stops being able to move it.
+
+  **`?order=newest` asks for the other order: most recently added first**, which is
+  `created_at` descending and then `id` descending — the id because `created_at` is
+  second-resolution and two Recipes written inside one second would otherwise be an
+  untotal order that shuffles between two identical requests. That is the only other
+  value; **anything else, including no parameter at all, is the ranking**, read the way
+  ?detail and ?human are read.
+
+  Note what most recently *added* is not: most recently **touched**. That is
+  `modified_at`, which is the ranking's first tiebreaker, and a Recipe edited this
+  morning is first by it and among the last by `created_at`.
+
+  Both orders are served to every caller — this UI, an agent, an anonymous visitor —
+  and neither is anybody's private view. There is still no general ?sort: two orders
+  answer two questions the owner asked for, and anything else you want, sort the rows
   you were given.
 
   **?search is a word-prefix match, AND across terms.** The search splits on
@@ -324,6 +354,7 @@
                                   :human-only? (human-only? req)
                                   :excluded-scope-ids (excluded-scope-ids req)
                                   :included-scope-ids (included-scope-ids req)
+                                  :order (listing-order req)
                                   :lean? (lean? req)})})
 
 (defn get-recipe-handler

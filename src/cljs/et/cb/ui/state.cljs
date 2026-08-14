@@ -48,6 +48,16 @@
            ;; in the client atom and writes them nowhere, so a reload starts
            ;; unfiltered, and a narrowing that outlived the session would be a
            ;; shelf silently missing rows for a reason nobody remembers setting.
+           ;; Which of the two orders the shelf is in: `:ranked` — the weighted sum
+           ;; of reads and versions — or `:newest`, most recently added first.
+           ;;
+           ;; **Not a narrowing, which is why it is not beside the other four**: it
+           ;; changes what order the same rows come back in, so `empty-message` gets no
+           ;; case for it (reordering an empty result is still empty for whatever
+           ;; reason it already was) and `recipes-url` sends it whether or not it is the
+           ;; default. Not persisted, like the rest of this view state: a reload starts
+           ;; on the ranking, which is the order the shelf is *for*.
+           :shelf-order :ranked
            :excluded-scopes #{}
            ;; And the Scope ids the shelf is narrowed **to** — the positive filter,
            ;; the same shape and not persisted for the same reason. Each one takes
@@ -746,7 +756,7 @@
   opinion here would be a place for the two to disagree, and the endpoint answers
   the combination coherently in any case (*in these and not in those*)."
   []
-  (let [{:keys [search human-only? excluded-scopes included-scopes]} @*app-state
+  (let [{:keys [search human-only? excluded-scopes included-scopes shelf-order]} @*app-state
         params (cond-> []
                  (not (str/blank? search))
                  (conj (str "search=" (js/encodeURIComponent search)))
@@ -765,7 +775,17 @@
                  ;; parameter rather than for the client's key — the one place the
                  ;; two vocabularies meet.
                  (seq included-scopes)
-                 (conj (str "include-scopes=" (str/join "," (sort included-scopes)))))]
+                 (conj (str "include-scopes=" (str/join "," (sort included-scopes))))
+
+                 ;; **Only when it is not the default**, unlike the four above, which
+                 ;; are omitted when they are *empty*. Same rule stated once: a
+                 ;; parameter goes on the URL when it asks for something other than
+                 ;; what the endpoint does anyway. `?order=ranked` would be a request
+                 ;; for the default spelled out, which is a longer URL saying the same
+                 ;; thing — and the endpoint reads any unknown value as the ranking, so
+                 ;; the two spellings could never disagree.
+                 (= :newest shelf-order)
+                 (conj "order=newest"))]
     (if (empty? params)
       "/api/recipes"
       (str "/api/recipes?" (str/join "&" params)))))
@@ -1093,6 +1113,23 @@
 
 (defn set-search [s]
   (swap! *app-state assoc :search s)
+  (fetch-recipes))
+
+(defn set-shelf-order
+  "Which of the two orders the shelf comes back in.
+
+  Same shape as `set-search` and `set-human-only` — write the value, ask again — and
+  for the same reason: the order is the endpoint's `ORDER BY`, so the only way to
+  change it is a new request. The request numbering in `fetch-recipes` covers the race
+  that creates, and it matters slightly more here than for the narrowings: two orders
+  of the *same* rows look plausible either way, so a stale response landing last would
+  be a shelf in the order nobody asked for with nothing on screen looking wrong.
+
+  It takes the order rather than toggling, because there are two named things and a
+  toggle over two named things is a control whose state you have to infer from
+  somewhere else."
+  [order]
+  (swap! *app-state assoc :shelf-order order)
   (fetch-recipes))
 
 (defn set-human-only

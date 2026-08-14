@@ -2135,6 +2135,100 @@
       return done({fixture: {id: made.body.id, title: TITLE, blocks: TOTAL}});
     },
 
+    // ---- the shelf's order switcher -------------------------------------------
+    // *i also need a switcher on the main page between the ranked order we have now,
+    // and one order which is most recently added first.*
+    //
+    // **Asserted against the endpoint's own two answers and not against a list of
+    // titles.** The db and integration tests own what each order *means*; what a
+    // browser can add is that the control asks for it and that the shelf renders what
+    // came back, in that order — so this check fetches both orderings itself and
+    // compares the DOM against them. Written the other way it would be a check about
+    // whatever happens to be in the dev database.
+    //
+    // It writes nothing and needs no fixture: two of his Recipes disagree between the
+    // orders already, and the check says so out loud rather than assuming it — a
+    // database where the two orders coincide would make it vacuous, and it reports that
+    // as a red rather than a pass.
+    shelfOrder: async () => {
+      const {check, step, done, notes} = runner();
+      if (!shelf()) throw new Error('this phase is about the shelf, and the page is at '
+                                    + path() + ' — go to / and run it again');
+      const options = () => [...document.querySelectorAll('.order-option')];
+      const lit = () => options().filter(o => o.classList.contains('on'))
+        .map(o => o.textContent.trim());
+      const shelfTitles = () => (stateGet('recipes') || []).map(r => r.title);
+      const fetchOrder = async q => (await (await fetch('/api/recipes' + q)).json())
+        .map(r => r.title);
+
+      // 54. **two named options, the ranking lit, on the controls line, and shown
+      //     signed out.** The words are the assertion as much as the behaviour: *Most
+      //     used* names what the ranking ranks *by*, which `Ranked` alone does not, and
+      //     *Newest* is worded to stay distinct from most-recently-**touched**.
+      await check('54 the switcher offers two named orders with the ranking lit', () => {
+        const labels = options().map(o => o.textContent.trim());
+        const row = document.querySelector('.shelf-controls');
+        const inTheRow = !!document.querySelector('.shelf-controls .order-switcher');
+        const titles = options().map(o => o.title);
+        return {pass: labels.length === 2
+                      && labels.join(',') === 'Most used,Newest'
+                      && lit().join(',') === 'Most used'
+                      && String(stateGet('shelf-order')) === 'ranked'
+                      && inTheRow
+                      // the tooltips carry what a two-word label cannot: the weights,
+                      // and that added is not edited
+                      && /0\.7/.test(titles[0]) && /reads/.test(titles[0])
+                      && /not the same as most recently edited/.test(titles[1]),
+                evidence: {labels, lit: lit(), order: String(stateGet('shelf-order')),
+                           inTheControlsRow: inTheRow, tooltips: titles,
+                           controlsRowHeight: Math.round(row.getBoundingClientRect().height)}};
+      });
+
+      // 55. **pressing it reorders the shelf, and pressing back restores it.** Both
+      //     directions, because either alone passes for a control that is stuck: a
+      //     switcher wedged on `newest` would satisfy the first half.
+      await check('55 the switcher flips the shelf between the two orders', async () => {
+        const ranked = await fetchOrder('');
+        const newest = await fetchOrder('?order=newest');
+        const differ = ranked.join(',') !== newest.join(',');
+        // **Waited on the lit *class*, not on the atom.** The order and the titles are
+        // both readable out of app-state the instant `swap!` returns, and the class on
+        // the button is a render later — so an `until` over the state is satisfied
+        // while the DOM still shows the other half lit, and this check read exactly
+        // that: `order: ranked` with `lit: ["Newest"]`. Check 53 met the same hazard
+        // from the other side (a click on a not-yet-enabled button); the rule both of
+        // them arrived at is that the wait has to name the thing the *assertion*
+        // reads, and half of these assertions read the DOM.
+        clickIn(document.querySelector('.order-switcher'), '.order-option', 'Newest');
+        await until(() => String(stateGet('shelf-order')) === 'newest'
+                          && shelfTitles().join(',') === newest.join(',')
+                          && lit().join(',') === 'Newest', 8000);
+        const onNewest = {order: String(stateGet('shelf-order')), lit: lit(),
+                          titles: shelfTitles(),
+                          url: performance.getEntriesByType('resource').map(r => r.name)
+                            .filter(n => n.includes('/api/recipes?')).slice(-1)[0]};
+        clickIn(document.querySelector('.order-switcher'), '.order-option', 'Most used');
+        await until(() => String(stateGet('shelf-order')) === 'ranked'
+                          && shelfTitles().join(',') === ranked.join(',')
+                          && lit().join(',') === 'Most used', 8000);
+        const backOnRanked = {order: String(stateGet('shelf-order')), lit: lit(),
+                              titles: shelfTitles()};
+        return {pass: differ
+                      && onNewest.titles.join(',') === newest.join(',')
+                      && onNewest.lit.join(',') === 'Newest'
+                      && /order=newest/.test(onNewest.url || '')
+                      && backOnRanked.titles.join(',') === ranked.join(',')
+                      && backOnRanked.lit.join(',') === 'Most used',
+                evidence: {theTwoOrdersDiffer: differ,
+                           serverRanked: ranked.slice(0, 4),
+                           serverNewest: newest.slice(0, 4),
+                           onNewest, backOnRanked}};
+      });
+
+      notes.push('left on ' + path() + ' in the ' + String(stateGet('shelf-order')) + ' order');
+      return done({});
+    },
+
     // ---- Add, and the page a Recipe is made on --------------------------------
     // *on the overview page, there is a whole section for creating a new cookbook
     // recipe. i dont want that, i want that page to be about filtering. what we gonna
@@ -2155,31 +2249,62 @@
       const labels = sel => [...document.querySelectorAll(sel + ' button')]
         .map(b => b.textContent.trim());
 
-      // 51. **the shelf has no compose form, and Add is in the bar's right slot.**
+      // 51. **the shelf has no compose form, and Add is the first glyph in the bar's
+      //     right-hand row — at one height with the rest of it.**
+      //
       //     The negative half is the one he asked for — *i dont want that* — and it is
       //     asserted as the absence of the *element*, so a form left rendered with
       //     nothing in it would redden this even though the fields had gone.
-      await check('51 no compose form on the shelf, and Add is in the bar', () => {
-        const box = document.querySelector('.top-bar-actions');
-        const tog = document.querySelector('.dark-mode-toggle');
-        const add = document.querySelector('.shelf-add');
-        return {pass: !document.querySelector('.compose')
-                      && !document.querySelector('.compose-title')
-                      && !!add && !!box && box.contains(add)
-                      // immediately left of the toggle, as Publish is on a Recipe page
-                      && box.nextElementSibling === tog
-                      && add.getBoundingClientRect().right <= tog.getBoundingClientRect().left
-                      // and the shelf now begins with the controls that narrow it
-                      && document.querySelector('.shelf').firstElementChild
-                         === document.querySelector('.shelf-controls'),
-                evidence: {composeForm: !!document.querySelector('.compose'),
-                           addInTheBar: !!add,
-                           barRight: barSlots('.top-bar-right'),
-                           shelfStartsWith: document.querySelector('.shelf')
-                             ?.firstElementChild?.className}};
-      });
+      //
+      //     **The position and the height are the revision.** Add spent one commit as
+      //     the word *Add* in the surface-action slot at the other end of this corner:
+      //     *lets have the ADd button become a plus and go to the left of this list. and
+      //     then make sure all simbols have the same height.* So it is first, it is a
+      //     glyph in the page buttons' own register, and the row's **ink heights** are
+      //     asserted equal — measured with `canvas`, because that is the only thing that
+      //     can see them: every one of these characters comes out of a different font
+      //     and one `font-size` gives six different drawings. The stylesheet carries a
+      //     size per glyph, so this check is what says those sizes are still right.
+      await check('51 no compose form, and Add leads the bar at the row\'s own height',
+        () => {
+          const right = [...document.querySelectorAll('.top-bar-right button')];
+          const add = document.querySelector('.shelf-add');
+          const ctx = document.createElement('canvas').getContext('2d');
+          const inks = right.map(b => {
+            const glyph = [...b.childNodes].filter(n => n.nodeType === 3)
+              .map(n => n.textContent).join('').trim();
+            const cs = getComputedStyle(b);
+            ctx.font = cs.fontSize + ' ' + cs.fontFamily;
+            const m = ctx.measureText(glyph);
+            return {glyph, size: cs.fontSize,
+                    ink: Math.round(m.actualBoundingBoxAscent + m.actualBoundingBoxDescent)};
+          });
+          const spread = Math.max(...inks.map(i => i.ink)) - Math.min(...inks.map(i => i.ink));
+          return {pass: !document.querySelector('.compose')
+                        && !document.querySelector('.compose-title')
+                        && !!add
+                        // first in the row, and a glyph rather than a word
+                        && right[0] === add
+                        && add.textContent.trim() === '✚'
+                        // in the page buttons' register, not the surface-action slot
+                        && add.classList.contains('settings-toggle')
+                        && !document.querySelector('.top-bar-actions')
+                        // one height for all of them, within a pixel of rounding
+                        && spread <= 1
+                        // and the shelf now begins with the controls that narrow it
+                        && document.querySelector('.shelf').firstElementChild
+                           === document.querySelector('.shelf-controls'),
+                  evidence: {composeForm: !!document.querySelector('.compose'),
+                             firstInTheRow: right[0] === add,
+                             addGlyph: add?.textContent.trim(),
+                             surfaceActionSlot: !!document.querySelector('.top-bar-actions'),
+                             inks, inkSpread: spread,
+                             barRight: barSlots('.top-bar-right'),
+                             shelfStartsWith: document.querySelector('.shelf')
+                               ?.firstElementChild?.className}};
+        });
 
-      await step('press Add', () => clickIn(document.querySelector('.top-bar-actions'),
+      await step('press Add', () => clickIn(document.querySelector('.top-bar-right'),
                                             '.shelf-add'));
       await until(() => document.querySelector('.recipe-page-edit'), 8000);
 
@@ -2244,7 +2369,7 @@
                                abandonedOnTheShelf: !!cardFor('CHECK-ADD abandoned')};
 
           // and now a real one, filed under the first Scope there is
-          clickIn(document.querySelector('.top-bar-actions'), '.shelf-add');
+          clickIn(document.querySelector('.top-bar-right'), '.shelf-add');
           await until(() => document.querySelector('.recipe-page-edit'), 8000);
           const reopened = document.querySelector('.recipe-page-edit-title').value;
           type(document.querySelector('.recipe-page-edit-title'), title);

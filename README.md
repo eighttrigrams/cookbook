@@ -362,6 +362,21 @@ Both filters are the owner's alone: the endpoint ignores either one for an
 anonymous caller, so the controls are not shown to one. Nothing is remembered
 across a reload.
 
+**And a switcher for the order**, last on the controls line: *Most used* — the ranking,
+which is the default — or *Newest*, most recently added first. Most recently **added** is
+not most recently *touched*: the shelf used to be ordered by the latter and that is now
+the ranking's first tiebreaker, so a Recipe edited this morning leads one order and
+trails the other. Both orders are the endpoint's (`?order=newest`), both are total, and
+either is available to any caller including an anonymous one — the ranking already
+explains the shelf a visitor is looking at, so the other order is theirs to ask for too.
+
+**Recipes are not made on the shelf.** *i want that page to be about filtering* — so
+**Add**, in the top right beside the theme toggle, opens a page shaped like a Recipe's
+own editor: the four fields, a Scope picker, Save and Cancel in the bar. Save creates it
+and lands on the new Recipe's page, which is the first moment it has an address; Cancel
+returns to the shelf. A half-written one is discarded when you navigate away, by the same
+rule that discards a half-corrected one.
+
 ### A Recipe's own address
 
 Every Recipe is also a page of its own at **`/recipe/<id>`** — bare, no type

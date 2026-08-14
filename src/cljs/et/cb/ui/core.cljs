@@ -293,19 +293,6 @@
   [{:keys [page recipe-page-edit? recipe-page-id logged-in? diffing details]}]
   (when-let [actions
              (cond
-               ;; **The shelf's own action, and the shelf is not a focused surface** —
-               ;; so this is the one branch whose control stands *beside* the app's
-               ;; widgets rather than in the space they vacate. *at the top of the page
-               ;; the will be an "Add" button.* The bar is the reading of 'the top of
-               ;; the page' that the two slots have already established: it is what the
-               ;; surface on screen offers on the thing it is about, and what the shelf
-               ;; is about is the whole shelf.
-               ;;
-               ;; It is **first** in this `cond` and it cannot collide with the two
-               ;; below — `:shelf` is neither `:recipe` nor a viewer — so the order is
-               ;; only a reading order here, unlike the pair after it.
-               (and (= :shelf page) logged-in?)
-               [recipes/add-action]
                ;; **The viewer outranks the page it was opened over**, as it does in
                ;; `left-slot`, and it answers for this corner with its own answers:
                ;; Approve and Dismiss on a proposal, Seen on the other three kinds,
@@ -373,6 +360,19 @@
     [:div.top-bar
      [left-slot page recipe-page-edit? recipe-page-id logged-in? diffing]
      [:div.top-bar-right
+      ;; **Add, first in the row.** *lets have the ADd button become a plus and go to
+      ;; the left of this list.* It spent one commit in the surface-action slot at the
+      ;; other end of this corner, on the argument that the shelf's own action belongs
+      ;; where a Recipe page's Publish is — and what he has decided instead is that Add
+      ;; is one of the app's **widgets**, which makes the surface slot's rule the tidier
+      ;; one rather than the poorer: that slot is what a *focused* surface offers, and
+      ;; the shelf is not a focused surface at all.
+      ;;
+      ;; Gated with the other four, and its `logged-in?` is the only one of the five
+      ;; that is not merely about a button leading somewhere useless: it opens a page
+      ;; that exists to POST, and the API answers a signed-out POST 401.
+      (when (and chrome? logged-in?)
+        [recipes/add-action])
       ;; The Inbox. Owner-only like the other two, and it is the one of the three
       ;; that carries a number: how many of his agents' changes are waiting. The
       ;; count is the length of the list the page itself draws — there is no
@@ -416,8 +416,13 @@
           :title "Deleted — Recipes off the shelf, still readable"}
          "🗑"])
       ;; only the owner has a setting to make: the machine user's password
+      ;;
+      ;; `.machine-toggle` beside the shared class, so the stylesheet can size this
+      ;; glyph on its own: ⚙ draws a pixel taller than the ▦ beside it, and *make sure
+      ;; all simbols have the same height* needs a hook per character. The other three
+      ;; already had one; this was the button that did not.
       (when (and chrome? logged-in?)
-        [:button.settings-toggle
+        [:button.settings-toggle.machine-toggle
          {:on-click state/toggle-settings
           :class (when (= :settings page) "active")
           :title "Machine user"}
