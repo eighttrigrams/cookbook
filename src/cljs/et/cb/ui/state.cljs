@@ -49,6 +49,17 @@
            ;; unfiltered, and a narrowing that outlived the session would be a
            ;; shelf silently missing rows for a reason nobody remembers setting.
            :excluded-scopes #{}
+           ;; And the Scope ids the shelf is narrowed **to** — the positive filter,
+           ;; the same shape and not persisted for the same reason. Each one takes
+           ;; *less* away, which is the union he asked for.
+           ;;
+           ;; **Named to mirror `:excluded-scopes` rather than to name the
+           ;; gesture.** The chips call it selecting and the endpoint calls it
+           ;; `include-scopes`; a client key called `:selected-scopes` would have
+           ;; been a third word for one thing, and two spellings of one fact is how
+           ;; they drift. The pair reads as a pair, which is what a reader needs
+           ;; here, since the two sets do opposite things to the same listing.
+           :included-scopes #{}
            :recipes-request 0    ;; only the newest listing request may land
            ;; which page is on: :shelf, :settings, :scopes, :inbox or :recipe
            :page :shelf
@@ -455,12 +466,17 @@
          ;; `scopes` key at all, so keeping the fetched list here would be the one
          ;; copy of the owner's filing left on a signed-out page
          :scopes [] :editing-scope nil :deleting-scope nil
-         ;; and the exclusions with them, for the same reason one step on: an
-         ;; exclusion is a statement about the owner's filing, and the endpoint
-         ;; ignores it for a signed-out caller anyway — so a set left here would
-         ;; put ids on a URL that does nothing, under a strip naming Scopes this
-         ;; client can no longer read the titles of
-         :excluded-scopes #{})
+         ;; and both Scope filters with them, for the same reason one step on: a
+         ;; narrowing by Scope is a statement about the owner's filing, and the
+         ;; endpoint ignores both for a signed-out caller anyway — so a set left
+         ;; here would put ids on a URL that does nothing, under a strip naming
+         ;; Scopes this client can no longer read the titles of. **The positive one
+         ;; matters more**: its chips are drawn from `:scopes`, which is emptied on
+         ;; this very line, so a selection left behind would be a narrowing with no
+         ;; control left on screen to undo it — except that the server ignores it,
+         ;; which is a guarantee about the server and not about this client
+         :excluded-scopes #{}
+         :included-scopes #{})
   (fetch-recipes))
 
 ;; ---------------------------------------------------------------------------
@@ -670,6 +686,15 @@
   to catch up, by a Scope that no longer exists — and the chips strip would be
   holding an id it has no title left to render.
 
+  **And out of `:included-scopes`, where the same slip costs more.** A deleted id
+  left in an exclusion hides nothing, so the shelf is merely as it was; left in a
+  *selection* it keeps nothing, so the shelf comes back **empty** — see
+  `db.scope/inclusion-clause`, which is where that inversion is argued. The chip
+  for it would be gone from the row at the same moment, since the row is drawn from
+  the Scope list this refetches, so the narrowing would have no control on screen at
+  all. That is `excluded-scopes-strip`'s trap arriving through the other filter, and
+  the row's Clear is the second defence against it rather than the only one.
+
   `on-done` runs on failure too, for the reason it does in `publish-recipe`: it is
   what closes the confirmation, and the error banner renders under the modal's
   fixed overlay."
@@ -678,6 +703,7 @@
     (api/delete-simple (str "/api/scopes/" id) (auth-headers)
       (fn [_]
         (swap! *app-state update :excluded-scopes disj id)
+        (swap! *app-state update :included-scopes disj id)
         (fetch-scopes)
         ;; every card filed under it is now showing a badge for a Scope that is
         ;; gone; the server has already unfiled them, so this is what catches up
@@ -710,11 +736,17 @@
 
 (defn- recipes-url
   "The listing URL carrying whichever narrowings are on. Assembled from a list
-  rather than branched on, so the search, the human filter and the Scope exclusion
-  compose — the endpoint applies all three as `:where` clauses, and any of them
-  winning here would have been this client's invention."
+  rather than branched on, so the search, the human filter and **both** Scope
+  filters compose — the endpoint applies all four as `:where` clauses, and any of
+  them winning here would have been this client's invention.
+
+  **Both Scope sets are sent whenever they are non-empty, and this function
+  enforces nothing about their combination.** The rule that the two never operate at
+  once is the gate's, in `et.cb.filters/badge-gesture` and at the chip row; a second
+  opinion here would be a place for the two to disagree, and the endpoint answers
+  the combination coherently in any case (*in these and not in those*)."
   []
-  (let [{:keys [search human-only? excluded-scopes]} @*app-state
+  (let [{:keys [search human-only? excluded-scopes included-scopes]} @*app-state
         params (cond-> []
                  (not (str/blank? search))
                  (conj (str "search=" (js/encodeURIComponent search)))
@@ -727,7 +759,13 @@
                  ;; mean the same thing reading differently is a nuisance in the
                  ;; network tab and in anything that caches by URL.
                  (seq excluded-scopes)
-                 (conj (str "exclude-scopes=" (str/join "," (sort excluded-scopes)))))]
+                 (conj (str "exclude-scopes=" (str/join "," (sort excluded-scopes))))
+
+                 ;; Sorted for the same reason, and named for the endpoint's
+                 ;; parameter rather than for the client's key — the one place the
+                 ;; two vocabularies meet.
+                 (seq included-scopes)
+                 (conj (str "include-scopes=" (str/join "," (sort included-scopes)))))]
     (if (empty? params)
       "/api/recipes"
       (str "/api/recipes?" (str/join "&" params)))))
@@ -1065,17 +1103,27 @@
   (swap! *app-state assoc :human-only? on?)
   (fetch-recipes))
 
-;; The Scope exclusion — the shelf's third narrowing, and the only negative one.
-;; Every function here ends in a refetch for the reason `set-search` and
+;; The two Scope narrowings — the shelf's third and fourth, one negative and one
+;; positive. Every function here ends in a refetch for the reason `set-search` and
 ;; `set-human-only` do: the narrowing is the endpoint's `:where` clause, so the
 ;; only way to apply one is to ask again. The request numbering in `fetch-recipes`
 ;; already covers the race that creates.
 ;;
 ;; Nothing here checks that an id is one of the owner's. It cannot come from
-;; anywhere else — the only way to add one is to shift+click a badge the server
-;; put on a card — and an id the server does not recognise excludes nothing
-;; anyway, so a check here would be a second opinion about a question the endpoint
-;; already answers.
+;; anywhere else — a badge the server put on a card, or a chip drawn from the Scope
+;; list the server sent — and an id the server does not recognise is answered by the
+;; endpoint, so a check here would be a second opinion about a question that already
+;; has one. **What differs between the two sets is what that answer is**: an
+;; unrecognised exclusion hides nothing and an unrecognised selection keeps nothing,
+;; which is why `delete-scope` drops a deleted id from both and why the chip row
+;; keeps a Clear that does not depend on a chip being drawable.
+;;
+;; **Neither of these enforces the gate**, and that is deliberate rather than an
+;; omission: `et.cb.filters/badge-gesture` decides which gesture is open and the
+;; chip row reads the same predicate, so the rule lives in one testable place. A
+;; second refusal down here would be a second thing to keep in step, and it would
+;; refuse the one caller that legitimately sets both — nothing does today, and the
+;; endpoint answers it coherently if anything ever does.
 
 (defn toggle-excluded-scope
   "Hide the Recipes filed under this Scope, or stop hiding them.
@@ -1113,6 +1161,43 @@
   is when clearing them one at a time starts to be work."
   []
   (swap! *app-state assoc :excluded-scopes #{})
+  (fetch-recipes))
+
+(defn toggle-included-scope
+  "Narrow the shelf to this Scope's Recipes as well, or stop narrowing to it —
+  *an OR filter for scopes*, one chip at a time.
+
+  **A toggle, and here the second click is the ordinary case rather than a window
+  before a refetch.** That is the inversion of `toggle-excluded-scope`, whose long
+  paragraph exists because an excluded Scope's badges leave the shelf with the
+  Recipes carrying them, so nothing on the shelf can turn it off again. Selecting
+  does the opposite: every card left on the shelf carries a selected Scope, so its
+  badge is *right there*, lit, and clicking it again is how anybody would expect to
+  take it back out. The chip row says the same thing in the other place.
+
+  **The next set is computed from the atom at click time**, and that is not a
+  detail — `recipe-fields/scope-picker` hands over the id that was clicked rather
+  than the set the row would become, precisely so that two chips pressed inside one
+  animation frame both land. This is the same `swap!` the compose form and
+  `toggle-recipe-scope` make, for the reason measured there."
+  [id]
+  (swap! *app-state update :included-scopes
+         (fn [s] (if (contains? s id) (disj s id) (conj s id))))
+  (fetch-recipes))
+
+(defn clear-included-scopes
+  "Stop narrowing to any of them — the row's Clear.
+
+  **Offered whenever anything is selected, and not only above one**, which is where
+  it differs from `clear-excluded-scopes`. Two reasons, and the second is the one
+  that matters: the row is one control rather than a chip per narrowing, so there is
+  no clearing-them-one-at-a-time to become work; and a selected id whose Scope has
+  been deleted elsewhere has **no chip left in the row** — the row is drawn from the
+  Scope list — while still narrowing the shelf to nothing. `delete-scope` drops such
+  an id when this client is the one deleting it; this is what answers the case where
+  it was not."
+  []
+  (swap! *app-state assoc :included-scopes #{})
   (fetch-recipes))
 
 (defn add-recipe [{:keys [title useful_when description tags scope_ids]} on-success]

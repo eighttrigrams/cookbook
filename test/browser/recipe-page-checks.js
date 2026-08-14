@@ -2135,6 +2135,308 @@
       return done({fixture: {id: made.body.id, title: TITLE, blocks: TOTAL}});
     },
 
+    // ---- the shelf's positive Scope filter, and the gate between the two ------
+    // *and on the main page, below the searchbar, list all scopes and have them be
+    // an OR filter for scopes*, and then *ah ok yeah. but when no negative filter
+    // is selecgted, allow to select positively.*
+    //
+    // **The matrix itself is tested in Clojure** — `et.cb.filters-test`, over every
+    // state the two filters can be in, without a DOM. What is here is the half that
+    // file cannot see: that the shelf *wires* it, that a refused chip is refused
+    // visibly, and that a refused badge click does not fall through and open the
+    // card. A green matrix over a UI that ignored it is exactly the shape this
+    // suite exists to catch.
+    //
+    // **It builds its own Scopes and its own Recipes** and takes the Scopes back
+    // out at the end. `cleanup.py` removes CHECK- *Recipes* and knows nothing about
+    // Scopes, so a phase that left two behind would leave his picker two chips
+    // longer every run — the one kind of litter this suite must not make, since the
+    // control under test is a list of them.
+    scopeFilter: async () => {
+      const {check, step, done, notes} = runner();
+      if (!shelf()) throw new Error('this phase is about the shelf, and the page is at '
+                                    + path() + ' — go to / and run it again');
+      const api = async (p, {method, body} = {}) => {
+        const r = await fetch('/api/' + p, {
+          method: method || (body ? 'POST' : 'GET'),
+          headers: {'Content-Type': 'application/json'},
+          body: body === undefined ? undefined : JSON.stringify(body)});
+        let parsed = null;
+        try { parsed = JSON.parse((await r.text()) || 'null'); } catch (e) { parsed = null; }
+        return {status: r.status, body: parsed};
+      };
+      const mk = async (title, description) => {
+        const r = await api('scopes', {body: {title, description}});
+        if (r.status !== 201) throw new Error('could not make a Scope: ' + JSON.stringify(r));
+        return r.body.id;
+      };
+      // Two Scopes, and three Recipes arranged so the **union** has something to
+      // prove: one under each Scope and one under neither. A fixture where every
+      // Recipe carried both would pass an AND just as happily.
+      const left = await mk('CHECK-SCOPE-L', 'the left half of the union');
+      const right = await mk('CHECK-SCOPE-R', 'the right half of the union');
+      const made = [];
+      for (const [title, ids] of [['CHECK-FILTER left only', [left]],
+                                  ['CHECK-FILTER right only', [right]],
+                                  ['CHECK-FILTER unfiled', []]]) {
+        const r = await api('recipes', {body: {title, useful_when: 'when testing the filter',
+                                               description: 'body', scope_ids: ids}});
+        if (r.status !== 201) throw new Error('could not build a fixture: ' + JSON.stringify(r));
+        made.push(r.body.id);
+      }
+      notes.push('built CHECK-SCOPE-L / -R and three CHECK-FILTER Recipes; the Scopes '
+                 + 'are deleted at the end of this phase, the Recipes are cleanup.py\'s');
+      // **Start from an unnarrowed shelf, and say so rather than assuming it.** This
+      // phase is the one that leaves filters set if it fails part-way, so it is also
+      // the one likeliest to be entered with a narrowing already up — and then its
+      // own fresh fixtures are filtered off the shelf before a single check runs,
+      // which surfaces as every card-shaped assertion failing for a reason that has
+      // nothing to do with what they assert. Found exactly that way, twice, during
+      // the mutation run: a phase that had thrown mid-way left `:included-scopes` set
+      // and the next run could not see its own Recipes.
+      await step('clear any narrowing a previous run left, and refetch', async () => {
+        st.clear_included_scopes();
+        st.clear_excluded_scopes();
+        st.set_search('');
+        st.fetch_scopes();
+        st.fetch_recipes();
+      });
+      await until(() => (stateGet('included-scopes') || []).length === 0
+                        && (stateGet('excluded-scopes') || []).length === 0, 8000);
+      // And wait for this run's fixtures to be **on the shelf and drawn**, not merely
+      // for the filters to be clear. The listing is a round trip and the badges are a
+      // render after it; a phase that started measuring before either had landed was
+      // the other half of the flakiness the reset step above fixes.
+      await until(() => {
+        const rows = stateGet('recipes') || [];
+        return made.every(id => rows.some(r => r.id === id))
+               && cards().some(c => c.textContent.includes('CHECK-FILTER left only')
+                                    && [...c.querySelectorAll('.scope-badge')]
+                                         .some(b => b.textContent.trim() === 'CHECK-SCOPE-L'));
+      }, 10000);
+      await until(() => cardFor('CHECK-FILTER unfiled')
+                        && [...document.querySelectorAll('.shelf-scope-filter .scope-chip')]
+                             .some(c => c.textContent.trim() === 'CHECK-SCOPE-L'), 8000);
+
+      const chips = () => [...document.querySelectorAll('.shelf-scope-filter .scope-chip')];
+      const chipFor = t => chips().find(c => c.textContent.trim() === t);
+      const included = () => stateGet('included-scopes') || [];
+      const excluded = () => stateGet('excluded-scopes') || [];
+      // **This run's Recipes by id, and its cards by id-and-badge.** Found by
+      // mutation rather than by design: the phase builds three Recipes with fixed
+      // titles, so a second run before `cleanup.py` puts a second set of the same
+      // three on the shelf — and every title-keyed assertion then reads the *older*
+      // run's rows, which are filed under Scopes this phase has since deleted and so
+      // carry no badges at all. Three checks went red under a mutation that had
+      // nothing to do with any of them, which is the tell.
+      const madeSet = new Set(made);
+      const mine = () => (stateGet('recipes') || [])
+        .filter(r => madeSet.has(r.id)).map(r => r.title);
+      // A card of *this* run's, identified by carrying the badge this run made: an
+      // earlier run's namesake has none, since its Scopes are gone.
+      const cardWithBadge = (cardTitle, scopeTitle) =>
+        cards().find(c => c.textContent.includes(cardTitle)
+                          && [...c.querySelectorAll('.scope-badge')]
+                               .some(b => b.textContent.trim() === scopeTitle));
+      // **Awaited, not demanded.** A card carrying a badge is the consequence of a
+      // listing having landed *and* reagent having drawn it, and this phase disturbs
+      // the listing more than once — check 46 signs out and back in, which throws the
+      // rows away and refetches them. Written as a plain lookup this threw
+      // `no card for … carrying …` on the first run after that and passed on the
+      // second, which is the house rule's first hazard wearing a different hat.
+      const badgeIn = async (cardTitle, scopeTitle) => {
+        const c = await until(() => cardWithBadge(cardTitle, scopeTitle), 8000);
+        if (!c) throw new Error('no card for ' + cardTitle + ' carrying ' + scopeTitle
+                                + ' — the listing never came back with its badges');
+        return [...c.querySelectorAll('.scope-badge')]
+          .find(x => x.textContent.trim() === scopeTitle);
+      };
+      // A real modifier click. `el.click()` cannot carry shiftKey, and the whole
+      // gate turns on it — so the shift gestures go through a constructed
+      // MouseEvent, which does set it. (Focus and text selection are the driving
+      // session's business; `checks.js` says why some things need real keys.)
+      const clickBadge = (b, shift) => b.dispatchEvent(
+        new MouseEvent('click', {bubbles: true, cancelable: true, shiftKey: !!shift}));
+
+      // 46. **the row is under the search and lists every Scope.**
+      //
+      //     Measured into numbers on the spot rather than kept as nodes: this phase
+      //     re-renders the row more than once, and a detached element measures 0×0 —
+      //     which `0 >= 0` satisfies, so the placement assertion passed vacuously on
+      //     every run until the boxes were printed. The same trap `barActions()` 41
+      //     met, and the reason both now keep booleans.
+      await check('46 the Scope filter row sits under the search, one chip per Scope',
+        async () => {
+          const rowBox = document.querySelector('.scope-filter').getBoundingClientRect();
+          const controlsBox = document.querySelector('.shelf-controls').getBoundingClientRect();
+          const placement = {rowTop: Math.round(rowBox.top),
+                             rowHeight: Math.round(rowBox.height),
+                             controlsBottom: Math.round(controlsBox.bottom),
+                             below: rowBox.top >= controlsBox.bottom,
+                             laidOut: rowBox.height > 0 && controlsBox.height > 0};
+          const all = (stateGet('scopes') || []).map(s2 => s2.title).sort();
+          const drawn = chips().map(c => c.textContent.trim()).sort();
+          const order = [...document.querySelectorAll('.shelf > *')]
+            .map(e => (e.className || '').split(' ')[0]);
+          return {pass: placement.laidOut && placement.below
+                        && JSON.stringify(drawn) === JSON.stringify(all)
+                        && drawn.length > 0
+                        && order.indexOf('scope-filter') > order.indexOf('shelf-controls'),
+                  evidence: {chipsDrawn: drawn, scopesInState: all, placement,
+                             shelfOrder: order.filter(c => c !== 'card')}};
+        });
+
+      // 47. **one Scope narrows to it, two are the union, and the unfiled Recipe
+      //     goes.** The union is the assertion with teeth: neither fixture carries
+      //     both Scopes, so an AND would answer with nothing at all.
+      await check('47 one Scope narrows, two are the union, unfiled falls out',
+        async () => {
+          chipFor('CHECK-SCOPE-L').click();
+          await until(() => included().length === 1 && mine().length === 1, 8000);
+          const one = mine();
+          chipFor('CHECK-SCOPE-R').click();
+          await until(() => included().length === 2 && mine().length === 2, 8000);
+          const both = mine();
+          const url = performance.getEntriesByType('resource').map(r => r.name)
+            .filter(n => n.includes('include-scopes')).slice(-1)[0];
+          document.querySelector('.clear-scope-filter').click();
+          await until(() => included().length === 0 && mine().length === 3, 8000);
+          return {pass: one.join(',') === 'CHECK-FILTER left only'
+                        && both.length === 2
+                        && both.includes('CHECK-FILTER left only')
+                        && both.includes('CHECK-FILTER right only')
+                        && !both.includes('CHECK-FILTER unfiled')
+                        && /include-scopes=\d+,\d+/.test(url || '')
+                        && mine().length === 3,
+                  evidence: {withOneScope: one, withBoth: both, lastUrl: url,
+                             afterClear: mine()}};
+        });
+
+      // 48. **the gate, in the UI.** Three states, and the middle one is the reason
+      //     this check exists: with an exclusion up a plain badge click is refused
+      //     **and consumed**, so the card must not expand — a fall-through would
+      //     answer a filter gesture by opening something.
+      await check('48 the two filters refuse each other, visibly', async () => {
+        // plain badge click selects
+        clickBadge(await badgeIn('CHECK-FILTER left only', 'CHECK-SCOPE-L'));
+        await until(() => included().length === 1, 8000);
+        const afterPlain = {included: included(), excluded: excluded()};
+        // shift is refused while a selection is up
+        clickBadge(await badgeIn('CHECK-FILTER left only', 'CHECK-SCOPE-L'), true);
+        await wait(400);
+        const shiftRefused = {included: included(), excluded: excluded()};
+        document.querySelector('.clear-scope-filter').click();
+        await until(() => included().length === 0, 8000);
+        // shift from a clean slate excludes
+        clickBadge(await badgeIn('CHECK-FILTER left only', 'CHECK-SCOPE-L'), true);
+        await until(() => excluded().length === 1, 8000);
+        await until(() => !mine().includes('CHECK-FILTER left only'), 8000);
+        const excluding = {included: included(), excluded: excluded(),
+                           chipsDisabled: chips().map(c => c.disabled),
+                           note: text('.scope-filter-refused'),
+                           hint: document.querySelector('.card-scopes .scope-badge')?.title};
+        // and a plain badge click is now refused, and does not open the card
+        const stillThere = cardWithBadge('CHECK-FILTER right only', 'CHECK-SCOPE-R');
+        const openBefore = (stateGet('open') || []).length;
+        clickBadge(await badgeIn('CHECK-FILTER right only', 'CHECK-SCOPE-R'));
+        await wait(500);
+        const plainRefused = {included: included(),
+                              open: (stateGet('open') || []).length,
+                              expanded: !!stillThere.querySelector(
+                                '.card-body, .card-body-loading, .card-body-empty')};
+        st.clear_excluded_scopes();
+        await until(() => excluded().length === 0 && mine().length === 3, 8000);
+        return {pass: afterPlain.included.length === 1 && afterPlain.excluded.length === 0
+                      // shift changed nothing while a selection was up
+                      && JSON.stringify(shiftRefused) === JSON.stringify(afterPlain)
+                      && excluding.excluded.length === 1
+                      && excluding.chipsDisabled.every(Boolean)
+                      && (excluding.note || '').length > 10
+                      && /hidden/i.test(excluding.hint || '')
+                      // the refused plain click did nothing and opened nothing
+                      && plainRefused.included.length === 0
+                      && plainRefused.open === openBefore
+                      && plainRefused.expanded === false,
+                evidence: {afterPlain, shiftRefused, excluding, plainRefused, openBefore}};
+      });
+
+      // 49. **the empty shelf tells the truth about which narrowing emptied it.**
+      //     The wording is the point: 'Nothing matches.' with a selection up would
+      //     be the same lie `empty-message`'s docstring records being corrected for
+      //     the exclusion, so the selection's sentence has to outrank the search's.
+      await check('49 an empty result names the Scope selection, not the search',
+        async () => {
+          chipFor('CHECK-SCOPE-L').click();
+          await until(() => included().length === 1, 8000);
+          type(document.querySelector('.search'), 'zzzznothingmatchesthis');
+          await until(() => document.querySelector('.empty'), 8000);
+          const withBoth = text('.empty');
+          type(document.querySelector('.search'), '');
+          await until(() => !document.querySelector('.empty'), 8000);
+          document.querySelector('.clear-scope-filter').click();
+          await until(() => included().length === 0, 8000);
+          type(document.querySelector('.search'), 'zzzznothingmatchesthis');
+          await until(() => document.querySelector('.empty'), 8000);
+          const searchOnly = text('.empty');
+          type(document.querySelector('.search'), '');
+          await until(() => !document.querySelector('.empty'), 8000);
+          return {pass: /Scopes you picked/i.test(withBoth || '')
+                        && !/Nothing matches/i.test(withBoth || '')
+                        && !/No recipes yet/i.test(withBoth || '')
+                        && /Nothing matches/i.test(searchOnly || ''),
+                  evidence: {selectionAndSearch: withBoth, searchAlone: searchOnly}};
+        });
+
+      // 50. **owner-only, and the gate is real rather than a coincidence.**
+      //
+      //     Last in the phase on purpose: it signs the session out and back in, and
+      //     every check above needs a settled signed-in shelf. Sitting in the middle
+      //     it made three of them flaky — the listing is thrown away and refetched by
+      //     a sign-in, so the next check raced a shelf that was still arriving. That
+      //     is `signedOut()`'s reason for being a phase of its own, met inside one.
+      //
+      //     Dev cannot produce a genuine visitor, so `state/logout` is driven and the
+      //     **client** rule is what is asserted — check 12's technique. It matters
+      //     that this is checked rather than assumed to fall out: a visitor is sent no
+      //     Scopes, so the picker would draw nothing for one **anyway**, and that
+      //     coincidence is not the gate. The gate is real — `list-recipes` refuses a
+      //     visitor `?include-scopes` outright — and a build with the `logged-in?`
+      //     conjunct deleted would still look right here without this check's last
+      //     two conjuncts, which is why the other two controls are asserted present.
+      await check('50 the filter row is the owner\'s alone', async () => {
+        st.logout();
+        await until(() => stateGet('logged-in?') === false, 8000);
+        await wait(300);
+        const asVisitor = {row: !!document.querySelector('.scope-filter'),
+                           chips: chips().length,
+                           search: !!document.querySelector('.search'),
+                           humanFilter: !!document.querySelector('.human-filter'),
+                           cards: document.querySelectorAll('.card').length};
+        st.fetch_auth_required();
+        await until(() => stateGet('logged-in?') === true, 8000);
+        const back = await until(() => document.querySelector('.scope-filter'), 8000);
+        return {pass: !asVisitor.row && asVisitor.chips === 0
+                      // the other two narrowings stay: this is a narrowing of the
+                      // controls, not a signed-out shelf with no controls at all
+                      && asVisitor.search && asVisitor.humanFilter
+                      && asVisitor.cards > 0
+                      // and it comes back with the session, so the absence was the
+                      // gate and not a shelf that had broken
+                      && !!back,
+                evidence: {asVisitor, backAfterSignIn: !!back,
+                           chipsBack: chips().length}};
+      });
+
+      await step('take the two Scopes back out', async () => {
+        for (const id of [left, right]) await api('scopes/' + id, {method: 'DELETE'});
+        st.fetch_scopes();
+        st.fetch_recipes();
+        await until(() => !chipFor('CHECK-SCOPE-L'), 8000);
+      });
+      notes.push('left on ' + path());
+      return done({fixtures: {scopes: [left, right], recipes: made}});
+    },
+
     // ---- the bar's right-hand slot, on a Recipe that can still be published ----
     // *In the Page view, put the Publish button in the top right, to the left of the
     // dark mode switcher.*

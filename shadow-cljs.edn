@@ -1,4 +1,4 @@
-{:source-paths ["src/cljs"]
+{:source-paths ["src/cljs" "src/cljc"]
  :dependencies [[reagent "2.0.1"]
                 [cljs-ajax "0.8.4"]]
  :http {:port #shadow/env ["SHADOW_PORT" :as :int :default 9807]}

@@ -192,6 +192,80 @@ textarea:focus {
 }
 .human-filter input { accent-color: var(--accent); cursor: pointer; }
 
+/* **The positive Scope filter, directly under the search box** — *and on the main
+   page, below the searchbar, list all scopes and have them be an OR filter for
+   scopes.* A row of its own rather than a third thing on the controls line: it is
+   every Scope the owner has, so at twenty of them it wraps to two or three lines,
+   and a wrapping control on a line with the search box would push the checkbox
+   around as Scopes are made and deleted.
+
+   `margin: -6px 0 16px` is `.excluded-scopes`', for its reason exactly: the gap
+   `.shelf-controls` leaves below itself is there to separate the controls from the
+   cards, not from this. Both of these rows use it, and when both are up the pair
+   sits together as one band under the search.
+
+   **Capped against the viewport and not against a line count**, which is the only
+   version of this cap that earns its keep. Measured with 20 Scopes, his number: at
+   1400×900 the row is **three lines, 81px**, and the first card sits at y=652 —
+   comfortably above the fold, so a cap in `em` would never engage on a laptop and
+   would be a rule that only ever fired on a phone. `30vh` fires when the row is
+   actually eating the screen, whatever the width and however long the list grows:
+   never more than a third of the window, and a scroll for the rest.
+
+   No disclosure, no *Show all Scopes* — he asked for the Scopes listed, and a
+   collapsed row is a list that is not listed. If the cap turns out to be the wrong
+   answer the row is one rule away from being a details/summary; that is his call
+   and it is in the report rather than guessed at here. */
+.scope-filter {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: -6px 0 16px;
+}
+.scope-picker.shelf-scope-filter {
+  flex: 1;
+  min-width: 0;
+  max-height: 30vh;
+  overflow-y: auto;
+}
+/* A chip that cannot act says so in three ways at once, because a control refused
+   in silence is the trap the Hiding strip exists to prevent, one layer up: it is
+   dim, its cursor is the refusal, and `disabled` takes it out of the tab order so
+   the keyboard does not offer it either. The tooltip carries the reason and
+   `.scope-filter-refused` says it out loud beside the row. */
+.scope-chip.refused,
+.scope-chip:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  border-color: var(--input-border);
+  color: var(--text-secondary);
+}
+.scope-chip.refused:hover { border-color: var(--input-border); transform: none; }
+.scope-filter-refused {
+  color: var(--muted-text);
+  font-size: 0.78em;
+}
+/* `.clear-exclusions`' twin, and the same text-button register: not a pill, so it
+   does not read as one more Scope in the row it clears. */
+.clear-scope-filter {
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 0;
+  color: var(--text-secondary);
+  font-size: 0.78em;
+  font-weight: 400;
+  text-decoration: underline;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.clear-scope-filter:hover {
+  background: none;
+  transform: none;
+  color: var(--accent);
+}
+
 /* The Scopes the shelf is currently hiding — the third narrowing, and the only
    one that has no control of its own to sit on that line: it is set from a badge
    on a card and it is a list that grows, where the two above are one widget each.

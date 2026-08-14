@@ -210,6 +210,8 @@ which is what reading a Recipe *is*.
     (<contents of the file>).clampedBody() — the shelf's abbreviation; builds its own
     (<contents of the file>).barActions()  — Publish in the top bar; builds its own,
                                              and publishes it
+    (<contents of the file>).scopeFilter() — the shelf's positive Scope filter and
+                                             the gate; builds its own, cleans its Scopes
 
 The two cold loads cannot share a context with the others, or with each other: the load
 each is about replaces the JS context, which is the whole point of them. There are two
@@ -284,6 +286,11 @@ Recipe would half-run from a Recipe page and produce two false reds.
     39  the abbreviation keeps a fenced code block whole
     38  See more shows the rest of the body, and goes
     40  a short body is shown whole, with nothing to press
+    46  the Scope filter row sits under the search, one chip per Scope (scopeFilter)
+    47  one Scope narrows, two are the union, unfiled falls out
+    48  the two filters refuse each other, visibly
+    49  an empty result names the Scope selection, not the search
+    50  the filter row is the owner's alone
     41  Publish is in the bar, immediately left of the theme toggle    (barActions)
     42  the versions viewer takes Publish out of the bar
     44  an address that names no Recipe offers no Publish
@@ -538,6 +545,70 @@ consequence rather than with no wait at all: it waited for `.recipe-page-body`, 
 the Recipe it was *leaving* also has, so 41 read a bar that was still the previous
 page's — no Publish, no container, red — while 42 one check later saw the button
 perfectly well. It waits on this Recipe's own title.
+
+### `scopeFilter()` — the shelf's positive Scope filter, and the gate
+
+*and on the main page, below the searchbar, list all scopes and have them be an OR
+filter for scopes*, and then *ah ok yeah. but when no negative filter is selecgted,
+allow to select positively.*
+
+**The matrix itself is tested in Clojure**, in `et.cb.filters-test`, over every state
+the two filters can be in and without a DOM. What this phase adds is the half that
+cannot see: that the shelf *wires* it, that a refused chip is refused **visibly**, and
+that a refused badge click does not fall through and open the card. A green matrix over
+a UI that ignored it is the shape this suite exists to catch.
+
+It builds two Scopes and three Recipes — one under each Scope and one under neither, so
+the **union** has something to prove; a fixture where every Recipe carried both would
+pass an AND just as happily. It deletes its **Scopes** itself, which no other phase has
+to do: `cleanup.py` knows about CHECK- *Recipes* and nothing about Scopes, so a phase
+that left two behind would make his picker two chips longer every run — and the picker
+is the control under test.
+
+**Three things about this phase were found by running it, not by writing it**, and all
+three are the same lesson in different clothes:
+
+- **It must reset the filters it inherits.** A run that throws part-way leaves
+  `:included-scopes` set, and the next run's fresh fixtures are then filtered off the
+  shelf before a single check runs — every card-shaped assertion failing for a reason
+  that has nothing to do with what it asserts.
+- **It must key on this run's ids.** The three Recipes have fixed titles, so a second
+  run before `cleanup.py` puts a second set of namesakes on the shelf — and the older
+  set is *unfiled*, since this phase deletes its Scopes. Title-keyed lookups then read
+  the wrong rows.
+- **The visitor check had to move to the end.** It signs out and back in, which throws
+  the listing away and refetches it; sitting in the middle of the phase it made the
+  three checks after it race a shelf that was still arriving. That is `signedOut()`'s
+  reason for being its own phase, met inside one.
+
+And a fourth that is the same trap `barActions()` 41 met: 46's placement assertion was
+`row.getBoundingClientRect().top >= controls…bottom` on nodes captured before a
+re-render, so both boxes measured **0×0** and `0 >= 0` passed it vacuously on every run.
+It measures on the spot now and requires a real box.
+
+### The Scope filter's mutations
+
+| | the edit |
+|---|---|
+| **S3** | wire `badge-click`'s `:toggle` branch to `state/toggle-excluded-scope` — a plain badge click hides instead of selecting |
+| **S4** | pass `:disabled? false` to the shelf's `scope-picker`, so the chips stay live while an exclusion is up |
+| **S5** | put `empty-message`'s search branch above its selection branch |
+
+**S5 is the one to run.** It reddens 49 with `selectionAndSearch: "Nothing matches."` —
+which is the exact lie `empty-message`'s docstring records being corrected for the
+*exclusion*, reproduced for the selection: a Recipe matches the search and is absent
+only because it is not in a picked Scope. **S4** reddens 48 on
+`chipsDisabled: [false, …]` with the refusal note still on screen beside live chips,
+which is the "refused in silence" trap wearing its own explanation. **S3** reddens 47,
+48 and 49 together, because a plain click that hides is not one gesture wired wrong but
+both of them wired to one filter.
+
+On the server side, the same discipline: dropping the visitor guard from
+`list-recipes`' inclusion reddens the three visitor assertions in
+`scope_inclusion_db_test` (and errors in SQL, since the clause cannot be handed an
+audience — which is what its docstring claims), and emitting one `EXISTS` per id ANDed
+together instead of one `IN` reddens the union assertion and the
+stale-id-alongside-an-owned-one case, and nothing else.
 
 ### The bar's mutations
 

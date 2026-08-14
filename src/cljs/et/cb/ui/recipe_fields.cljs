@@ -51,8 +51,30 @@
 
   `:class` goes on the row, the way `scope-badges/badges` and `recipe-badges/tags`
   take one: what a surface gets to say about a shared component is where it sits,
-  never what it looks like."
-  [{:keys [selected on-toggle class]}]
+  never what it looks like.
+
+  **`:label` and `:label-title` are the exception to that rule and are why it is
+  worth stating.** The chip says `Scopes` and its tooltip says *Categories this
+  Recipe is filed under* — true on the compose form and on a Recipe's page, and a
+  small lie on the shelf, where the same row files nothing and narrows a listing
+  instead. So the words are the caller's while everything else stays this
+  component's: what a surface says about a shared control is where it sits **and
+  what it is for here**, never what it looks like. Duplicating the component to
+  change two strings would have been the drift this namespace exists to prevent.
+
+  **`:disabled?` puts every chip out of action**, for a caller whose filter is
+  refused while another is running — the shelf's, while an exclusion is up. A real
+  `disabled` attribute and not a swallowed click: the cursor changes, the chip goes
+  dim, and the keyboard skips it, so a control that cannot act *looks* like one.
+  That is the opposite decision from `views.recipe/scope-filing`, which deliberately
+  disables nothing while a save is in flight — there the click is going to land a
+  moment later and swallowing it would lose it, here there is nothing for it to do
+  at all. `:disabled-title` is what to say instead of the description, because a
+  refused control that does not say why is the trap `excluded-scopes-strip` exists
+  to prevent, one layer up."
+  [{:keys [selected on-toggle class label label-title disabled? disabled-title]
+    :or {label "Scopes"
+         label-title "Categories this Recipe is filed under"}}]
   ;; The deref happens out here, before the `for`. A deref inside the body of a
   ;; lazy seq is evaluated after reagent has stopped watching, so the chips would
   ;; not repaint when one was clicked — and reagent says so at the console rather
@@ -60,13 +82,14 @@
   (let [scopes (:scopes @state/*app-state)]
     (when (seq scopes)
       [:div.scope-picker {:class class}
-       [:span.scope-picker-label {:title "Categories this Recipe is filed under"}
-        "Scopes"]
+       [:span.scope-picker-label {:title label-title} label]
        (for [{:keys [id title description]} scopes]
          ^{:key id}
          [:button.scope-chip
           {:type "button"
-           :class (when (contains? selected id) "on")
-           :title description
+           :class (str (when (contains? selected id) "on")
+                       (when disabled? " refused"))
+           :disabled (boolean disabled?)
+           :title (if disabled? disabled-title description)
            :on-click #(on-toggle id)}
           title])])))

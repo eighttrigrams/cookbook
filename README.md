@@ -337,14 +337,29 @@ page: a card is a retrieval index and the page is the one surface that is about 
 Recipe, so that is where the things you can do to it are. Editing has an address of
 its own — see *A Recipe's own address*.
 
-The shelf narrows three ways at once, all of them the endpoint's own clauses
+The shelf narrows four ways at once, all of them the endpoint's own clauses
 rather than anything the browser filters: the search box, the human-edited
-checkbox, and **shift+click on a Scope badge, which hides the Recipes filed under
-that Scope**. That last one is tracker's gesture, chosen so the two apps answer to
-the same finger, and it only ever hides — a plain click still expands the card.
-Several Scopes can be hidden at once; each one is listed as a chip above the shelf
-with an × that brings it back, which is the only way back, since an excluded
-Scope's badges leave along with the Recipes carrying them. Nothing is remembered
+checkbox, and the two Scope filters — one that **keeps** and one that **hides**.
+
+**Below the search box is every Scope you have, as toggles.** Pick one or more and
+the shelf keeps the Recipes carrying **at least one** of them — an OR, so each chip
+you add takes *less* away, and a Recipe filed under nothing falls out as soon as
+anything is picked. A plain click on a Scope badge on a card does the same thing,
+which is tracker's gesture. **Shift+click a badge and that Scope's Recipes leave
+instead**; several can be hidden at once, each listed as a chip under the picker
+with an × that brings it back — the only way back, since an excluded Scope's badges
+leave along with the Recipes carrying them.
+
+**The two never run at once.** With Scopes hidden the picker is greyed out and a
+plain badge click does nothing; with Scopes picked, shift+click stops hiding. The
+first half is the owner's rule — *when no negative filter is selected, allow to
+select positively* — and the second is the same rule from the other side, so that
+whatever is narrowing the shelf can always be named in one sentence. The matrix is
+`et.cb.filters/badge-gesture`, ported from tracker so the two apps answer to the
+same finger, and it has tests over every state.
+
+Both filters are the owner's alone: the endpoint ignores either one for an
+anonymous caller, so the controls are not shown to one. Nothing is remembered
 across a reload.
 
 ### A Recipe's own address
