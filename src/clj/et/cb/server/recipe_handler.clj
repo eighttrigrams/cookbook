@@ -405,7 +405,30 @@
   parameter and no way to read without counting, and every caller counts, an
   anonymous reader of a published Recipe included. A 404 does not count, so an id
   that does not exist and an unpublished Recipe a visitor asked for both leave the
-  number alone."
+  number alone.
+
+  **And it is attributed: the same read bumps `human_reads` or `machine_reads`.**
+  A read carrying a **machine token** is the machine one; everything else is the
+  human one, *including an anonymous reader* — a person read it, and which client
+  they used is not something this API is told. Note that this is the opposite
+  treatment of silence from the one the write paths give it, where an unattributed
+  write is a machine's (see `source` on PUT /api/recipes/:id): a write has two
+  possible authors because a visitor cannot write, and a read has three sources that
+  have to land in two buckets.
+
+  **The two do not necessarily sum to `view_count`, and that is not a bug to
+  report.** The total has been counted since an earlier migration than the split, so
+  a Recipe read before attribution existed carries reads that belong to neither
+  bucket: `view_count - human_reads - machine_reads` is exactly that remainder, and
+  it can only shrink relative to the total as a Recipe goes on being read. **The
+  shelf is ranked on the total** and not on either bucket — the split is there to be
+  read, not to reorder anything.
+
+  Both counters ride on the listing and on this read for a caller who may have
+  them, beside `view_count`. **A visitor gets no `human_reads` or `machine_reads`
+  key at all**, at any ?detail, while they do get `view_count`: the total explains
+  the order of the shelf they are looking at, and the split would instead say how
+  much of the owner's traffic is his own agents."
   [req]
   (let [ds (common/ensure-ds)
         id (common/recipe-id req)
@@ -421,7 +444,14 @@
         ;; the work on the app's hottest read to say something nobody asked. The
         ;; other reading is the one a reviewer will assume, hence this comment:
         ;; the next listing shows the incremented value.
-        (when full? (db.recipe/record-view! ds id))
+        ;; **The caller's kind is read once, here, and handed down.** `machine-caller?`
+        ;; is the token's own claim and it is the same question `human-write?` asks on
+        ;; the write paths — asking it a second time inside the db layer would be the
+        ;; second way of deciding who the caller is that `source-of` refuses. What it
+        ;; is *not* is `human-write?`'s flag inverted: silence there means a machine,
+        ;; and silence here means an anonymous visitor, whose read is a human's. See
+        ;; `record-view!`.
+        (when full? (db.recipe/record-view! ds id (common/machine-caller? req)))
         ;; `full?` is asked here rather than inside `caution-body` because it is
         ;; a fact about *this response* — there is no body on a lean read for a
         ;; split to be about — while who may be served one is a fact about the

@@ -506,7 +506,18 @@ are the interface, not decoration.
   anonymous caller's `?exclude-scopes` and `?include-scopes` are both ignored
   entirely** — see *What a visitor sees*. **Lean**: no
   `description` key at all. Each row carries `machine_versions` / `ui_versions`,
-  `view_count`, and `pending` — whether a proposal is waiting on it.
+  `view_count`, `human_reads` / `machine_reads`, and `pending` — whether a proposal
+  is waiting on it.
+- **Who did the reading**: `human_reads` and `machine_reads` split `view_count`. A
+  read carrying a **machine token** is the machine one and everything else is the
+  human one, an **anonymous reader included** — a person read it, which is the
+  opposite of how the write paths read the same silence (there, an unattributed
+  write is an agent's). The two **need not sum to `view_count`**: the total has been
+  counted since an earlier migration than the split, so a Recipe read before
+  attribution existed carries reads in neither bucket, and
+  `view_count - human_reads - machine_reads` is exactly that remainder. **The shelf
+  is ranked on the total**, never on a bucket. A visitor is sent `view_count` and
+  neither counter.
 - `GET /api/recipes/:id` — one recipe, lean the same way.
 - **`?detail=full`** on either of those adds the description. That is the only
   way to get a body, and it is meant to be asked for one recipe at a time. On the

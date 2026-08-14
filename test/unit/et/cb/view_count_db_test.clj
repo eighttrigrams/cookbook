@@ -26,10 +26,10 @@
 (deftest a-new-recipe-starts-at-zero-and-the-counter-counts
   (let [{:keys [id]} (create! "Sourdough")]
     (is (= 0 (:view_count (row id))))
-    (db.recipe/record-view! h/*ds* id)
+    (db.recipe/record-view! h/*ds* id false)
     (is (= 1 (views id)))
-    (db.recipe/record-view! h/*ds* id)
-    (db.recipe/record-view! h/*ds* id)
+    (db.recipe/record-view! h/*ds* id false)
+    (db.recipe/record-view! h/*ds* id false)
     (is (= 3 (views id)))
     (testing "the number rides on the lean projection — the card that shows it is
               a collapsed card, which is a lean row"
@@ -46,7 +46,7 @@
         before (row id)]
     (h/backdate-modified-at! id "2020-01-01 00:00:00")
     (let [stamped (row id)]
-      (db.recipe/record-view! h/*ds* id)
+      (db.recipe/record-view! h/*ds* id false)
       (let [after (row id)]
         (is (= 1 (:view_count after)) "the read was counted")
         (is (= "2020-01-01 00:00:00" (:modified_at after))
@@ -99,14 +99,14 @@
     (testing "so after five writes and a history read the Recipe has never been
               consumed, and one real read is the first thing to show up"
       (is (= 0 (views id)))
-      (db.recipe/record-view! h/*ds* id)
+      (db.recipe/record-view! h/*ds* id false)
       (is (= 1 (views id))))))
 
 (deftest a-read-of-one-recipe-counts-for-that-one-only
   (let [a (:id (create! "Read this one"))
         b (:id (create! "Not this one"))]
-    (db.recipe/record-view! h/*ds* a)
-    (db.recipe/record-view! h/*ds* a)
+    (db.recipe/record-view! h/*ds* a false)
+    (db.recipe/record-view! h/*ds* a false)
     (is (= 2 (views a)))
     (is (= 0 (views b)))))
 
@@ -115,8 +115,8 @@
   ;; when it happened — so a new version inherits the number rather than starting
   ;; over, and `recipe_history` has no column for it at all.
   (let [{:keys [id]} (create! "Focaccia")]
-    (db.recipe/record-view! h/*ds* id)
-    (db.recipe/record-view! h/*ds* id)
+    (db.recipe/record-view! h/*ds* id false)
+    (db.recipe/record-view! h/*ds* id false)
     (let [saved (db.recipe/update-recipe h/*ds* h/*user-id* id {:description "body v2"} nil)]
       (is (= 2 (:version saved)))
       (is (= 2 (:view_count saved)))

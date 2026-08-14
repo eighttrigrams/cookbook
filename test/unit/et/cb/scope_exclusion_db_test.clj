@@ -180,8 +180,8 @@
     (db.recipe/update-recipe h/*ds* h/*user-id* keeper {:title "Kept"
                                                         :description "body v2"}
                              nil {:human? true})
-    (db.recipe/record-view! h/*ds* keeper)
-    (db.recipe/record-view! h/*ds* keeper)
+    (db.recipe/record-view! h/*ds* keeper false)
+    (db.recipe/record-view! h/*ds* keeper false)
     (recipe! "Dropped" [excluded])
     (let [before (first (db.recipe/list-recipes h/*ds* h/*user-id*))
           after (first (db.recipe/list-recipes h/*ds* h/*user-id*
@@ -209,9 +209,9 @@
         most-read (recipe! "Most read")
         middle (recipe! "Filed and read most of all" [bread])
         least (recipe! "Least read")]
-    (dotimes [_ 5] (db.recipe/record-view! h/*ds* middle))
-    (dotimes [_ 3] (db.recipe/record-view! h/*ds* most-read))
-    (dotimes [_ 1] (db.recipe/record-view! h/*ds* least))
+    (dotimes [_ 5] (db.recipe/record-view! h/*ds* middle false))
+    (dotimes [_ 3] (db.recipe/record-view! h/*ds* most-read false))
+    (dotimes [_ 1] (db.recipe/record-view! h/*ds* least false))
     (is (= ["Filed and read most of all" "Most read" "Least read"] (shelf))
         "the ranked order, with the Recipe about to be excluded at the top of it")
     (testing "taking the top row away leaves the rest in the order they had"

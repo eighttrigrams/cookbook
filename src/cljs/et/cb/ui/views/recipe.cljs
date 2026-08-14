@@ -120,7 +120,7 @@
   this function stays a statement of what the Recipe *is* and holds no opinion about
   the controls that happen to sit beside the title; the two modes each hand it their
   own, and either may hand it nothing."
-  [{:keys [title tags version published published_at modified_at view_count pending]
+  [{:keys [title tags version published published_at modified_at pending]
     :as recipe}
    logged-in? corner]
   (let [published? (= 1 published)
@@ -143,7 +143,9 @@
       ;; decides which buckets exist, which is the decision that must not be made
       ;; twice.
       [recipe-badges/source-split recipe]
-      [recipe-badges/views-badge view_count]
+      ;; The whole row, like `source-split` above it — the reads badge draws its
+      ;; own split now and decides which buckets exist.
+      [recipe-badges/views-badge recipe]
       [:span.card-date (recipe-badges/day modified_at)]]
      (when (and logged-in? (seq tags))
        [recipe-badges/tags tags {:class "recipe-page-tags"}])]))

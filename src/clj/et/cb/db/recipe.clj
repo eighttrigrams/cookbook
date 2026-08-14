@@ -192,6 +192,27 @@
   [:id :title :useful_when :version :published :published_at :created_at :modified_at
    :has_human_edit :source :view_count])
 
+(def ^:private read-split-columns
+  "`human_reads` and `machine_reads` — the 013 split of `view_count`, and the one
+  pair of counters that is **lean but not a visitor's**.
+
+  Lean for `view_count`'s reason, unchanged: the badge that draws them sits on a
+  collapsed card, which is a lean row, and a card cannot go and fetch anything.
+
+  **Withheld from a visitor, which is where they part from the total beside them.**
+  `view_count` is in a visitor's projection deliberately — it explains the order of
+  the shelf they are looking at, which is the same argument that puts `version`
+  there. The split explains nothing about that order: the ranking is on the total
+  (migration 013 says why it stays that way), so a visitor loses no way of reading
+  the shelf by not having it. What it would tell them instead is **how much of the
+  owner's traffic is his own agents**, which is a fact about how he works rather
+  than about the Recipe — the side of the line `tags`, `scopes` and `pending` are
+  already on.
+
+  A select-column choice and never a `dissoc` afterwards, like every other thing on
+  that side of the line: a key that was never selected is a key no caller can leak."
+  [:human_reads :machine_reads])
+
 (defn- select-columns
   "Which columns a read selects, and it is a *select-column* choice for both of
   the things it varies on — never a dissoc afterwards. A key that was never
@@ -208,11 +229,17 @@
   Note what the two do *not* compose into: `?detail=full` widens the description
   for anybody, visitor included, and it never widens the tags. Verbosity and
   privacy are different axes, which is the change tags made to this app — until
-  now the publish latch was the whole privacy boundary."
+  now the publish latch was the whole privacy boundary.
+
+  **The read split rides on the audience axis with the tags**, and not on the
+  verbosity one — `read-split-columns` argues why the pair is withheld where the
+  total beside it is not. So the audience branch now adds three things rather than
+  one, which is the shape to keep: one branch, one question, everything that
+  answers to it in the same place."
   [lean? audience]
   (cond-> lean-select-columns
     (not lean?) (conj :description)
-    (not (visitor? audience)) (conj :tags)))
+    (not (visitor? audience)) (into (conj read-split-columns :tags))))
 
 (defn- qualify
   "The same columns, `recipes.`-prefixed. Only the listing needs this, and only
@@ -629,11 +656,37 @@
   the owner and his agents, so this is bounded by what he has published. It is
   the one decision here he may want to revisit — the alternative is to count only
   authenticated reads, which would stop counting exactly the audience publishing
-  exists for."
-  [ds id]
+  exists for.
+
+  **`machine?` says which bucket this read goes in as well** — *and break the reads
+  down by human/machine as well* — and it is still **one statement**: `view_count`
+  and one of the two counters, in the same `:set`, `WHERE id`, nothing near
+  `modified_at`. The total is bumped alongside rather than derived from the pair,
+  because the pair cannot account for the reads counted before migration 013 and
+  the ranking is on the total.
+
+  **`machine?` is the token's claim and is *not* `source-of`'s flag**, which is the
+  one thing here a later reader is likeliest to 'unify' and must not. That function
+  reads `(if (:human? opts) \"ui\" \"machine\")` — **silence means machine** — and it
+  argues that at length, because `has_human_edit` has read the same flag the same
+  way since 004. For a read, silence means **a visitor**: nobody signed in, no token
+  at all, and 008 counts that read on purpose. So the same absence means opposite
+  things on the two paths, and folding them together would file every anonymous read
+  under the agents — quietly, and in the number the badge is about.
+
+  Which is why this takes a boolean that is true only for a *machine token* rather
+  than one that is true for the owner. There are three kinds of reader and two
+  buckets: the owner and the stranger are both the human one, and only a machine
+  token is the other. `recipe-handler/get-recipe-handler` passes
+  `common/machine-caller?` straight down, which is the same rule
+  `source-of`'s docstring states about not having a second way of deciding who the
+  caller is — one place decides, everywhere else is handed the answer."
+  [ds id machine?]
   (jdbc/execute-one! (db/get-conn ds)
     (sql/format {:update :recipes
-                 :set {:view_count [:+ :view_count [:inline 1]]}
+                 :set {:view_count [:+ :view_count [:inline 1]]
+                       (if machine? :machine_reads :human_reads)
+                       [:+ (if machine? :machine_reads :human_reads) [:inline 1]]}
                  :where [:= :id id]})))
 
 (defn- source-of

@@ -208,7 +208,7 @@
 (deftest reading-a-recipe-makes-no-event
   (let [{:keys [id]} (machine-create! "Read but not written")]
     (db.recipe/get-recipe h/*ds* h/*user-id* id {:lean? false})
-    (db.recipe/record-view! h/*ds* id)
+    (db.recipe/record-view! h/*ds* id false)
     (db.recipe/list-versions h/*ds* h/*user-id* id)
     (db.recipe/list-recipes h/*ds* h/*user-id*)
     (is (= ["created"] (kinds-of id)))))

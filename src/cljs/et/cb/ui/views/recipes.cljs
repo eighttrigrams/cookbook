@@ -395,7 +395,7 @@
                                :on-click badge-click}])
 
 (defn- card [{:keys [id title useful_when tags scopes version published published_at modified_at
-                     view_count pending]
+                     pending]
               :as recipe}
              {:keys [logged-in? open details gate]}]
   (let [expanded? (contains? open id)
@@ -427,7 +427,11 @@
       ;; it is a fact about the Recipe rather than about the owner's filing, and
       ;; the server puts it in the visitor's projection deliberately. It also
       ;; explains the order of the shelf a visitor is looking at.
-      [recipe-badges/views-badge view_count]
+      ;; The whole row and not the count: since 013 this badge draws the split as
+      ;; well, and `source-split` beside it already takes the row for the same
+      ;; reason — the component decides which buckets exist, which is the decision
+      ;; that must not be made twice.
+      [recipe-badges/views-badge recipe]
       [:span.card-date (recipe-badges/day modified_at)]]
      (when (seq useful_when)
        [:div.card-useful-when [markdown/render-inline useful_when]])

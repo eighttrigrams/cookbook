@@ -26,7 +26,7 @@
     (db.recipe/update-recipe h/*ds* h/*user-id* id {:description (str "body v" v)} nil)))
 
 (defn- read-times! [id n]
-  (dotimes [_ n] (db.recipe/record-view! h/*ds* id)))
+  (dotimes [_ n] (db.recipe/record-view! h/*ds* id false)))
 
 (defn- shelf []
   (map :title (db.recipe/list-recipes h/*ds* h/*user-id*)))

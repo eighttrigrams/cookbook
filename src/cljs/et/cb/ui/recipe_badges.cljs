@@ -84,42 +84,101 @@
       [:span.source-badge {:title source-badge-title} (str/join "/" buckets)])))
 
 (def ^:private views-badge-title
-  "One sentence, and it has to carry three things a bare number does not: that a
+  "One sentence, and it has to carry four things a bare number does not: that a
   *listing* is not a read, that everybody's reads are in there and not only the
-  owner's, and that the count starts where migration 008 does — a Recipe written
-  last year and read a hundred times says 0 until somebody opens it again.
+  owner's, that the count starts where migration 008 does — a Recipe written last
+  year and read a hundred times says 0 until somebody opens it again — and now what
+  the two buckets mean for a **read**.
+
+  **The fourth is the one that cannot be left to the labels**, because it is where
+  the word `ui` on this badge would mean something different from the word `ui` on
+  the badge beside it. A version has two possible authors and a visitor cannot
+  write; a read has three sources, and 008 counts the anonymous one on purpose. So
+  the tooltip says outright that a stranger's read is counted as a person's — the
+  reader has no way to derive that, and the alternative reading (that a stranger is
+  the machine bucket, or is uncounted) is the one somebody would assume.
+
+  It also has to say that the split starts *later* than the total, which is the
+  visible consequence of 013 arriving after 008: a Recipe can honestly say `212
+  reads` with two of them attributed.
 
   Kept beside the badge rather than in `et.cb.ui.provenance`, and that judgement
   call reads differently now that there are two surfaces than it did when there was
   one: what that namespace is for is a fact whose *wording* two places must agree
   on, and this string is now shared by being in one place rather than by being
-  looked up in another. The API's own wording of it lives in
+  looked up in another. **The bucket names still come from there**, which is the
+  half that has not changed — this string explains what they mean here, and does not
+  respell them. The API's own wording of it lives in
   `recipe-handler/get-recipe-handler`'s docstring, which is not a second copy but a
   different medium — an agent reads that one out of /api/describe."
   (str "How often this Recipe was actually read — its text fetched in full, here "
        "or through the API, by anyone — never counting a listing, and only since "
-       "cookbook started counting"))
+       "cookbook started counting. (" provenance/machine-label ") is a read by an "
+       "agent holding a machine token and (" provenance/ui-label ") is everything "
+       "else, including a stranger reading a published Recipe: a person read it. "
+       "Reads counted before cookbook started attributing them are in the total and "
+       "in neither bucket, which is why the total is named when the two do not add "
+       "up to it"))
 
 (defn views-badge
   "`12 reads`, beside the version pair, because it is the same kind of fact: a
   count the server keeps about this Recipe, on the one line that says what the
-  Recipe is.
+  Recipe is — and, since migration 013, **who did the reading**: *and break the
+  reads down by human/machine as well.*
 
-  **A `0` is shown**, unlike an empty bucket in `source-split`. There the zero is
-  a non-fact — nothing wrote a machine version, so saying `0(machine)` would only
-  add noise — while here it is the reading itself: nobody has opened this since
-  the count began, which is exactly what the ranking acts on. What is *not* shown
-  is a missing key, which is what a listing row from an older server would carry,
-  and that renders as nothing rather than as `0 reads`.
+  **One pill and not two**, which is the layout decision this took. The obvious
+  shape was a second badge in `source-split`'s form beside the total, and it is the
+  wrong one for one reason: it would sit two pills away from the *version* split and
+  read identically to it — `4(ui)` and `1(ui)` on one line, meaning different things
+  about different nouns. Two counts and a total are one badge's worth of
+  information, so they are one badge.
 
-  Not gated on `logged-in?`, and the Recipe page inherits that: it is a fact about
-  the Recipe rather than about the owner's filing, the server puts it in the
-  visitor's projection deliberately, and it explains the order of the shelf a
-  visitor is looking at."
-  [view-count]
-  (when (number? view-count)
-    [:span.views-badge {:title views-badge-title}
-     (str view-count (if (= 1 view-count) " read" " reads"))]))
+  **Three renderings, from one rule: show the buckets there are, and name the total
+  when the buckets do not account for it.**
+
+      212 reads                 nothing attributed yet — today's badge, unchanged
+      3(ui)/1(machine) of 212   some reads predate 013 and belong to neither bucket
+      33(machine)/1(ui) reads   everything counted has a bucket
+
+  The middle one is what stops this being a lie about the past. 008 counts and 013
+  attributes, so every Recipe on his shelf has reads that nothing recorded a reader
+  for — `34(ui)` on a Recipe read 212 times would be a claim about data that was
+  never taken. `total − (human + machine)` is exactly that remainder and it is
+  *named* rather than bucketed, because there is no honest word for it that is not a
+  sentence: the tooltip carries the sentence. It vanishes on its own as a Recipe is
+  read from here on, which is the same shape `source-split` gets from dropping empty
+  buckets.
+
+  **A `0` total is still shown**, unlike an empty bucket. There the zero is a
+  non-fact — nothing wrote a machine version, so `0(machine)` would only add noise —
+  while here it is the reading itself: nobody has opened this since the count began,
+  which is exactly what the ranking acts on. What is *not* shown is a missing key,
+  which is what a listing row from an older server would carry, and that renders as
+  nothing rather than as `0 reads`.
+
+  **The buckets are absent for a visitor and the total is not**, which the component
+  gets for free by drawing what it was sent: `db.recipe/read-split-columns` is not in
+  a visitor's projection, so their rows carry no `human_reads` at all and this falls
+  through to the first rendering. The gate is the server's, and there is deliberately
+  no `logged-in?` here to look like a second one — the same distinction `pending` and
+  the tags keep, from the other side.
+
+  The bucket names are `provenance`'s, like the version split's: two surfaces naming
+  one pair of words, and this is a third."
+  [{:keys [view_count human_reads machine_reads]}]
+  (when (number? view_count)
+    (let [buckets (->> [[machine_reads provenance/machine-label]
+                        [human_reads provenance/ui-label]]
+                       (filter (fn [[n _]] (and (number? n) (pos? n))))
+                       (map (fn [[n label]] (str n "(" label ")"))))
+          attributed (+ (if (number? human_reads) human_reads 0)
+                        (if (number? machine_reads) machine_reads 0))
+          reads (if (= 1 view_count) " read" " reads")]
+      [:span.views-badge {:title views-badge-title}
+       (cond
+         (empty? buckets) (str view_count reads)
+         (= attributed view_count) (str (str/join "/" buckets) reads)
+         :else (str (str/join "/" buckets) " of " view_count reads))])))
 
 (def ^:private pending-badge-title
   "Three things a one-word badge does not say: what is waiting, that the Recipe

@@ -117,6 +117,22 @@
   [f]
   (jdbc/with-transaction [tx (db/get-conn *ds*)] (f tx)))
 
+(defn bump-view-count-only!
+  "`n` reads counted the way they were counted **before migration 013**: the total
+  moves and neither bucket does.
+
+  Reaches past `record-view!` for the reason `clear-source!` and `insert-scope-row!`
+  do — no request can produce this state any more, because every read now attributes
+  itself, and it is the only way to ask the question that matters about the badge:
+  what does a Recipe look like whose reads predate the attribution? Every Recipe on
+  his shelf is in exactly this state, so a test that could not manufacture it could
+  not check the one rendering the owner will actually see first."
+  [recipe-id n]
+  (jdbc/execute-one! (db/get-conn *ds*)
+    (sql/format {:update :recipes
+                 :set {:view_count [:+ :view_count [:inline n]]}
+                 :where [:= :id recipe-id]})))
+
 (defn insert-scope-row!
   "An association written straight at the join table, bypassing
   `db.scope/set-recipe-scopes!` and the ownership intersection it does.

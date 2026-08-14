@@ -1,0 +1,59 @@
+{:up ["ALTER TABLE recipes ADD COLUMN human_reads INTEGER NOT NULL DEFAULT 0"
+      "ALTER TABLE recipes ADD COLUMN machine_reads INTEGER NOT NULL DEFAULT 0"]
+ ;; Who read a Recipe, beside how often — *and break the reads down by
+ ;; human/machine as well*. 008 counts consumptions in `view_count` and records
+ ;; nothing about who made them; these two say which of the two kinds each one
+ ;; was, from here forward.
+ ;;
+ ;; **`view_count` stays the total and is not replaced by their sum**, which is
+ ;; the load-bearing decision in this migration. Two reasons, and the second is
+ ;; the one that would have been discovered late:
+ ;;
+ ;;   - the shelf is ranked `0.7 * view_count + 0.3 * version`, on the owner's own
+ ;;     weights, and he asked to *see* the breakdown rather than to reorder his
+ ;;     shelf. A ranking moved onto one bucket would have been a side effect of a
+ ;;     badge change.
+ ;;   - every read counted before this migration is in `view_count` and belongs to
+ ;;     **neither** new column. Summing the two would silently drop them; keeping
+ ;;     the total makes the unattributed remainder computable as
+ ;;     `view_count - human_reads - machine_reads` rather than lost.
+ ;;
+ ;; **`DEFAULT 0` is an epoch again, and this is the fourth time this schema has
+ ;; had to say what a default means** — 004's held-back claim, 005's third
+ ;; category, 008's shared starting line, and now this. It lands nearest 008's:
+ ;; the count is *reads attributed from this migration forward*, every row starts
+ ;; from the same point, and nothing is misattributed relative to anything else.
+ ;; What is new is that the epoch is now **visible** rather than merely fair: a
+ ;; Recipe with 212 reads and 2 attributed is not a Recipe read twice, so the badge
+ ;; names the total whenever the buckets do not account for it, and the tooltip says
+ ;; the split only counts from here. 008 could keep quiet about its own epoch
+ ;; because every row shared it; these two sit *next to* a number that does not.
+ ;;
+ ;; **Named `*_reads` and not `*_views`, deliberately.** The row already carries
+ ;; `machine_versions` and `ui_versions`, aggregated per listing, and
+ ;; `machine_views` beside `machine_versions` is two words apart in a `SELECT *` at
+ ;; the moment somebody is scanning rather than reading. `reads` is also the word
+ ;; the UI has always used for this number ("212 reads"), so the columns are named
+ ;; after what the badge says. `view_count` keeps its 008 name because it is in the
+ ;; API's responses and in the ranking, and renaming a column the shelf's order
+ ;; depends on is a bigger change than a badge warrants.
+ ;;
+ ;; **`human` and not `ui`**, which is the one place this schema deliberately does
+ ;; *not* mirror the version split's vocabulary. A version has two possible
+ ;; authors, the owner in the UI or an agent, because a visitor cannot write. A
+ ;; read has three sources — the owner, an agent, and an anonymous stranger — and
+ ;; 008 counts the stranger's on purpose (*a published Recipe read by a stranger
+ ;; was used*). He asked for two buckets, so the stranger has to land in one, and
+ ;; the honest one is the human's: a person read it. `ui` would have been a claim
+ ;; about *which client*, which is exactly what is not known about a stranger.
+ ;; `db.recipe/record-view!` says why this also means the attribution cannot be
+ ;; taken from `source-of`, whose silence means machine.
+ ;;
+ ;; **On `recipes` and not on `recipe_history`**, and not archived by `archive!` —
+ ;; 008's argument unchanged: a read is a fact about the Recipe and about today,
+ ;; not about the version that happened to be current when it happened.
+ ;;
+ ;; `NOT NULL DEFAULT 0` for 008's reason as well: there is no 'unrecorded' state
+ ;; for a counter, and a null would put a hole in arithmetic the badge does.
+ :down ["ALTER TABLE recipes DROP COLUMN human_reads"
+        "ALTER TABLE recipes DROP COLUMN machine_reads"]}

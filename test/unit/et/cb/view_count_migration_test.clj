@@ -97,8 +97,8 @@
   (let [[ds clean!] (temp-file-db "cb-views-down")]
     (try
       (let [id (insert-recipe! ds "Sourdough")]
-        (db.recipe/record-view! ds id)
-        (db.recipe/record-view! ds id)
+        (db.recipe/record-view! ds id false)
+        (db.recipe/record-view! ds id false)
         (is (= 2 (view-count-of ds id)))
 
         (migrations/rollback! (:conn ds) "007-scopes")
