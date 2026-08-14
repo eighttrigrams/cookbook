@@ -5,6 +5,7 @@
             [et.cb.ui.views.diff :as diff]
             [et.cb.ui.views.deleted :as deleted]
             [et.cb.ui.views.inbox :as inbox]
+            [et.cb.ui.views.new-recipe :as new-recipe]
             [et.cb.ui.views.recipe :as recipe]
             [et.cb.ui.views.recipe-modals :as recipe-modals]
             [et.cb.ui.views.recipes :as recipes]
@@ -70,9 +71,18 @@
 
   What is *not* one answer is the left slot's **contents**: each focused surface has
   its own way out and only it knows what that is. This decides which chrome goes
-  away; `left-slot` decides what replaces it."
+  away; `left-slot` decides what replaces it.
+
+  **`:new-recipe` is the third, and it fits the definition rather than being bolted
+  on**: it is about one thing — the Recipe being written — it carries its own way out
+  in Save and Cancel, and it is a surface a reader is *in the middle of something* on.
+  The narrowing this predicate exists for is exactly right for it: the Inbox, the
+  Scopes and the Deleted page are reached from the global view, and a half-written
+  Recipe is not the place to offer them. What it is **not** is addressable — see
+  `state/open-new-recipe` — which is a fact about the URL and not about the chrome, and
+  the two are deliberately different questions."
   [{:keys [page diffing]}]
-  (or (= :recipe page) (some? diffing)))
+  (or (= :recipe page) (= :new-recipe page) (some? diffing)))
 
 (defn- left-slot
   "The top bar's left-hand side, which is **one slot with more than one thing in
@@ -149,6 +159,29 @@
       [:button.secondary.recipe-edit-cancel
        {:on-click state/cancel-recipe-edit
         :title "Leave without saving"}
+       "Cancel"]]
+
+     ;; **The same two buttons for a Recipe that does not exist yet**, and a branch of
+     ;; its own rather than a wider condition on the one above: the words are the same
+     ;; and neither function is. Save *creates* and lands on the new Recipe's page, and
+     ;; Cancel goes to the **shelf** — which is the one place the paragraph above does
+     ;; not carry over, since it says Cancel lands on the reading and there is no
+     ;; reading of a Recipe nobody has saved. `state/cancel-new-recipe` says so where
+     ;; it is written.
+     ;;
+     ;; `recipe-edit-savable?` disables Save in both branches, which is the point of it
+     ;; being in `state`: one predicate for 'a title that is not blank', read by two
+     ;; pages, agreeing with the 400 the route would answer.
+     (= :new-recipe page)
+     [:<>
+      [:button.recipe-edit-save.new-recipe-save
+       {:disabled (not (state/recipe-edit-savable?))
+        :on-click state/save-new-recipe
+        :title "Create this Recipe and open its page"}
+       "Save"]
+      [:button.secondary.recipe-edit-cancel.new-recipe-cancel
+       {:on-click state/cancel-new-recipe
+        :title "Leave without creating it"}
        "Cancel"]]
 
      (= :recipe page)
@@ -260,6 +293,19 @@
   [{:keys [page recipe-page-edit? recipe-page-id logged-in? diffing details]}]
   (when-let [actions
              (cond
+               ;; **The shelf's own action, and the shelf is not a focused surface** —
+               ;; so this is the one branch whose control stands *beside* the app's
+               ;; widgets rather than in the space they vacate. *at the top of the page
+               ;; the will be an "Add" button.* The bar is the reading of 'the top of
+               ;; the page' that the two slots have already established: it is what the
+               ;; surface on screen offers on the thing it is about, and what the shelf
+               ;; is about is the whole shelf.
+               ;;
+               ;; It is **first** in this `cond` and it cannot collide with the two
+               ;; below — `:shelf` is neither `:recipe` nor a viewer — so the order is
+               ;; only a reading order here, unlike the pair after it.
+               (and (= :shelf page) logged-in?)
+               [recipes/add-action]
                ;; **The viewer outranks the page it was opened over**, as it does in
                ;; `left-slot`, and it answers for this corner with its own answers:
                ;; Approve and Dismiss on a proposal, Seen on the other three kinds,
@@ -407,8 +453,14 @@
 (def ^:private owner-only-pages
   "The pages a signed-out caller is sent away from. Named as a set, because the
   question the gate below asks changed the day a page arrived that is *not* one of
-  these — see `page-body`."
-  #{:scopes :settings :inbox :deleted})
+  these — see `page-body`.
+
+  `:new-recipe` is in here and it is the clearest case of the four: the page exists to
+  make a POST the API answers 401 to, so a visitor left on it would be looking at a
+  form that cannot be submitted. It is also unreachable by address, so unlike the
+  others nothing but a stale `:page` could put one there — which is exactly why it is
+  in the set rather than trusted not to happen."
+  #{:scopes :settings :inbox :deleted :new-recipe})
 
 (defn- page-body
   "Exactly one of the five, chosen by `:page` — the shelf is not a backdrop the
@@ -439,6 +491,7 @@
     :inbox [inbox/inbox-page]
     :deleted [deleted/deleted-page]
     :recipe [recipe/recipe-page]
+    :new-recipe [new-recipe/new-recipe-page]
     [:div.main-layout
      [recipes/recipes-tab]]))
 

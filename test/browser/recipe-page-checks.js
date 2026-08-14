@@ -2135,6 +2135,178 @@
       return done({fixture: {id: made.body.id, title: TITLE, blocks: TOTAL}});
     },
 
+    // ---- Add, and the page a Recipe is made on --------------------------------
+    // *on the overview page, there is a whole section for creating a new cookbook
+    // recipe. i dont want that, i want that page to be about filtering. what we gonna
+    // do. at the top of the page the will be an "Add" button which takes you to a page
+    // which looks like when we go from the recipe Page page to edit.*
+    //
+    // **Three claims about one move, and each is green while the other two are
+    // broken**: what the shelf no longer has, what the new page does and does not
+    // draw, and where Save and Cancel land. The middle one is the interesting one —
+    // the page is *made of* the editor's parts, so the things it must not show are
+    // exactly the things it would inherit for free.
+    //
+    // It creates a Recipe (53) and leaves it for `cleanup.py`, like `barActions()`.
+    newRecipe: async () => {
+      const {check, step, done, notes} = runner();
+      if (!shelf()) throw new Error('this phase starts on the shelf, and the page is at '
+                                    + path() + ' — go to / and run it again');
+      const labels = sel => [...document.querySelectorAll(sel + ' button')]
+        .map(b => b.textContent.trim());
+
+      // 51. **the shelf has no compose form, and Add is in the bar's right slot.**
+      //     The negative half is the one he asked for — *i dont want that* — and it is
+      //     asserted as the absence of the *element*, so a form left rendered with
+      //     nothing in it would redden this even though the fields had gone.
+      await check('51 no compose form on the shelf, and Add is in the bar', () => {
+        const box = document.querySelector('.top-bar-actions');
+        const tog = document.querySelector('.dark-mode-toggle');
+        const add = document.querySelector('.shelf-add');
+        return {pass: !document.querySelector('.compose')
+                      && !document.querySelector('.compose-title')
+                      && !!add && !!box && box.contains(add)
+                      // immediately left of the toggle, as Publish is on a Recipe page
+                      && box.nextElementSibling === tog
+                      && add.getBoundingClientRect().right <= tog.getBoundingClientRect().left
+                      // and the shelf now begins with the controls that narrow it
+                      && document.querySelector('.shelf').firstElementChild
+                         === document.querySelector('.shelf-controls'),
+                evidence: {composeForm: !!document.querySelector('.compose'),
+                           addInTheBar: !!add,
+                           barRight: barSlots('.top-bar-right'),
+                           shelfStartsWith: document.querySelector('.shelf')
+                             ?.firstElementChild?.className}};
+      });
+
+      await step('press Add', () => clickIn(document.querySelector('.top-bar-actions'),
+                                            '.shelf-add'));
+      await until(() => document.querySelector('.recipe-page-edit'), 8000);
+
+      // 52. **the page is the editor's shape with the three claims-about-nothing
+      //     removed.** Badges, Show provenance and Delete would all be inherited from
+      //     the parts this page is made of, and each would be a statement about a
+      //     Recipe that does not exist: no version, no history to attribute, nothing
+      //     to delete. Rendered as **nothing**, not as empty boxes — the lesson
+      //     `mutating-actions` recorded and was deleted for.
+      await check('52 the new page has the fields and none of the three inherited lies',
+        () => {
+          const fields = [...document.querySelectorAll('.recipe-page-edit input,'
+                                                       + ' .recipe-page-edit textarea')]
+            .map(f => f.placeholder);
+          return {pass: fields.length === 4
+                        && !!document.querySelector('.recipe-page-edit-title')
+                        && !!document.querySelector('.recipe-page-edit-body')
+                        // the Scope picker is here, which is what makes the shelf's
+                        // "one case that cannot be done on a page" docstring false
+                        && !!document.querySelector('.new-recipe-filing .scope-chip')
+                        // and the three that must be absent
+                        && !document.querySelector('.recipe-page-badges')
+                        && !document.querySelector('.recipe-page-provenance-toggle')
+                        && !document.querySelector('.recipe-page-delete')
+                        && !document.querySelector('.recipe-page button.danger')
+                        // Save and Cancel in the slot, Save dead on a blank title
+                        && labels('.top-bar-left').join(',') === 'Save,Cancel'
+                        && document.querySelector('.new-recipe-save').disabled === true
+                        // the address is still `/` — a Recipe with no identity yet
+                        && path() === '/'
+                        // and the bar's right slot is the toggle alone: Add is the
+                        // shelf's action and this is not the shelf
+                        && barSlots('.top-bar-right').length === 1,
+                  evidence: {placeholders: fields,
+                             slot: labels('.top-bar-left'),
+                             saveDisabled: document.querySelector('.new-recipe-save')?.disabled,
+                             badges: !!document.querySelector('.recipe-page-badges'),
+                             provenanceToggle:
+                               !!document.querySelector('.recipe-page-provenance-toggle'),
+                             deleteRow: !!document.querySelector('.recipe-page-delete'),
+                             picker: [...document.querySelectorAll('.new-recipe-filing .scope-chip')]
+                               .map(c => c.textContent.trim()),
+                             path: path(),
+                             barRight: barSlots('.top-bar-right')}};
+        });
+
+      // 53. **Save creates, files, and lands on the new Recipe's own page; Cancel
+      //     returns to the shelf and the draft does not survive either move.**
+      //     Both halves in one check because they are one decision — where the page
+      //     hands you on — and because the draft rule has to hold on both paths.
+      const title = 'CHECK-ADD written on the new page';
+      await check('53 Save creates and lands on the Recipe, Cancel drops the draft',
+        async () => {
+          // Cancel first, from a half-written Recipe, so the create below starts clean
+          type(document.querySelector('.recipe-page-edit-title'), 'CHECK-ADD abandoned');
+          await until(() => (stateGet('recipe-draft') || {}).title === 'CHECK-ADD abandoned');
+          const halfWritten = stateGet('recipe-draft');
+          clickIn(document.querySelector('.top-bar-left'), '.new-recipe-cancel');
+          await until(() => shelf(), 8000);
+          const afterCancel = {page: String(stateGet('page')), path: path(),
+                               draft: stateGet('recipe-draft'),
+                               abandonedOnTheShelf: !!cardFor('CHECK-ADD abandoned')};
+
+          // and now a real one, filed under the first Scope there is
+          clickIn(document.querySelector('.top-bar-actions'), '.shelf-add');
+          await until(() => document.querySelector('.recipe-page-edit'), 8000);
+          const reopened = document.querySelector('.recipe-page-edit-title').value;
+          type(document.querySelector('.recipe-page-edit-title'), title);
+          type(document.querySelector('.recipe-page-edit-body'), 'A body typed here.');
+          const chip = document.querySelector('.new-recipe-filing .scope-chip');
+          const scopeName = chip && chip.textContent.trim();
+          chip && chip.click();
+          await until(() => (stateGet('recipe-draft') || {}).scope_ids?.length === 1);
+          // **Wait for Save to be *rendered* enabled, not for the state to say it
+          // is.** `swap!` is synchronous and the re-render is a frame later, so a
+          // wait on `(stateGet 'recipe-draft')` is satisfied while the bar still
+          // holds the disabled button from before the first keystroke — and a click
+          // on a disabled button does nothing at all, silently. This check failed
+          // exactly that way, with `savable: true` and `disabled: true` in one
+          // evidence object, which is the house rule's first hazard wearing its most
+          // convincing disguise: the wait *looked* like a wait on a consequence.
+          const saveBtn = await until(() =>
+            !document.querySelector('.new-recipe-save').disabled
+            && document.querySelector('.new-recipe-save'), 8000);
+          const saveState = {found: !!saveBtn, disabled: saveBtn?.disabled,
+                             savable: st.recipe_edit_savable_QMARK_()};
+          clickIn(document.querySelector('.top-bar-left'), '.new-recipe-save');
+          await until(() => String(stateGet('page')) === 'recipe'
+                            && !!document.querySelector('.recipe-page-body'), 8000);
+          await wait(300);
+          const id = stateGet('recipe-page-id');
+          const afterSave = {page: String(stateGet('page')), path: path(),
+                             draft: stateGet('recipe-draft'),
+                             heading: text('.recipe-page-title'),
+                             body: text('.recipe-page-body'),
+                             filedUnder: [...document.querySelectorAll('.scope-picker .scope-chip.on')]
+                               .map(c => c.textContent.trim()),
+                             // the Recipe page's own chrome is back, which is the
+                             // proof it is a Recipe page and not the form relabelled
+                             slot: labels('.top-bar-left')};
+          notes.push('created ' + title + ' as recipe ' + id + ' for cleanup.py');
+          return {pass: Object.keys(halfWritten || {}).length > 0
+                        // Cancel: the shelf, no Recipe made, no draft left
+                        && afterCancel.page === 'shelf' && afterCancel.path === '/'
+                        && Object.keys(afterCancel.draft || {}).length === 0
+                        && !afterCancel.abandonedOnTheShelf
+                        // reopening gives a blank form rather than the abandoned one
+                        && reopened === ''
+                        // Save: the new Recipe's own page, at its own address
+                        && afterSave.page === 'recipe'
+                        && afterSave.path === '/recipe/' + id
+                        && afterSave.heading === title
+                        && /A body typed here/.test(afterSave.body || '')
+                        && afterSave.filedUnder.join(',') === scopeName
+                        && afterSave.slot.join(',') === '← Shelf,Edit,Versions'
+                        && Object.keys(afterSave.draft || {}).length === 0,
+                  evidence: {halfWritten, afterCancel, reopenedTitleField: reopened,
+                             afterSave, scopeName, id, saveState,
+                             error: stateGet('error')}};
+        });
+
+      await step('go back to the shelf', () => st.go_to_page(kw('shelf')));
+      await until(() => shelf(), 8000);
+      notes.push('left on ' + path());
+      return done({});
+    },
+
     // ---- the shelf's positive Scope filter, and the gate between the two ------
     // *and on the main page, below the searchbar, list all scopes and have them be
     // an OR filter for scopes*, and then *ah ok yeah. but when no negative filter

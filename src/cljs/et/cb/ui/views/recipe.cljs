@@ -587,37 +587,28 @@
   in one. Blankness is read off the *draft*: a body you have just emptied has nothing to
   number, which is the same sentence the reading makes about a stored one."
   [recipe logged-in?]
-  (let [{:keys [title useful_when tags description]} (state/recipe-edit-fields)
+  (let [{:keys [description] :as fields} (state/recipe-edit-fields)
         {:keys [legend ranges]} (:caution recipe)
         offered? (and (seq ranges) (not (str/blank? description)))
         showing? (and offered? (:showing-provenance? @state/*app-state))]
     [:<>
      [header recipe logged-in? (when offered? [provenance-toggle showing?])]
-     [:div.recipe-page-edit
-      [:input.recipe-page-edit-title
-       {:type "text" :placeholder "Title"
-        :value title
-        :on-change #(state/set-recipe-draft-field :title (-> % .-target .-value))}]
-      [:input
-       {:type "text" :placeholder "Useful when…"
-        :value useful_when
-        :on-change #(state/set-recipe-draft-field :useful_when (-> % .-target .-value))}]
-      [:input.recipe-page-edit-tags
-       {:type "text" :placeholder recipe-fields/tags-placeholder
-        :value tags
-        :on-change #(state/set-recipe-draft-field :tags (-> % .-target .-value))}]
-      (when showing?
-        [provenance-legend legend])
-      (if showing?
-        ;; The **stored** body is what the ranges are about, so it is what the draft is
-        ;; aligned against — `(:description recipe)` and not the draft's own text.
-        [source-view description
-         (provenance/draft-cautions (:description recipe) ranges description)]
-        [:textarea.recipe-page-edit-body
-         {:placeholder "The recipe itself"
-          :rows 16
-          :value description
-          :on-change #(state/set-recipe-draft-field :description (-> % .-target .-value))}])]
+     ;; **The four inputs are `recipe-fields/edit-fields`' and not this file's**, since
+     ;; the page a new Recipe is made on draws the same four — *a page which looks like
+     ;; when we go from the recipe Page page to edit*. What stays here is what is this
+     ;; mode's: the provenance source standing in for the body, and no `:on-enter`,
+     ;; because Enter in the middle of correcting a Recipe must not save and navigate.
+     [recipe-fields/edit-fields
+      {:fields fields
+       :on-change state/set-recipe-draft-field
+       :body (when showing?
+               [:<>
+                [provenance-legend legend]
+                ;; The **stored** body is what the ranges are about, so it is what the
+                ;; draft is aligned against — `(:description recipe)` and not the
+                ;; draft's own text.
+                [source-view description
+                 (provenance/draft-cautions (:description recipe) ranges description)]])}]
      ;; **The same place in this mode as in the reading**, which is the whole of *on
      ;; both edit and view pages*: a control that is somewhere else depending on which
      ;; mode you are in is a control you have to look for. Deleting a Recipe you have

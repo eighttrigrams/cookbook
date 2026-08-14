@@ -212,6 +212,8 @@ which is what reading a Recipe *is*.
                                              and publishes it
     (<contents of the file>).scopeFilter() — the shelf's positive Scope filter and
                                              the gate; builds its own, cleans its Scopes
+    (<contents of the file>).newRecipe()   — Add, and the page a Recipe is made on;
+                                             creates one and leaves it
 
 The two cold loads cannot share a context with the others, or with each other: the load
 each is about replaces the JS context, which is the whole point of them. There are two
@@ -286,6 +288,9 @@ Recipe would half-run from a Recipe page and produce two false reds.
     39  the abbreviation keeps a fenced code block whole
     38  See more shows the rest of the body, and goes
     40  a short body is shown whole, with nothing to press
+    51  no compose form on the shelf, and Add is in the bar          (newRecipe)
+    52  the new page has the fields and none of the three inherited lies
+    53  Save creates and lands on the Recipe, Cancel drops the draft
     46  the Scope filter row sits under the search, one chip per Scope (scopeFilter)
     47  one Scope narrows, two are the union, unfiled falls out
     48  the two filters refuse each other, visibly
@@ -585,6 +590,43 @@ And a fourth that is the same trap `barActions()` 41 met: 46's placement asserti
 `row.getBoundingClientRect().top >= controls…bottom` on nodes captured before a
 re-render, so both boxes measured **0×0** and `0 >= 0` passed it vacuously on every run.
 It measures on the spot now and requires a real box.
+
+### `newRecipe()` — Add, and the page a Recipe is made on
+
+*i dont want that, i want that page to be about filtering … at the top of the page the
+will be an "Add" button which takes you to a page which looks like when we go from the
+recipe Page page to edit.*
+
+Three claims about one move, each green while the other two are broken: what the shelf
+no longer has (51), what the new page does and does **not** draw (52), and where Save
+and Cancel hand you on (53). 52 is the one worth having: the page is *made of* the
+editor's parts, so the badge row, Show provenance and Delete are exactly the things it
+would inherit for free — and each of them would be a statement about a Recipe that does
+not exist. Asserted as absences of elements, so putting an empty box back reddens it.
+
+**53 failed for a reason worth writing down, and it is the house rule's first hazard in
+its most convincing disguise.** It waited on `(stateGet 'recipe-draft')` before clicking
+Save — a wait on a *consequence*, which is what the rule asks for — but the consequence
+it named was in the **atom** and the thing it then clicked was in the **DOM**. `swap!` is
+synchronous and the re-render is a frame later, so the wait was satisfied while the bar
+still held the disabled Save button from before the first keystroke, and a click on a
+disabled button does nothing at all, silently. The evidence said it in one line:
+`savable: true, disabled: true`. It waits for `.new-recipe-save` to be *rendered* enabled
+now. State-shaped waits look safer than DOM-shaped ones and are not.
+
+### `newRecipe()`'s mutations
+
+| | the edit |
+|---|---|
+| **T1** | render `[:div.recipe-page-badges]` and `[:div.recipe-page-delete]` back into the new page, empty |
+| **T2** | make `state/save-new-recipe`'s callback take its fallback branch — Save lands on the shelf instead of the new Recipe's page |
+
+**T1** reddens 52 with `badges: true, deleteRow: true` — the leftover-container mistake
+this run of work has now met seven times, arriving one last way: not left behind by a
+deletion but *inherited* by a new surface from the one it was copied from. **T2** reddens
+53 alone, on `page: shelf` where the Recipe's own page was expected, with the Recipe
+created either way — which is the point of asserting where you land rather than only that
+the write happened.
 
 ### The Scope filter's mutations
 

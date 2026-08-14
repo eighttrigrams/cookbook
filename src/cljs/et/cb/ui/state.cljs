@@ -1200,7 +1200,14 @@
   (swap! *app-state assoc :included-scopes #{})
   (fetch-recipes))
 
-(defn add-recipe [{:keys [title useful_when description tags scope_ids]} on-success]
+(defn add-recipe
+  "Create a Recipe. **`on-success` is handed the created row**, which it was not
+  before: the one caller used to be the shelf's compose form, which had nothing to do
+  with the answer but empty its own inputs, and the caller now is the page a Recipe is
+  made on, which needs the new **id** to go to that Recipe's own page. The route
+  answers with the row it wrote, so this passes on what it was given rather than
+  re-reading it."
+  [{:keys [title useful_when description tags scope_ids]} on-success]
   (api/post-json "/api/recipes"
                  {:title title :useful_when (or useful_when "") :description (or description "")
                   :tags (or tags "")
@@ -1209,7 +1216,7 @@
                   ;; nothing' for a Recipe that did not exist a moment ago
                   :scope_ids (vec (or scope_ids []))}
                  (auth-headers)
-    (fn [_]
+    (fn [recipe]
       (fetch-recipes)
       ;; the counts on the Scopes page moved
       (fetch-scopes)
@@ -1219,7 +1226,7 @@
       ;; sitting on the shelf, and this is the moment the client is talking to the
       ;; server anyway. Without it the count on the top bar is as old as the page.
       (fetch-inbox)
-      (when on-success (on-success)))
+      (when on-success (on-success recipe)))
     (err-handler "Could not add that recipe")))
 
 (defn update-recipe
@@ -1323,6 +1330,112 @@
   []
   (when-let [id (:recipe-page-id @*app-state)]
     (go-to-page :recipe id)))
+
+;; ---------------------------------------------------------------------------
+;; a Recipe that does not exist yet
+;;
+;; *on the overview page, there is a whole section for creating a new cookbook
+;; recipe. i dont want that, i want that page to be about filtering. what we gonna
+;; do. at the top of the page the will be an "Add" button which takes you to a page
+;; which looks like when we go from the recipe Page page to edit.*
+;;
+;; **The draft is the same `:recipe-draft`, and that is not thrift.** The editor's
+;; draft is a *diff over the stored row*, so with no stored row to resolve against —
+;; `:recipe-page-id` is nil on this page — `recipe-edit-fields` answers with the draft
+;; alone over four empty strings, which is exactly a blank form. A second key would
+;; have been a second thing for `show-page!` to clear and a second resolver to keep in
+;; step with `editable-fields`.
+;;
+;; What that buys, and it is the answer to *what happens to a half-written new
+;; Recipe*: `show-page!` drops the draft on **every** page move, so navigating away
+;; from a half-written Recipe discards it — the same rule, the same line, as
+;; abandoning a half-corrected one. Dropping it is the consistent answer rather than
+;; the convenient one, and the alternative is worse than it looks: a draft that
+;; outlived the move would reappear the next time Add was pressed, as somebody else's
+;; half-written Recipe with no way to tell how old it was.
+;;
+;; The one thing that is **not** in `editable-fields` is `:scope_ids`, and this page
+;; is the only writer of it. It rides in the same draft map and is bounded out of the
+;; four by that list, so a *content* save can never send it — which is the rule
+;; `views.recipe/editor` depends on and the reason the set is safe to keep here.
+
+(defn open-new-recipe
+  "Open the page a Recipe is made on — the shelf's own action, from the bar.
+
+  **`:new-recipe` is a page like `:settings` and `:scopes`, and it pushes `/`.**
+  `go-to-page`'s rule is that *there is one addressable thing in this app and the rest
+  is the app*, and a Recipe that does not exist yet is not one: it has no identity to
+  put in a bar. `/recipe/new` was the alternative and it is worse twice over — it puts
+  a word where `url/parse-recipe-path` expects an id, and it makes a bookmark of it
+  mean 'a blank form' forever.
+
+  What follows, said here because it is the consequence a reader will test: this page
+  cannot be arrived at cold, so there is nothing for `sync-from-url!` to restore and a
+  reload of `/` lands on the shelf. **On Save the address becomes `/recipe/<new-id>`**,
+  which is the first moment there is something to address — see `save-new-recipe`."
+  []
+  (go-to-page :new-recipe))
+
+(defn toggle-new-recipe-scope
+  "File the Recipe that does not exist yet under one more Scope, or stop.
+
+  **The next set is computed from the atom at click time**, like every other toggle
+  over `scope-picker` in this app: the picker hands over the id that was clicked
+  precisely so that two chips pressed inside one animation frame both land, and a set
+  computed from a render would lose the second. Measured in `scope-picker`'s docstring,
+  not reasoned about.
+
+  It writes into `:recipe-draft` under a key `editable-fields` does not name, so it is
+  carried with the fields, cleared with the fields, and unreachable to a content save."
+  [id]
+  (swap! *app-state update-in [:recipe-draft :scope_ids]
+         (fn [s] (let [s (or s #{})] (if (contains? s id) (disj s id) (conj s id))))))
+
+(defn new-recipe-scopes
+  "Which Scopes the new Recipe is to be filed under. `#{}` and not nil, so the picker
+  is handed a set to test membership against on its very first render."
+  []
+  (or (get-in @*app-state [:recipe-draft :scope_ids]) #{}))
+
+(defn save-new-recipe
+  "Create the Recipe and land on **its own page**, not back on the shelf.
+
+  He has just written the thing; the page about it is where he is going, and it is the
+  page that can then publish, edit, file or delete it. `go-to-page :recipe` on the new
+  id is also what puts `/recipe/<id>` in the address bar — the first moment this Recipe
+  has an identity to be addressed by, which is the other half of `open-new-recipe`'s
+  argument about pushing `/` on the way in.
+
+  **`recipe-edit-savable?` and not a second spelling of it.** The compose form guarded
+  on `(str/blank? @title)` and the editor guards on that same field through that
+  function; the rule is the API's — a blank title is a 400 — so there is one predicate
+  for it and both pages read it. The Save button is disabled by the same call.
+
+  `add-recipe` already refetches the shelf, the Scope counts and the queue, so nothing
+  is re-fetched here; what is new is that it hands back the created row, which is where
+  the id comes from."
+  []
+  (when (recipe-edit-savable?)
+    (let [fields (recipe-edit-fields)]
+      (add-recipe (assoc fields :scope_ids (new-recipe-scopes))
+                  (fn [{:keys [id]}]
+                    (if id
+                      (go-to-page :recipe id)
+                      ;; Nothing today can answer 201 without an id — the route
+                      ;; returns the row it wrote — and if that ever changed, the
+                      ;; shelf is where the Recipe will be, so the fallback is a
+                      ;; place he can find it rather than a page about nothing.
+                      (go-to-page :shelf)))))))
+
+(defn cancel-new-recipe
+  "Leave without creating. The shelf, and **not** a reading of this Recipe, because
+  there is none — which is the one place `left-slot`'s account of Cancel does not carry
+  over: it says Cancel *lands on the reading, where the three are again*, and that is
+  true of a Recipe that exists. Here the way out is the way in.
+
+  The draft goes with the move, in `show-page!`, like the editor's."
+  []
+  (go-to-page :shelf))
 
 ;; ---------------------------------------------------------------------------
 ;; the filing

@@ -19,6 +19,68 @@
   wordings of it is how two forms come to describe the same field differently."
   "Tags — extra words to find this by")
 
+(defn edit-fields
+  "The four content fields of a Recipe, as a form — **for the two surfaces that write
+  them**: a Recipe's own editor at `?edit=true`, and the page a new Recipe is made on.
+
+  **Here rather than in either view, and that is the whole reason this component
+  exists.** *at the top of the page the will be an \"Add\" button which takes you to a
+  page which looks like when we go from the recipe Page page to edit.* Looking like it
+  is not the same as being a copy of it: `views/recipes` records what a second copy
+  costs, about its own two card components — *a second component was two copies of a
+  row that had to be kept in step by hand, and was not: the Scope badges had to be
+  added to both, one at a time.* Four inputs, two placeholders and a class list is
+  exactly that shape, so there is one of them and the pages differ in what they put
+  around it.
+
+  **The state is the caller's and this holds none.** `:fields` is the resolved map —
+  `state/recipe-edit-fields`, for both pages, since a draft over *no* stored row
+  resolves to the draft alone — and `:on-change` takes the key and the value. Same
+  division as `scope-picker`: the component draws, the caller decides what a keystroke
+  means. There is deliberately no second resolver for the new page; a blank form is the
+  editor's own machinery with nothing behind it.
+
+  **`:body` replaces the textarea**, for the one thing the two surfaces genuinely do
+  differently: the editor can swap the body for its tinted provenance source, and the
+  new page cannot, because a Recipe that does not exist has no history to tint. Passed
+  in rather than flagged, so this component holds no opinion about provenance at all —
+  and the legend that goes above the source view comes through the same slot, since
+  both belong to *what is standing in for the body*.
+
+  **`:on-enter`, and only the three short fields get it.** The compose form this
+  replaces on the shelf submitted on Enter and the Recipe editor does not, so one of
+  the two habits had to win on the new page; Enter is how a Recipe gets added quickly
+  and losing it would be a real change to that. It is the caller's to supply — the
+  editor passes none, because Enter in the middle of correcting a Recipe should not
+  save and navigate — and it is never on the textarea, where Enter is a newline in the
+  body he is writing."
+  [{:keys [fields on-change on-enter body]}]
+  (let [{:keys [title useful_when tags description]} fields
+        enter (when on-enter
+                #(when (= (.-key %) "Enter") (on-enter)))]
+    [:div.recipe-page-edit
+     [:input.recipe-page-edit-title
+      {:type "text" :placeholder "Title"
+       :value title
+       :on-key-down enter
+       :on-change #(on-change :title (-> % .-target .-value))}]
+     [:input
+      {:type "text" :placeholder "Useful when…"
+       :value useful_when
+       :on-key-down enter
+       :on-change #(on-change :useful_when (-> % .-target .-value))}]
+     [:input.recipe-page-edit-tags
+      {:type "text" :placeholder tags-placeholder
+       :value tags
+       :on-key-down enter
+       :on-change #(on-change :tags (-> % .-target .-value))}]
+     (or body
+         [:textarea.recipe-page-edit-body
+          {:placeholder "The recipe itself"
+           :rows 16
+           :value description
+           :on-change #(on-change :description (-> % .-target .-value))}])]))
+
 (defn scope-picker
   "Which Scopes this Recipe is filed under, as a row of toggles over the owner's
   own list. Rendered as nothing at all when he has made no Scopes yet: an empty

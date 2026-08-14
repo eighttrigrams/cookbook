@@ -71,9 +71,21 @@
   **A card only ever says which Scopes a Recipe is under; it does not file it.** The
   filing is done on the Recipe's own page, where the badges are a picker that saves
   as it is toggled (`views.recipe/scope-filing`) — filing makes no version, so it
-  did not belong behind a Save. The compose form here picks Scopes for a Recipe that
-  does not exist yet, which is the one case that cannot be done on a page. Making a
-  Scope happens on the Scopes page (`et.cb.ui.views.scopes`), not here either.
+  did not belong behind a Save.
+
+  **This used to end with an exception, and the exception has gone rather than been
+  disproved.** It read: *the compose form here picks Scopes for a Recipe that does not
+  exist yet, which is the one case that cannot be done on a page.* That was true while
+  the form was on the shelf, and it stopped being true the moment there was a page for
+  it — *at the top of the page the will be an \"Add\" button which takes you to a page
+  which looks like when we go from the recipe Page page to edit.* So the general rule
+  now holds without a carve-out: **filing happens on the surface that is about the
+  Recipe**, and for a Recipe that does not exist yet that surface is
+  `views.new-recipe`. What the exception was really about survives one layer down —
+  that picker *collects* rather than saving per chip, because there is nothing to PUT
+  to until Save, and its docstring says so.
+
+  Making a Scope happens on the Scopes page (`et.cb.ui.views.scopes`), not here either.
 
   **A Scope badge carries both filters now: plain click selects, shift+click
   hides.** Tracker's gesture, and being the same finger in both apps is the reason
@@ -143,55 +155,44 @@
             ;; other. See `et.cb.ui.recipe-fields`.
             [et.cb.ui.recipe-fields :as recipe-fields]))
 
-(defn- compose-form []
-  (let [title (r/atom "")
-        useful-when (r/atom "")
-        tags (r/atom "")
-        description (r/atom "")
-        scope-ids (r/atom #{})]
-    (fn []
-      (let [submit (fn []
-                     (when-not (str/blank? @title)
-                       (state/add-recipe {:title @title
-                                          :useful_when @useful-when
-                                          :tags @tags
-                                          :description @description
-                                          :scope_ids @scope-ids}
-                                         (fn []
-                                           (reset! title "")
-                                           (reset! useful-when "")
-                                           (reset! tags "")
-                                           (reset! description "")
-                                           (reset! scope-ids #{})))))]
-        [:div.compose
-         [:input.compose-title
-          {:type "text" :placeholder "Title"
-           :value @title
-           :on-change #(reset! title (-> % .-target .-value))
-           :on-key-down #(when (= (.-key %) "Enter") (submit))}]
-         [:input.compose-useful-when
-          {:type "text" :placeholder "Useful when…"
-           :value @useful-when
-           :on-change #(reset! useful-when (-> % .-target .-value))
-           :on-key-down #(when (= (.-key %) "Enter") (submit))}]
-         [:input.compose-tags
-          {:type "text" :placeholder recipe-fields/tags-placeholder
-           :value @tags
-           :on-change #(reset! tags (-> % .-target .-value))
-           :on-key-down #(when (= (.-key %) "Enter") (submit))}]
-         [:textarea.compose-description
-          {:placeholder "The recipe itself"
-           :rows 4
-           :value @description
-           :on-change #(reset! description (-> % .-target .-value))}]
-         ;; `swap!` and not a `reset!` of a set computed by the picker: the function
-         ;; reads the ratom at click time, so two chips pressed inside one animation
-         ;; frame both land. The picker's docstring says what the other shape costs.
-         [recipe-fields/scope-picker
-          {:selected @scope-ids
-           :on-toggle #(swap! scope-ids
-                              (fn [s] (if (contains? s %) (disj s %) (conj s %))))}]
-         [:button {:on-click submit :disabled (str/blank? @title)} "Add"]]))))
+(defn add-action
+  "**Add, in the top bar's right-hand slot** — the shelf's own action on the shelf,
+  drawn by `core/surface-actions` exactly as `views.recipe/publish-action` is drawn on
+  a Recipe's page.
+
+  *on the overview page, there is a whole section for creating a new cookbook recipe. i
+  dont want that, i want that page to be about filtering. what we gonna do. at the top
+  of the page the will be an \"Add\" button which takes you to a page which looks like
+  when we go from the recipe Page page to edit.*
+
+  **`compose-form` was here and is gone, not moved.** It was the title, useful-when,
+  tags and description inputs, a Scope picker and an Add button, sitting above the
+  search box — so the first thing on the page a reader came to *find* something on was
+  a form for making something. `views.new-recipe` is where those fields are now, and
+  they are `recipe-fields/edit-fields`' rather than a second copy of themselves.
+  `state/add-recipe` is untouched: what changed is where it is called from.
+
+  **'The top of the page' is the bar, and that is a reading this app has already
+  committed to.** Publish, Approve, Dismiss and Seen all went into that corner over
+  the two commits before this one, on the rule that a surface's own action goes there.
+  Add is the shelf's, so it goes there too — and the alternative reading, a button at
+  the top of the panel, would have put the one control that leaves the shelf inside the
+  thing it leaves.
+
+  **It stands *beside* the page selectors rather than in their place**, which is what
+  makes it different from every other thing in that slot so far: the shelf is not a
+  focused surface, so `chrome?` is true and the Inbox, Scopes, Deleted and Settings
+  buttons are all up there with it. Five controls in one corner, four of them glyphs
+  and this one a word — see the report, where the alternative of a separator or a
+  different position is the thing to overrule.
+
+  Owner-only at the call site. The gate is **not** cosmetic: this button leads to a
+  page that exists to POST, and the API answers a signed-out POST 401."
+  []
+  [:button.bar-action.shelf-add
+   {:on-click state/open-new-recipe
+    :title "Write a new Recipe on a page of its own"}
+   "Add"])
 
 (def ^:private visible-blocks
   "How many blocks of a body an unexpanded card shows. Tracker's number, from
@@ -612,6 +613,14 @@
   about the shelf, so it may only be said when nothing is narrowing the view —
   with a filter on, what is empty is the result and not the shelf.
 
+  **'No recipes yet.' used to be said with a compose form directly above it**, which
+  answered it: the sentence named the state and the form was the way out of it. The
+  form is on a page of its own now, so the only thing on screen that answers this one
+  is **Add** in the top bar — which is why the sentence names it. A shelf with nothing
+  on it and nothing to press was the one outcome this change could plausibly have
+  produced, and it is the reason this branch was revisited at all rather than left
+  alone as a string about a case that had not changed.
+
   The human filter gets a sentence of its own rather than sharing 'Nothing
   matches.', because its empty case is the expected one at first: the provenance
   bit is only recorded going forward, so every Recipe reads as not-human-edited
@@ -654,7 +663,7 @@
     (seq included-scopes) "Nothing left in the Scopes you picked."
     (seq search)          "Nothing matches."
     human-only?           "Nothing here has been edited in this UI yet."
-    :else                 "No recipes yet."))
+    :else                 "No recipes yet. Add is in the top right."))
 
 (defn recipes-tab
   "The shelf, and nothing over it.
@@ -674,7 +683,9 @@
         @state/*app-state
         gate (filter-gate app-state)]
     [:div.shelf
-     (when logged-in? [compose-form])
+     ;; No compose form: *i want that page to be about filtering.* What was here is
+     ;; `views.new-recipe`, reached by `add-action` in the top bar — and the shelf now
+     ;; begins with the controls that narrow it, which is what the page is for.
      [:div.shelf-controls
       ;; The endpoint matches words from their start, in the title and in the
       ;; tags, so the placeholder names both and says beginnings of words rather

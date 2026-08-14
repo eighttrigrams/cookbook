@@ -135,23 +135,15 @@ button:disabled { opacity: 0.45; cursor: default; transform: none; }
 .login-form { max-width: 420px; }
 
 /* --------------------------------------------------------------------------
-   composing */
+   composing
 
-.compose {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 16px;
-  margin-bottom: 20px;
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--glass-radius);
-  box-shadow: var(--glass-shadow);
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
-}
-.compose button { align-self: flex-start; }
-.compose input { width: 100%; }
+   **There are no `.compose*` rules any more.** The form they styled sat above the
+   shelf's search box — *i want that page to be about filtering* — and it is a page of
+   its own now, `views.new-recipe`, which is inside `.recipe-page` and wears
+   `.recipe-page-edit` like the editor it was asked to look like. So the shape survived
+   the move and the rules did not have to: the panel, the column of full-width fields
+   and the 8px gap are all things that page already had, which is why `.recipe-page-edit`
+   still carries a note about having borrowed `.compose`'s shape in the first place. */
 
 textarea {
   padding: 10px 14px;
@@ -769,7 +761,7 @@ html.dark-mode .pending-badge { background: rgba(245, 158, 11, 0.18); }
 }
 
 /* --------------------------------------------------------------------------
-   the Scope picker, in the compose form and the Edit modal
+   the Scope picker, on the three surfaces that draw one
 
    Toggles rather than a multi-select: the whole set is visible at a glance and
    filing is one click, which is the difference between a shelf that gets curated
@@ -1369,11 +1361,17 @@ html.dark-mode .inbox-kind.kind-proposed { background: rgba(245, 158, 11, 0.18);
    badges this page draws a picker, so there is no `.recipe-page-scopes` pill row
    any more — see `views/recipe/scope-filing` for why the two are not both drawn.
 
-   It borrows `.scope-picker` whole rather than restyling it: the same chips in the
-   compose form, in this page and in nothing else, so a lit chip means the same
-   thing wherever it is met. What is the page's is only where it sits — under the
+   It borrows `.scope-picker` whole rather than restyling it: the same chips on the
+   page a Recipe is made on, on the shelf's filter row and here, so a lit chip means
+   the same thing wherever it is met. What is the page's is only where it sits — under the
    header, on the margin that separates it from the useful-when line below. */
 .scope-picker.recipe-page-filing { margin-top: 12px; }
+/* And on the page a Recipe is *made* on, where it sits **under the fields** rather
+   than under the header: there it is part of what says which Recipe this is and saves
+   per chip, and here it is part of what is about to be created, so it belongs with the
+   rest of the form — the last thing before Save, which is where the shelf's compose
+   form had it. Same chips, same margin rhythm, one line of difference. */
+.scope-picker.new-recipe-filing { margin-top: 12px; }
 
 .recipe-page-useful-when {
   margin-top: 14px;
@@ -1385,11 +1383,13 @@ html.dark-mode .inbox-kind.kind-proposed { background: rgba(245, 158, 11, 0.18);
 
    A column of full-width fields and nothing else: no panel of its own, because it
    is already inside `.recipe-page`'s, and a box inside a box would only make the
-   form narrower than the body it is replacing. `.compose`'s shape, deliberately —
-   the two are the only forms that write a Recipe's fields, and a reader who has
-   used one should not have to learn the other — while the base `input` and
-   `textarea` rules do the actual styling, so a field here cannot come to look
-   different from a field anywhere else.
+   form narrower than the body it is replacing. It **was** `.compose`'s shape,
+   deliberately, while the shelf had a compose form — the two were the only forms that
+   wrote a Recipe's fields and a reader who had used one should not have to learn the
+   other. That form is now a page drawing *these* rules through
+   `recipe-fields/edit-fields`, so the resemblance stopped being a resemblance: one
+   rule, two surfaces, and the base `input` and `textarea` rules still doing the actual
+   styling so a field here cannot come to look different from a field anywhere else.
 
    The body gets 16 rows where the modal's had 8. A modal had to leave the page
    visible around it and this does not: it is the page, so the field the Recipe is
