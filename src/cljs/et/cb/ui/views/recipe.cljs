@@ -61,6 +61,7 @@
   looking at. A chip's plain click already means something here, which is the other
   half of why there is nothing for a modifier to add."
   (:require [clojure.string :as str]
+            [et.cb.ui.edit-keys :as edit-keys]
             [et.cb.ui.markdown :as markdown]
             [et.cb.ui.provenance :as provenance]
             [et.cb.ui.recipe-badges :as recipe-badges]
@@ -592,6 +593,10 @@
         offered? (and (seq ranges) (not (str/blank? description)))
         showing? (and offered? (:showing-provenance? @state/*app-state))]
     [:<>
+     ;; ⌥9 saves without leaving, from anywhere on the page — mounted here so the
+     ;; chord exists exactly as long as the editor does, rather than living for the
+     ;; app's whole life and asking the mode on every keypress. Draws nothing.
+     [edit-keys/while-editing]
      [header recipe logged-in? (when offered? [provenance-toggle showing?])]
      ;; **The four inputs are `recipe-fields/edit-fields`' and not this file's**, since
      ;; the page a new Recipe is made on draws the same four — *a page which looks like

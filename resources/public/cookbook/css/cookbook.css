@@ -121,12 +121,21 @@ button.secondary {
 }
 button.secondary:hover { background: var(--glass-bg-elevated); }
 button.secondary.danger { color: #ff3b30; }
-/* The delete modal's confirm button is not a `.secondary` one, so the rule
-   above does not reach it — and without this it would wear the same accent as
-   every safe primary, including the Publish confirmation. The hover has to be
-   named too, or the base `button:hover` flips it back to the accent. */
-button.delete-confirm.danger { background: #ff3b30; }
-button.delete-confirm.danger:hover { background: #e02b20; }
+/* A modal's confirm button is not a `.secondary` one, so the rule above does not
+   reach it — and without this it would wear the same accent as every safe primary,
+   including the Publish confirmation. The hover has to be named too, or the base
+   `button:hover` flips it back to the accent.
+
+   Named per button rather than as a bare `button.danger`, because `.danger` is also
+   worn by the page's own Delete, which `views.recipe/delete-action` styles as a
+   `.secondary` — a blanket rule would fill that one in. Discard joined Delete here
+   the moment there was a second destructive answer: the class was on the markup and
+   nothing was drawing it, which is a control that says it is dangerous in the DOM
+   and looks like Publish on the screen. */
+button.delete-confirm.danger,
+button.discard-confirm.danger { background: #ff3b30; }
+button.delete-confirm.danger:hover,
+button.discard-confirm.danger:hover { background: #e02b20; }
 button:disabled { opacity: 0.45; cursor: default; transform: none; }
 
 .loading, .empty {
@@ -629,6 +638,54 @@ html.dark-mode .pending-badge { background: rgba(245, 158, 11, 0.18); }
 
    The order is the right way round for the older pairing too: no dialog in this app
    opens the viewer, so there is no case wanting the opposite. */
+/* --------------------------------------------------------------------------
+   the save mark
+
+   The ✓ that ⌥9 leaves behind — `ui.save-flash`, which says why the in-between
+   save needs one and Save & exit does not. Tracker's `#save-flash` /
+   `.save-flash-mark` down to the numbers, as blog's Zen mode already copied them
+   once: the mark a reader has learnt in two other apps should not be a third
+   green thing here.
+
+   **`position: fixed` and therefore outside `.recipe-page`**, mounted at the app
+   root. A `backdrop-filter` makes an element the containing block for a fixed
+   descendant, and `.recipe-page` has one — a mark inside the panel would pin
+   itself to the panel and scroll with it, which is the same care that keeps the
+   modals out of the cards.
+
+   The centring is on the flex parent and not on the mark, because `fade-in-out`
+   animates `transform` and a `translateX` of its own would be overwritten by the
+   keyframes. */
+#save-flash {
+  position: fixed;
+  top: 10px;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  z-index: 10000;
+  pointer-events: none;
+}
+.save-flash-mark {
+  padding: 2px 16px;
+  border-radius: 999px;
+  background: rgba(52, 199, 89, 0.18);
+  color: #34c759;
+  font-size: 1.9em;
+  font-weight: 700;
+  line-height: 1.3;
+  text-shadow: 0 0 10px rgba(52, 199, 89, 0.9);
+  box-shadow: 0 0 12px rgba(52, 199, 89, 0.6), 0 0 28px rgba(52, 199, 89, 0.35);
+  /* Kept in step with `visible-ms` in ui.save-flash. */
+  animation: fade-in-out 1.5s ease forwards;
+}
+@keyframes fade-in-out {
+  0%   { opacity: 0; transform: translateY(-10px); }
+  10%  { opacity: 1; transform: translateY(0); }
+  80%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;

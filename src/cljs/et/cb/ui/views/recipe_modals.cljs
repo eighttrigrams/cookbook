@@ -1,13 +1,20 @@
 (ns et.cb.ui.views.recipe-modals
-  "The two confirmations that stand in front of an irreversible change to one
-  Recipe: Publish, and Delete.
+  "The three confirmations that stand in front of an irreversible change to one
+  Recipe: Publish, Delete, and abandoning an unsaved edit.
 
-  **Both of them ask a question, and that is now the whole of what is in here.** The
-  Edit form was the third and it has become a page — `views.recipe`'s second mode, at
-  `?edit=true` — which leaves this namespace one idea rather than two: a dialog is for
-  a step that cannot be taken back, and everything that can be is a control on the
-  page it is about. The filing needs no dialog either and never had one; it saves per
-  chip on the reading.
+  **All of them ask a question, and that is the whole of what is in here.** The Edit
+  form was once a fourth thing in this namespace and it has become a page —
+  `views.recipe`'s second mode, at `?edit=true` — which leaves one idea rather than
+  two: a dialog is for a step that cannot be taken back, and everything that can be
+  is a control on the page it is about. The filing needs no dialog and never had one;
+  it saves per chip on the reading, and a chip toggled by mistake is toggled back.
+
+  **The third is the newest and stretches `irreversible` in the one direction that
+  matters.** Publish and Delete cannot be undone on the *server*; discarding a draft
+  writes nothing anywhere, and is just as final for the reader — `show-page!` drops
+  the draft on every page move and no route holds a copy. What decides whether a step
+  gets a dialog is what it costs to get wrong, not which side of the wire it happens
+  on.
 
   **A namespace of its own because two views ask for them.** They were `defn-`s in
   `views.recipes` while the shelf's card footer was the only thing that opened them;
@@ -96,6 +103,36 @@
           (if @sending? "Deleting…" "Delete")]
          [:button.secondary {:on-click state/stop-deleting} "Cancel"]]]])))
 
+(defn- discard-modal
+  "Cancel, with something in the editor that is not on disk.
+
+  **The third irreversible step, and the only one that destroys nothing on the
+  server.** What it loses is the paragraph you have just typed — `show-page!` drops
+  the draft on the way out and no route puts it back — so by this namespace's own
+  rule it is a dialog, and by the same rule the filing needs none.
+
+  No `sending?` latch, unlike the two above: there is no request, so there is no
+  round trip for a second click to race. It closes on the click that answers it.
+
+  The backdrop dismisses to *keep editing*, which is the reverse of nothing and the
+  same as the two above — a click outside a question is not an answer, and here the
+  unanswered outcome has to be the one that loses no work."
+  []
+  [:div.modal-backdrop {:on-click state/stop-discarding-edit}
+   [page-lock/while-mounted]
+   [:div.modal {:on-click #(.stopPropagation %)}
+    [:h2 "Discard your changes?"]
+    [:p.modal-note
+     "This Recipe has edits that have not been saved. Leaving the editor throws
+      them away, and there is no undo."]
+    [:div.modal-actions
+     [:button.discard-confirm.danger
+      {:on-click state/discard-recipe-edit}
+      "Discard"]
+     [:button.secondary.discard-cancel
+      {:on-click state/stop-discarding-edit}
+      "Keep editing"]]]])
+
 (defn overlays
   "The three surfaces that stand over whichever page is up, mounted once at the app
   root — the ns docstring says why that is the root and not a page.
@@ -111,7 +148,7 @@
   entry in `:inbox` rather than to a Recipe, and the only place it can be opened from
   is the one page that draws that list, so it is that page's and not a Recipe's."
   []
-  (let [{:keys [details publishing deleting diffing]} @state/*app-state]
+  (let [{:keys [details publishing deleting diffing discarding-edit?]} @state/*app-state]
     [:<>
      ;; **Both from `:details`, which is the one map holding a full Recipe row.**
      ;; They used to be looked up in `:recipes` instead, on the argument that each
@@ -126,5 +163,11 @@
        [publish-modal recipe])
      (when-let [recipe (get details deleting)]
        [delete-modal recipe])
+     ;; Keyed off a flag rather than off a Recipe, which is what tells it apart from
+     ;; the two above: those name *which* Recipe the question is about because they
+     ;; can be opened from a listing of many, and this one can only ever be asked by
+     ;; the editor that is already on screen. Its subject is the page under it.
+     (when discarding-edit?
+       [discard-modal])
      (when diffing
        [diff/component])]))

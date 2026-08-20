@@ -2,6 +2,7 @@
   (:require [reagent.core :as r]
             [clojure.string :as str]
             [et.cb.ui.api :as api]
+            [et.cb.ui.save-flash :as save-flash]
             [et.cb.ui.url :as url]))
 
 (defn- os-prefers-dark? []
@@ -193,6 +194,12 @@
            ;; here. Three handlers remembering to clear it would have been three
            ;; chances not to.
            :recipe-draft {}
+           ;; And the question standing in front of abandoning that draft. It cannot
+           ;; outlive the draft it is about: `discard-recipe-edit` clears it on the way
+           ;; out, but Back, Forward and a fresh load leave the editor without going
+           ;; through it, and a flag surviving one of those is a dialog over a page
+           ;; with nothing to discard.
+           :discarding-edit? false
            :showing-provenance? false
            :recipe-page-id (when (= :recipe page) recipe-id)
            :recipe-page-edit? (and (= :recipe page) (boolean edit?))
@@ -1346,6 +1353,60 @@
   []
   (not (str/blank? (:title (recipe-edit-fields)))))
 
+(defn recipe-edit-dirty?
+  "Whether what is in the editor differs from what is stored — *the buffered changes
+  do not equal whats saved*, which is the condition Cancel asks its question under.
+
+  **Not `(seq recipe-draft)`**, and the difference is the whole of why this is a
+  function rather than that. The draft records a field as touched the moment it is
+  typed into, and typing a character and taking it out again leaves the key behind
+  with the stored value under it. Asking whether the map is empty would then put a
+  discard dialog in front of a Cancel that has nothing to discard — the dialog you
+  learn to dismiss without reading, which is worse than no dialog at all.
+
+  Compared against the same `\"\"` fallback `recipe-edit-fields` resolves through, so
+  a field the API leaves absent and a field he has emptied agree here rather than
+  reading as a change. `scope_ids` also rides in the draft and is deliberately not
+  among `editable-fields`: the filing is the reading's, saved per chip, and leaving
+  the editor never abandons it."
+  []
+  (let [{:keys [details recipe-page-id recipe-draft]} @*app-state
+        recipe (get details recipe-page-id)]
+    (boolean (some (fn [k]
+                     (and (contains? recipe-draft k)
+                          (not= (get recipe-draft k) (or (get recipe k) ""))))
+                   editable-fields))))
+
+(defn save-recipe-edit-in-place
+  "Save and **stay in the editor** — the ⌥9 save, which `ui.edit-keys` is the only
+  caller of.
+
+  The draft is cleared on success and not before. `update-recipe` caches the row the
+  response carried, so with the draft gone `recipe-edit-fields` resolves to exactly
+  what was just saved: the same strings, which is what keeps the editor from
+  flickering and keeps `ui.cm-textarea`'s sync a no-op rather than a cursor jump.
+  Clearing it also makes `recipe-edit-dirty?` honest immediately — a Cancel straight
+  after a successful ⌥9 has nothing to ask about, because there is nothing unsaved.
+
+  **It does not check `recipe-edit-dirty?` first**, and that is deliberate: the
+  server already answers it. `db.recipe/update-recipe` returns the row unchanged when
+  nothing changed — *it neither bumps the version nor writes a history row, since
+  identical versions would only add empty steps to walk* — so a ⌥9 on an untouched
+  editor costs a round trip and makes no version. Guarding here would be the client
+  re-deciding a rule the database owns, and would cost the reader the one thing the
+  keystroke is for: pressing it and being told, every time, that the Recipe on screen
+  is the Recipe on disk.
+
+  It does check `recipe-edit-savable?`, because that one the client and the route
+  agree on already: a blank title is a 400, and a ✓ over a refusal would be a lie."
+  []
+  (let [id (:recipe-page-id @*app-state)]
+    (when (and id (recipe-edit-savable?))
+      (update-recipe id (recipe-edit-fields)
+                     (fn []
+                       (swap! *app-state assoc :recipe-draft {})
+                       (save-flash/flash!))))))
+
 (defn save-recipe-edit
   "Save the draft and go back to the reading.
 
@@ -1360,13 +1421,48 @@
     (when (and id (recipe-edit-savable?))
       (update-recipe id (recipe-edit-fields) #(go-to-page :recipe id)))))
 
-(defn cancel-recipe-edit
-  "Leave the editor without saving. The draft is dropped by `show-page!` on the way
+(defn- leave-recipe-edit!
+  "Out of the editor, unconditionally. The draft is dropped by `show-page!` on the way
   through, so this is one call and not a call plus a cleanup — and going back into the
   editor afterwards shows the stored Recipe rather than the abandoned edit."
   []
   (when-let [id (:recipe-page-id @*app-state)]
     (go-to-page :recipe id)))
+
+(defn cancel-recipe-edit
+  "Leave the editor — **asking first when there is something to lose.** *when i press
+  \"Cancel\" (by button click) and the buffered changes do not equal whats saved it
+  will give me a confirmation modal first.*
+
+  A guard on the way out and not an undo afterwards, because there is no afterwards:
+  the draft is dropped by `show-page!` and no route puts it back, so a mis-aimed
+  Cancel on a paragraph you have just written is the same shape of loss as Delete.
+  That is the rule `views.recipe-modals` is built on — a dialog for the step that
+  cannot be taken back — and this is the third such step rather than a new idea.
+
+  **Conditional, which is what keeps it from becoming furniture.** Cancel on an
+  editor nobody typed into leaves at once, as it always did; `recipe-edit-dirty?`
+  says why comparing values rather than counting touched keys is what makes that
+  true in the case that matters."
+  []
+  (when (:recipe-page-id @*app-state)
+    (if (recipe-edit-dirty?)
+      (swap! *app-state assoc :discarding-edit? true)
+      (leave-recipe-edit!))))
+
+(defn stop-discarding-edit
+  "Back to the editor with the draft still in it — the answer to the question that is
+  *not* an answer, so it must change nothing but the dialog."
+  []
+  (swap! *app-state assoc :discarding-edit? false))
+
+(defn discard-recipe-edit
+  "Confirmed: out, and the draft goes. The flag is cleared here rather than left for
+  `show-page!` so that the two are one act — a dialog that closed on the page move
+  would still be up for the frame the move takes."
+  []
+  (swap! *app-state assoc :discarding-edit? false)
+  (leave-recipe-edit!))
 
 ;; ---------------------------------------------------------------------------
 ;; a Recipe that does not exist yet

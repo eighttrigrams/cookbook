@@ -1,6 +1,7 @@
 (ns et.cb.ui.core
   (:require [reagent.dom.client :as rdomc]
             [reagent.core :as r]
+            [et.cb.ui.save-flash :as save-flash]
             [et.cb.ui.state :as state]
             [et.cb.ui.views.diff :as diff]
             [et.cb.ui.views.deleted :as deleted]
@@ -151,14 +152,21 @@
 
      (and (= :recipe page) edit?)
      [:<>
+      ;; **`Save & exit` and not `Save`**, because since ⌥9 there are two saves and
+      ;; only one of them leaves. A button reading `Save` beside a chord that also
+      ;; saves would make the chord look like the same act done another way, when the
+      ;; difference between them — whether you are still in the editor afterwards — is
+      ;; the only thing there is to tell them apart. The new-Recipe branch below keeps
+      ;; the bare `Save`: there is no in-place save of a Recipe that does not exist
+      ;; yet, so there is nothing there for the longer word to distinguish it from.
       [:button.recipe-edit-save
        {:disabled (not (state/recipe-edit-savable?))
         :on-click state/save-recipe-edit
-        :title "Save this Recipe"}
-       "Save"]
+        :title "Save this Recipe and go back to it (⌥9 saves without leaving)"}
+       "Save & exit"]
       [:button.secondary.recipe-edit-cancel
        {:on-click state/cancel-recipe-edit
-        :title "Leave without saving"}
+        :title "Leave without saving — asks first if there is anything unsaved"}
        "Cancel"]]
 
      ;; **The same two buttons for a Recipe that does not exist yet**, and a branch of
@@ -597,7 +605,11 @@
        (when (and auth-required? (not logged-in?) show-login?)
          [login-form])
        [page-body logged-in? page]
-       [recipe-modals/overlays]])))
+       [recipe-modals/overlays]
+       ;; Beside the overlays and for their reason: a fixed mark that belongs to
+       ;; whichever page is up is root furniture, not a page's. It draws nothing
+       ;; until something flashes it.
+       [save-flash/indicator]])))
 
 (defonce root (rdomc/create-root (.getElementById js/document "app")))
 

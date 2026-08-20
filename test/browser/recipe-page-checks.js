@@ -487,7 +487,7 @@
                       && reading.bottomRight.join(',') === 'Delete'
                       && reading.danger.join(',') === 'Delete'
                       && reading.deleteIsLast
-                      && editing.slot.join(',') === 'Save,Cancel'
+                      && editing.slot.join(',') === 'Save & exit,Cancel'
                       && editing.barRight.length === 0
                       && !editing.underTheHeader
                       && editing.bottomRight.join(',') === 'Delete'
@@ -617,7 +617,7 @@
           return {pass: reading.back && !reading.save && !reading.cancel
                         && reading.slot.join(',') === '← Shelf,Edit,Versions'
                         && editing.save && editing.cancel && !editing.back
-                        && editing.slot.join(',') === 'Save,Cancel'
+                        && editing.slot.join(',') === 'Save & exit,Cancel'
                         // and the ways of looking at it go with the way out: an
                         // editor is not a place to press Versions from
                         && !editing.slot.includes('Edit')
@@ -628,19 +628,28 @@
                   evidence: {reading, editing, backToReading}};
         });
 
-      // 24. **Cancel does not keep the draft.** The draft is app-state now, so
-      //     abandoning an edit is a thing that has to be *undone* rather than a
-      //     closure going out of scope with the component — and it is undone in
-      //     `show-page!`, on every page move, beside the Scopes page's dialogs.
+      // 24. **Cancel asks before it abandons the draft, and then abandons it.** The
+      //     draft is app-state now, so abandoning an edit is a thing that has to be
+      //     *undone* rather than a closure going out of scope with the component —
+      //     and it is undone in `show-page!`, on every page move, beside the Scopes
+      //     page's dialogs.
       //
-      //     Typed into and then abandoned, and the assertion is what the *second*
-      //     visit shows: a draft that survived would put the abandoned title back in
-      //     the field, and a reader would save it without ever having meant to. It
-      //     also asserts the heading did not move while typing, which is the
-      //     "what is saved over what you are about to save" reading.
+      //     **The question in front of it is the newer half.** *when i press "Cancel"
+      //     (by button click) and the buffered changes do not equal whats saved it
+      //     will give me a confirmation modal first.* So a dirty Cancel is now two
+      //     acts, and this checks both arms: `Keep editing` leaves you in the editor
+      //     with every character still there, and only `Discard` gets you out. The
+      //     first arm is the one worth having a check for — a dialog whose safe answer
+      //     quietly threw the work away would be worse than no dialog.
+      //
+      //     The assertion about the *second* visit is the original one and still the
+      //     point: a draft that survived would put the abandoned title back in the
+      //     field, and a reader would save it without ever having meant to. It also
+      //     asserts the heading did not move while typing, which is the "what is saved
+      //     over what you are about to save" reading.
       //
       //     Nothing is saved, so `shelf()` still writes nothing.
-      await check('24 Cancel abandons the draft, and the next visit shows the Recipe',
+      await check('24 Cancel asks, keeps the draft on Keep editing, drops it on Discard',
         async () => {
           const stored = (stateGet('details') || {})[subject.id] || {};
           clickIn(document.querySelector('.top-bar-left'), 'button', 'Edit');
@@ -652,24 +661,58 @@
                                field: document.querySelector('.recipe-page-edit-title').value,
                                headingStillStored:
                                  text('.recipe-page-title') === (stored.title || '').trim()};
+
+          // dirty Cancel → the question, and the editor is still up behind it
           clickIn(document.querySelector('.top-bar-left'), '.recipe-edit-cancel');
+          const dialog = await until(() => document.querySelector('.modal-backdrop'));
+          const asked = {up: !!dialog,
+                         heading: dialog?.querySelector('h2')?.textContent?.trim(),
+                         buttons: [...(dialog?.querySelectorAll('.modal-actions button') || [])]
+                           .map(b => b.textContent.trim()),
+                         stillEditing: stateGet('recipe-page-edit?'),
+                         formUp: !!document.querySelector('.recipe-page-edit')};
+
+          // Keep editing → back to the editor, nothing lost
+          dialog.querySelector('.discard-cancel').click();
+          await until(() => !document.querySelector('.modal-backdrop'));
+          const kept = {draft: stateGet('recipe-draft'),
+                        field: document.querySelector('.recipe-page-edit-title')?.value,
+                        stillEditing: stateGet('recipe-page-edit?')};
+
+          // and now the other arm
+          clickIn(document.querySelector('.top-bar-left'), '.recipe-edit-cancel');
+          const again = await until(() => document.querySelector('.modal-backdrop'));
+          again.querySelector('.discard-confirm').click();
           await until(() => document.querySelector('.recipe-page-body'));
           const afterCancel = {draft: stateGet('recipe-draft'),
-                               title: text('.recipe-page-title')};
+                               title: text('.recipe-page-title'),
+                               dialogGone: !document.querySelector('.modal-backdrop')};
+
+          // a second visit shows the Recipe and not the abandoned edit — and this
+          // Cancel is clean, so it must leave without asking anything
           clickIn(document.querySelector('.top-bar-left'), 'button', 'Edit');
           await until(() => document.querySelector('.recipe-page-edit'));
           const secondVisit = {field: document.querySelector('.recipe-page-edit-title').value,
                                draft: stateGet('recipe-draft')};
           clickIn(document.querySelector('.top-bar-left'), '.recipe-edit-cancel');
           await until(() => document.querySelector('.recipe-page-body'));
+          const cleanCancel = {leftWithoutAsking: !document.querySelector('.modal-backdrop')};
+
           return {pass: whileTyping.field === typed
                         && whileTyping.headingStillStored
+                        && asked.up && asked.stillEditing === true && asked.formUp
+                        && asked.heading === 'Discard your changes?'
+                        && asked.buttons.join(',') === 'Discard,Keep editing'
+                        && kept.stillEditing === true && kept.field === typed
+                        && (kept.draft || {}).title === typed
                         && Object.keys(afterCancel.draft || {}).length === 0
+                        && afterCancel.dialogGone
                         && secondVisit.field === stored.title
                         && Object.keys(secondVisit.draft || {}).length === 0
+                        && cleanCancel.leftWithoutAsking
                         && text('.recipe-page-title') === (stored.title || '').trim(),
-                  evidence: {storedTitle: stored.title, typed, whileTyping, afterCancel,
-                             secondVisit}};
+                  evidence: {storedTitle: stored.title, typed, whileTyping, asked, kept,
+                             afterCancel, secondVisit, cleanCancel}};
       });
 
       // 25. **the versions viewer, opened from here, says `← Recipe` and comes back
@@ -1156,6 +1199,78 @@
                 evidence: {filedUnder: name, before, after, error: stateGet('error')}};
       });
 
+      // 33. **⌥9 saves and stays**, which is the whole of what tells it apart from
+      //     the button beside it — *when i press option+9 anywhere on that page no
+      //     matter where my cursor is, it saves (doesnt exit) and indicates that as
+      //     blog's zen editor does with a glowing green checkmark.*
+      //
+      //     Four claims, and the second and third are the ones a plausible-looking
+      //     implementation gets wrong. It has to **land** (the stored row moves, and by
+      //     exactly one version — two round trips for one keystroke would be a second
+      //     version nobody asked for); it has to **not leave**, which is the entire
+      //     difference from `Save & exit`; and the draft has to be **cleared**, or the
+      //     editor is still reporting itself dirty over text that is now on disk and the
+      //     next Cancel asks a question with no answer behind it.
+      //
+      //     And the mark, because without it the keystroke has no visible consequence
+      //     at all: the same editor with the same words in it, before and after.
+      //
+      //     **A real keypress and not a call to the handler**, dispatched at the
+      //     document with the caret in the body — `anywhere on that page` is the claim,
+      //     and a synthetic event aimed at the function would assert nothing about
+      //     where the listener is or which phase it runs in. `code` and not `key`: on
+      //     macOS Option is a compose modifier, so ⌥9 arrives with a `key` of `ª`, and
+      //     a test written the obvious way would go green against a handler that could
+      //     never fire for a human.
+      await check('33 option+9 saves in place, flashes, and leaves you in the editor',
+        async () => {
+          st.open_recipe_editor(id);
+          await until(() => bodyEl() && bodyEl().cmEditorView);
+          const before = {version: row().version, stored: row().description};
+          const edited = before.stored + '\nA line added with the chord.';
+          typeBody(edited);
+          await until(() => (stateGet('recipe-draft') || {}).description === edited);
+          const dirty = {draft: Object.keys(stateGet('recipe-draft') || {}),
+                         editing: stateGet('recipe-page-edit?')};
+
+          bodyEl().querySelector('.cm-content').focus();
+          document.dispatchEvent(new KeyboardEvent('keydown', {
+            key: 'ª', code: 'Digit9', altKey: true, bubbles: true, cancelable: true}));
+
+          await until(() => row().description === edited, 8000);
+          const after = {version: row().version,
+                         stored: row().description,
+                         editing: stateGet('recipe-page-edit?'),
+                         formUp: !!document.querySelector('.recipe-page-edit'),
+                         search: location.search,
+                         draft: Object.keys(stateGet('recipe-draft') || {}),
+                         body: bodyEl()?.cmEditorView?.state.doc.toString()};
+          const flashed = await until(() =>
+            document.querySelector('#save-flash .save-flash-mark'), 2000);
+          const mark = {shown: !!flashed, text: flashed?.textContent,
+                        colour: flashed && getComputedStyle(flashed).color};
+          // and it is not permanent furniture
+          const gone = await until(() =>
+            !document.querySelector('#save-flash .save-flash-mark'), 4000) !== null;
+
+          // leave cleanly, so the phases after this one are not standing in an editor
+          st.discard_recipe_edit();
+          await until(() => document.querySelector('.recipe-page-body'));
+
+          return {pass: dirty.draft.includes('description') && dirty.editing === true
+                        && after.stored === edited
+                        && after.version === before.version + 1
+                        && after.editing === true && after.formUp
+                        && after.search === '?edit=true'
+                        && after.draft.length === 0
+                        && after.body === edited
+                        && mark.shown && mark.text === '✓'
+                        && mark.colour === 'rgb(52, 199, 89)'
+                        && gone,
+                  evidence: {before: {version: before.version}, dirty, after, mark,
+                             markFadedOut: gone}};
+        });
+
       // Back to the shelf, and refetch it: the listing in hand never had CHECK-SAVE in
       // it and now names a Recipe that has moved twice, so the phases after this one
       // read a listing that agrees with the database.
@@ -1563,7 +1678,11 @@
       //     makes that true. This is the assertion that those two facts meet.
       await check('29 Cancel leaves the reading\'s provenance exactly as it was', async () => {
         const stored = row().description;
-        st.cancel_recipe_edit();
+        // `discard_recipe_edit` and not `cancel_recipe_edit`: the draft is dirty here,
+        // so Cancel now raises the confirmation instead of leaving, and this check is
+        // about what the *reading* shows afterwards rather than about the dialog —
+        // check 24 owns that. This is the answer a reader gives it.
+        st.discard_recipe_edit();
         await until(() => document.querySelector('.recipe-page-body'));
         await wait(150);
         toggle().click();
@@ -2910,7 +3029,7 @@
                              .some(b => b.textContent.trim() === 'Publish')
                         // the editor is not a place to publish from — and it comes
                         // back on Cancel, or this passes for a corner that never fills
-                        && editing.formUp && editing.slot.join(',') === 'Save,Cancel'
+                        && editing.formUp && editing.slot.join(',') === 'Save & exit,Cancel'
                         && !editing.publish && editing.actions.length === 0
                         && editing.right.length === 1
                         && backToReading.publish

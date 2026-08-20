@@ -259,7 +259,7 @@ Recipe would half-run from a Recipe page and produce two false reds.
     16  Edit goes to ?edit=true, prefilled, and Cancel comes back
     17  Back leaves the editor and Forward returns to it
     23  the slot is ← Shelf while reading and Save+Cancel while editing
-    24  Cancel abandons the draft, and the next visit shows the Recipe
+    24  Cancel asks, keeps the draft on Keep editing, drops it on Discard
     2   a cold load of the address lands on the Recipe, not on a 404   (coldLoad)
     15  the confirmation and the editor draw from the page's own row
     18  a cold load of ?edit=true opens the editor, prefilled          (coldEdit)
@@ -268,6 +268,7 @@ Recipe would half-run from a Recipe page and produce two false reds.
     19  signed out at ?edit=true gets the reading, with the query gone
     31  saving keeps the button, with the split of the version it wrote (save)
     32  a filing toggle keeps the split it did not change
+    33  option+9 saves in place, flashes, and leaves you in the editor
     7   the toggle swaps the rendered body for the source, and back    (provenance)
     8   the numbers run 1..n over the body as it is stored
     9   each line is tinted with its own caution, not its neighbour's
