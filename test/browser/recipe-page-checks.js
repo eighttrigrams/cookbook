@@ -100,6 +100,24 @@
     Object.getOwnPropertyDescriptor(el.constructor.prototype, 'value').set.call(el, v);
     el.dispatchEvent(new Event('input', {bubbles: true}));
   };
+  // The body is not one of those. It is a CodeMirror since the IJKL scheme arrived
+  // (`ui.cm-textarea`), so there is no `.value` and no `input` event to fake: a
+  // `contenteditable` div has neither, and the trick above throws on it rather than
+  // quietly doing nothing. `ui.cm-textarea` hangs the editor on the host element as
+  // `.cmEditorView` for exactly these two, and a dispatched change runs the same
+  // update listener a keystroke does — so the draft lands in app-state by the path
+  // it always did.
+  const bodyEl = () => document.querySelector('.recipe-page-edit-body');
+  const bodyValue = (root) => {
+    const el = (root || document).querySelector('.recipe-page-edit-body');
+    return el && el.cmEditorView ? el.cmEditorView.state.doc.toString() : undefined;
+  };
+  const typeBody = v => {
+    const el = bodyEl();
+    if (!el || !el.cmEditorView) throw new Error('no body editor to type into');
+    const view = el.cmEditorView;
+    view.dispatch({changes: {from: 0, to: view.state.doc.length, insert: v}});
+  };
   // A `caution` answer spread out per line. The ranges are 1-based and inclusive on
   // both ends, so this is the one place in the file that arithmetic lives — read by
   // the provenance phase, which compares it against what the view drew, and by
@@ -502,7 +520,12 @@
           bar: path() + location.search,
           flag: stateGet('recipe-page-edit?'),
           title: form?.querySelector('.recipe-page-edit-title')?.value,
-          fields: [...(form?.querySelectorAll('input, textarea') || [])].length,
+          // The body is a CodeMirror and not a form control since the IJKL scheme
+          // arrived, so it is not in `input, textarea` and has to be counted for
+          // itself. Still four fields — the claim is unchanged, only how the fourth
+          // is recognised.
+          fields: [...(form?.querySelectorAll('input, textarea') || [])].length
+                  + (form?.querySelector('.recipe-page-edit-body') ? 1 : 0),
           // the two things that must NOT be here: the filing is the reading's, and
           // the modal's `version N` subtitle is the header's badge now
           picker: !!document.querySelector('.scope-picker'),
@@ -775,8 +798,7 @@
           const em = await until(() => form());
           evidence.editor = {shown: !!em,
             prefilledTitle: em?.querySelector('.recipe-page-edit-title')?.value,
-            prefilledBody: (em?.querySelector('.recipe-page-edit-body')?.value || '')
-              .slice(0, 24)};
+            prefilledBody: (bodyValue(em) || '').slice(0, 24)};
           em && clickIn(document.querySelector('.top-bar-left'), '.recipe-edit-cancel');
           await until(() => !form());
 
@@ -829,7 +851,7 @@
             title: form?.querySelector('.recipe-page-edit-title')?.value,
             useful_when: form?.querySelectorAll('input')[1]?.value,
             tags: form?.querySelector('.recipe-page-edit-tags')?.value,
-            description: form?.querySelector('.recipe-page-edit-body')?.value};
+            description: bodyValue(form)};
           const stored = {title: row.title || '', useful_when: row.useful_when || '',
                           tags: row.tags || '', description: row.description || ''};
           const matches = Object.keys(stored).filter(k => onScreen[k] === stored[k]);
@@ -1066,8 +1088,8 @@
           const edited = lines.slice();
           edited[1] = 'The owner rewrote this second line himself.';
           st.open_recipe_editor(id);
-          await until(() => document.querySelector('.recipe-page-edit-body'));
-          type(document.querySelector('.recipe-page-edit-body'), edited.join('\n'));
+          await until(() => bodyEl() && bodyEl().cmEditorView);
+          typeBody(edited.join('\n'));
           await until(() => (stateGet('recipe-draft') || {}).description
                             === edited.join('\n'));
           // **looking at provenance at the moment Save is pressed**, which is the
@@ -1396,7 +1418,7 @@
         await until(() => document.querySelector('.recipe-page-body'));
 
         st.open_recipe_editor(id);
-        await until(() => document.querySelector('.recipe-page-edit-body'));
+        await until(() => bodyEl() && bodyEl().cmEditorView);
         await wait(150);                          // the row is laid out a frame later
         const editing = corner();
         st.cancel_recipe_edit();
@@ -1425,9 +1447,9 @@
       const editBody = async (v) => {
         if (!document.querySelector('.recipe-page-edit-body')) {
           toggle().click();
-          await until(() => document.querySelector('.recipe-page-edit-body'));
+          await until(() => bodyEl() && bodyEl().cmEditorView);
         }
-        type(document.querySelector('.recipe-page-edit-body'), v);
+        typeBody(v);
         await until(() => (stateGet('recipe-draft') || {}).description === v);
         toggle().click();
         await until(() => document.querySelector('.provenance-source'));
@@ -1677,8 +1699,8 @@
 
       const openDraftPreview = async description => {
         st.open_recipe_editor(id);
-        await until(() => document.querySelector('.recipe-page-edit-body'));
-        type(document.querySelector('.recipe-page-edit-body'), description);
+        await until(() => bodyEl() && bodyEl().cmEditorView);
+        typeBody(description);
         await until(() => (stateGet('recipe-draft') || {}).description === description);
         if (toggle().textContent.trim() === 'Show provenance') toggle().click();
         await until(() => document.querySelector('.provenance-source'));
@@ -1778,9 +1800,9 @@
           await until(() => page() && document.querySelector('.recipe-page-body')
                             && document.querySelector('.recipe-page-provenance-toggle'), 8000);
           st.open_recipe_editor(bigId);
-          await until(() => document.querySelector('.recipe-page-edit-body'));
+          await until(() => bodyEl() && bodyEl().cmEditorView);
           const replacement = many('mine');
-          type(document.querySelector('.recipe-page-edit-body'), replacement);
+          typeBody(replacement);
           await until(() => (stateGet('recipe-draft') || {}).description === replacement);
           if (toggle().textContent.trim() === 'Show provenance') toggle().click();
           await until(() => document.querySelector('.provenance-source'), 8000);
@@ -2338,9 +2360,14 @@
       //     `mutating-actions` recorded and was deleted for.
       await check('52 the new page has the fields and none of the three inherited lies',
         () => {
+          // Three form controls and the body, which is a CodeMirror now and so has
+          // no `placeholder` attribute to read — an empty document draws the text in
+          // a `.cm-placeholder` instead. Four fields either way, which is the claim.
           const fields = [...document.querySelectorAll('.recipe-page-edit input,'
                                                        + ' .recipe-page-edit textarea')]
-            .map(f => f.placeholder);
+            .map(f => f.placeholder)
+            .concat([...document.querySelectorAll('.recipe-page-edit-body .cm-placeholder')]
+                      .map(p => p.textContent));
           return {pass: fields.length === 4
                         && !!document.querySelector('.recipe-page-edit-title')
                         && !!document.querySelector('.recipe-page-edit-body')
@@ -2395,7 +2422,7 @@
           await until(() => document.querySelector('.recipe-page-edit'), 8000);
           const reopened = document.querySelector('.recipe-page-edit-title').value;
           type(document.querySelector('.recipe-page-edit-title'), title);
-          type(document.querySelector('.recipe-page-edit-body'), 'A body typed here.');
+          typeBody('A body typed here.');
           const chip = document.querySelector('.new-recipe-filing .scope-chip');
           const scopeName = chip && chip.textContent.trim();
           chip && chip.click();

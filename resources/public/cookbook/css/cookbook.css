@@ -1497,7 +1497,25 @@ html.dark-mode .inbox-kind.kind-proposed { background: rgba(245, 158, 11, 0.18);
 /* The title reads as the title, at the weight the `h1` above it has — this is the
    one field whose value is also the heading, and a save changes both. */
 .recipe-page-edit-title { font-size: 1.05em; font-weight: 600; }
-.recipe-page-edit-body { line-height: 1.55; }
+
+/* The body is a CodeMirror now (`ui.cm-textarea`), so this element is the host div
+   and not the field: the border, the background and the focus ring are the editor's
+   own theme, which restates them because a `contenteditable` div is not reached by
+   the `textarea` rules above. What stays out here is the *size*, which is the one
+   thing the theme leaves to its host — `height: 100%` in there, this out here.
+
+   The 400px is what `rows: 16` used to come to: 16 lines of 0.95em at line-height
+   1.55, plus the 10px of padding at each end. `resize: vertical` keeps the grip the
+   textarea had, and works on a div only because `overflow` is not `visible`. The
+   min-height is what stops a drag from collapsing the field to nothing, which a
+   textarea's rows did for free. */
+.recipe-page-edit-body {
+  width: 100%;
+  height: 400px;
+  min-height: 120px;
+  overflow: hidden;
+  resize: vertical;
+}
 
 /* Save and Cancel are in the top bar's left slot, so there is no actions row under
    the form and no rule for one. They are the bar's ordinary buttons — Save the filled

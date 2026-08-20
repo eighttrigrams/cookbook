@@ -10,7 +10,8 @@
   Same argument as `ui.recipe-badges` and `ui.scope-badges` one field along: what
   is here is here because two surfaces would otherwise each grow their own, and
   two spellings of one control is how they drift."
-  (:require [et.cb.ui.state :as state]))
+  (:require [et.cb.ui.cm-textarea :as cm-textarea]
+            [et.cb.ui.state :as state]))
 
 (def tags-placeholder
   "The owner's extra search words, said the same way by every form that writes
@@ -40,7 +41,14 @@
   means. There is deliberately no second resolver for the new page; a blank form is the
   editor's own machinery with nothing behind it.
 
-  **`:body` replaces the textarea**, for the one thing the two surfaces genuinely do
+  **The body is a CodeMirror and not a `<textarea>`**, which is what puts the IJKL
+  scheme under the one field a Recipe is mostly made of — see `ui.cm-textarea`, and
+  `ui.codemirror` for why the scheme is a vendored library rather than a table in
+  this repo. It is still a `:value` and an `:on-change`, so nothing here or in either
+  caller knows the difference; what changed is that `on-change` is handed the text
+  rather than an event to dig it out of.
+
+  **`:body` replaces that editor**, for the one thing the two surfaces genuinely do
   differently: the editor can swap the body for its tinted provenance source, and the
   new page cannot, because a Recipe that does not exist has no history to tint. Passed
   in rather than flagged, so this component holds no opinion about provenance at all —
@@ -52,8 +60,8 @@
   the two habits had to win on the new page; Enter is how a Recipe gets added quickly
   and losing it would be a real change to that. It is the caller's to supply — the
   editor passes none, because Enter in the middle of correcting a Recipe should not
-  save and navigate — and it is never on the textarea, where Enter is a newline in the
-  body he is writing."
+  save and navigate — and it is never on the body, where Enter is a newline in the
+  text he is writing."
   [{:keys [fields on-change on-enter body]}]
   (let [{:keys [title useful_when tags description]} fields
         enter (when on-enter
@@ -75,11 +83,11 @@
        :on-key-down enter
        :on-change #(on-change :tags (-> % .-target .-value))}]
      (or body
-         [:textarea.recipe-page-edit-body
-          {:placeholder "The recipe itself"
-           :rows 16
+         [cm-textarea/cm-textarea
+          {:class "recipe-page-edit-body"
+           :placeholder "The recipe itself"
            :value description
-           :on-change #(on-change :description (-> % .-target .-value))}])]))
+           :on-change #(on-change :description %)}])]))
 
 (defn scope-picker
   "Which Scopes this Recipe is filed under, as a row of toggles over the owner's
