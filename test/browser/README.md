@@ -268,7 +268,7 @@ Recipe would half-run from a Recipe page and produce two false reds.
     19  signed out at ?edit=true gets the reading, with the query gone
     31  saving keeps the button, with the split of the version it wrote (save)
     32  a filing toggle keeps the split it did not change
-    33  option+9 saves in place, flashes, and leaves you in the editor
+    33  cmd+9 saves in place, flashes, and leaves you in the editor
     7   the toggle swaps the rendered body for the source, and back    (provenance)
     8   the numbers run 1..n over the body as it is stored
     9   each line is tinted with its own caution, not its neighbour's

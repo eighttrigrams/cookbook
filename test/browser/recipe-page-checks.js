@@ -1199,8 +1199,8 @@
                 evidence: {filedUnder: name, before, after, error: stateGet('error')}};
       });
 
-      // 33. **⌥9 saves and stays**, which is the whole of what tells it apart from
-      //     the button beside it — *when i press option+9 anywhere on that page no
+      // 33. **⌘9 saves and stays**, which is the whole of what tells it apart from
+      //     the button beside it — *when i press [command]+9 anywhere on that page no
       //     matter where my cursor is, it saves (doesnt exit) and indicates that as
       //     blog's zen editor does with a glowing green checkmark.*
       //
@@ -1218,11 +1218,16 @@
       //     **A real keypress and not a call to the handler**, dispatched at the
       //     document with the caret in the body — `anywhere on that page` is the claim,
       //     and a synthetic event aimed at the function would assert nothing about
-      //     where the listener is or which phase it runs in. `code` and not `key`: on
-      //     macOS Option is a compose modifier, so ⌥9 arrives with a `key` of `ª`, and
-      //     a test written the obvious way would go green against a handler that could
-      //     never fire for a human.
-      await check('33 option+9 saves in place, flashes, and leaves you in the editor',
+      //     where the listener is or which phase it runs in.
+      //
+      //     **⌥9 is pressed first, and must do nothing.** It bound this act for a
+      //     while, on rhizome's precedent, and `ui.edit-keys` says why it should not:
+      //     on a Mac that chord *types* `ª`, which a body written in Portuguese wants.
+      //     A binding removed with no check behind it is a binding that comes back, and
+      //     the negative arm costs one dispatch. It carries `key: 'ª'` because that is
+      //     what the browser really sends — which is also why the positive arm below
+      //     is keyed on `code`.
+      await check('33 cmd+9 saves in place and flashes; option+9 does not',
         async () => {
           st.open_recipe_editor(id);
           await until(() => bodyEl() && bodyEl().cmEditorView);
@@ -1234,8 +1239,16 @@
                          editing: stateGet('recipe-page-edit?')};
 
           bodyEl().querySelector('.cm-content').focus();
+
+          // the chord that must NOT save
           document.dispatchEvent(new KeyboardEvent('keydown', {
             key: 'ª', code: 'Digit9', altKey: true, bubbles: true, cancelable: true}));
+          await wait(600);
+          const afterOption = {stored: row().description, version: row().version};
+
+          // and the one that must
+          document.dispatchEvent(new KeyboardEvent('keydown', {
+            key: '9', code: 'Digit9', metaKey: true, bubbles: true, cancelable: true}));
 
           await until(() => row().description === edited, 8000);
           const after = {version: row().version,
@@ -1258,6 +1271,8 @@
           await until(() => document.querySelector('.recipe-page-body'));
 
           return {pass: dirty.draft.includes('description') && dirty.editing === true
+                        && afterOption.stored === before.stored
+                        && afterOption.version === before.version
                         && after.stored === edited
                         && after.version === before.version + 1
                         && after.editing === true && after.formUp
@@ -1267,8 +1282,9 @@
                         && mark.shown && mark.text === '✓'
                         && mark.colour === 'rgb(52, 199, 89)'
                         && gone,
-                  evidence: {before: {version: before.version}, dirty, after, mark,
-                             markFadedOut: gone}};
+                  evidence: {before: {version: before.version}, dirty,
+                             optionDidNothing: afterOption.version === before.version,
+                             after, mark, markFadedOut: gone}};
         });
 
       // Back to the shelf, and refetch it: the listing in hand never had CHECK-SAVE in

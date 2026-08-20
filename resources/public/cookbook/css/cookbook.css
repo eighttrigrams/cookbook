@@ -641,7 +641,7 @@ html.dark-mode .pending-badge { background: rgba(245, 158, 11, 0.18); }
 /* --------------------------------------------------------------------------
    the save mark
 
-   The ✓ that ⌥9 leaves behind — `ui.save-flash`, which says why the in-between
+   The ✓ that ⌘9 leaves behind — `ui.save-flash`, which says why the in-between
    save needs one and Save & exit does not. Tracker's `#save-flash` /
    `.save-flash-mark` down to the numbers, as blog's Zen mode already copied them
    once: the mark a reader has learnt in two other apps should not be a third

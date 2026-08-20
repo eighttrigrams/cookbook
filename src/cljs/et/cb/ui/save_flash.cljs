@@ -4,7 +4,7 @@
   **Only the in-between save needs it, which is what this is for.** Save & exit
   answers for itself — the editor closes and the reading comes up with the new text
   in it, so a mark on top of that would be telling you what you are already looking
-  at. ⌥9 changes nothing on screen: the same editor with the same words in it, before
+  at. ⌘9 changes nothing on screen: the same editor with the same words in it, before
   and after. Without a mark there is no way to tell a save that landed from a
   keystroke that went nowhere, and the only honest reading of silence would be the
   pessimistic one.

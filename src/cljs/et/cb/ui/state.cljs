@@ -1378,7 +1378,7 @@
                    editable-fields))))
 
 (defn save-recipe-edit-in-place
-  "Save and **stay in the editor** — the ⌥9 save, which `ui.edit-keys` is the only
+  "Save and **stay in the editor** — the ⌘9 save, which `ui.edit-keys` is the only
   caller of.
 
   The draft is cleared on success and not before. `update-recipe` caches the row the
@@ -1386,12 +1386,12 @@
   what was just saved: the same strings, which is what keeps the editor from
   flickering and keeps `ui.cm-textarea`'s sync a no-op rather than a cursor jump.
   Clearing it also makes `recipe-edit-dirty?` honest immediately — a Cancel straight
-  after a successful ⌥9 has nothing to ask about, because there is nothing unsaved.
+  after a successful ⌘9 has nothing to ask about, because there is nothing unsaved.
 
   **It does not check `recipe-edit-dirty?` first**, and that is deliberate: the
   server already answers it. `db.recipe/update-recipe` returns the row unchanged when
   nothing changed — *it neither bumps the version nor writes a history row, since
-  identical versions would only add empty steps to walk* — so a ⌥9 on an untouched
+  identical versions would only add empty steps to walk* — so a ⌘9 on an untouched
   editor costs a round trip and makes no version. Guarding here would be the client
   re-deciding a rule the database owns, and would cost the reader the one thing the
   keystroke is for: pressing it and being told, every time, that the Recipe on screen

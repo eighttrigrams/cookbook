@@ -152,7 +152,7 @@
 
      (and (= :recipe page) edit?)
      [:<>
-      ;; **`Save & exit` and not `Save`**, because since ⌥9 there are two saves and
+      ;; **`Save & exit` and not `Save`**, because since ⌘9 there are two saves and
       ;; only one of them leaves. A button reading `Save` beside a chord that also
       ;; saves would make the chord look like the same act done another way, when the
       ;; difference between them — whether you are still in the editor afterwards — is
@@ -162,7 +162,7 @@
       [:button.recipe-edit-save
        {:disabled (not (state/recipe-edit-savable?))
         :on-click state/save-recipe-edit
-        :title "Save this Recipe and go back to it (⌥9 saves without leaving)"}
+        :title "Save this Recipe and go back to it (⌘9 saves without leaving)"}
        "Save & exit"]
       [:button.secondary.recipe-edit-cancel
        {:on-click state/cancel-recipe-edit

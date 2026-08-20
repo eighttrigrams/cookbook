@@ -593,7 +593,7 @@
         offered? (and (seq ranges) (not (str/blank? description)))
         showing? (and offered? (:showing-provenance? @state/*app-state))]
     [:<>
-     ;; ⌥9 saves without leaving, from anywhere on the page — mounted here so the
+     ;; ⌘9 saves without leaving, from anywhere on the page — mounted here so the
      ;; chord exists exactly as long as the editor does, rather than living for the
      ;; app's whole life and asking the mode on every keypress. Draws nothing.
      [edit-keys/while-editing]
