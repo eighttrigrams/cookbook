@@ -54,8 +54,15 @@
 (deftest migration-007-adds-the-two-tables-and-alters-nothing
   (let [[ds clean!] (temp-file-db "cb-scopes-up")]
     (try
-      (is (= #{"id" "title" "description" "user_id"} (columns ds "scopes")))
-      (is (= #{"recipe_id" "scope_id"} (columns ds "recipe_scopes")))
+      ;; `tags` is 014's and not 007's: this database is migrated all the way up,
+      ;; so the set below is the *current* shape of the table rather than the one
+      ;; 007 left. Named rather than loosened to `contains?` for the reason the
+      ;; whole assertion is a set — a column arriving here should have to be
+      ;; written down somewhere, and this is the file that notices.
+      (is (= #{"id" "title" "description" "tags" "user_id"} (columns ds "scopes")))
+      (is (= #{"recipe_id" "scope_id"} (columns ds "recipe_scopes"))
+          "and the join table is still 007's exactly — 014 put the Scope's tags on
+           the Scope, so there is nothing per-membership here")
       (testing "no `category_type`: cookbook has one kind of category, so a
                 discriminator could only ever hold one value"
         (is (false? (contains? (columns ds "recipe_scopes") "category_type"))))

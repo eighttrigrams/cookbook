@@ -155,11 +155,13 @@
   [...]}`. Read-only; lets an agent discover the endpoints before calling them.
 
   `:endpoints` is every route handler with its method, path and docstring.
-  `:scopes` is **the owner's Scopes, each with its title and description** —
-  generated from the table on every request rather than maintained by hand, so an
-  agent that reads this once knows both what it can call and the categories it may
-  file a Recipe under. That was the point of asking for it here: discovering the
-  API and discovering the filing are one round trip.
+  `:scopes` is **the owner's Scopes, each with its title, its description and its
+  tags** — generated from the table on every request rather than maintained by hand,
+  so an agent that reads this once knows both what it can call and the categories it
+  may file a Recipe under. That was the point of asking for it here: discovering the
+  API and discovering the filing are one round trip. The `tags` come along because
+  they are extra search terms a Scope lends to everything filed under it, so they
+  are also the vocabulary an agent should search with — see GET /api/scopes.
 
   **A map with named sections, which is a change of shape from the bare vector this
   returned before.** It had to be: a second section cannot be a member of a list

@@ -40,15 +40,24 @@
   archives nothing and leaves the version where it is.
 
   And they are **searched for everybody but sent only to the owner**. The search
-  covers `[:title :tags]` whatever the audience — one search behaves one way, so a
-  term returns the same recipes no matter who is asking — while a visitor's
-  projection simply does not name the column, the way a lean read does not name
-  `description`. So an anonymous caller can *test* whether a published Recipe
-  carries a word without ever *reading* its tags, and that is the owner's own
-  decision rather than an oversight: the hiding is about display. A machine token
-  is on the owner's side of that line by design (it reads in the owner's audience),
-  which is right for an agentic memory store — a curated retrieval index is most
-  of what an agent gets out of one.
+  covers `[:recipes.title :recipes.tags]` whatever the audience — one search behaves
+  one way, so a term aimed at the row returns the same recipes no matter who is
+  asking — while a visitor's projection simply does not name the column, the way a
+  lean read does not name `description`. So an anonymous caller can *test* whether a
+  published Recipe carries a word without ever *reading* its tags, and that is the
+  owner's own decision rather than an oversight: the hiding is about display. A
+  machine token is on the owner's side of that line by design (it reads in the
+  owner's audience), which is right for an agentic memory store — a curated
+  retrieval index is most of what an agent gets out of one.
+
+  **A Scope has tags of its own now, and they are a third source of the same
+  words**: a term also matches through the filing, against the title or the tags of
+  any Scope the Recipe is filed under. That one *is* the owner's alone — a visitor's
+  search never reaches through `recipe_scopes` at all — which is the single point
+  where the two kinds of tag behave differently, and it is the Scopes' stronger
+  boundary rather than a change of mind about search. `list-recipes`' audience
+  paragraph is where both halves are argued, and `db.scope/search-clause` is the
+  clause.
 
   **Provenance** is one bit on the row too: `has_human_edit`, set by a write from
   a caller that is not a machine and never cleared. It is denormalised for the
@@ -398,7 +407,8 @@
 (defn list-recipes
   "The recipes visible in `audience` — a user-id for their owner, `visitor-audience`
   for an anonymous caller — **ranked by use**, optionally narrowed by
-  a **word-prefix search over the title and the tags**. `lean?` (the default)
+  a **word-prefix search over the title, the tags and the words of the Scopes it is
+  filed under** — that last one for a caller who may see the filing. `lean?` (the default)
   leaves the description out of the projection entirely, and a visitor's
   projection leaves out the tags — see `select-columns`.
 
@@ -424,7 +434,7 @@
   by the other. `newest-order-by` keeps that distinction where a reader will meet it.
 
   Every whitespace-separated term of the search has to be the prefix of some
-  word in *one of the two searched columns*, case-insensitively, and different
+  word in *one of the searched places*, case-insensitively, and different
   terms may land in different ones: a recipe titled `Sourdough starter` tagged
   `bread baking` matches `sour bak`. See `db/build-word-prefix-search-clause` for
   what a word is. Neither useful-when nor the description is searched: the title
@@ -432,14 +442,45 @@
   while a match in a line of prose was never what made a recipe the one you meant.
   A tag does not weaken that argument — it is curated where prose is not.
 
-  **The searched columns do not depend on the audience, and that is the owner's own
-  decision.** An anonymous caller's search covers tags too, so one search behaves
-  one way and a term returns the same recipes whoever asks; columns that shifted
-  with the caller would make the same query mean two things and nobody reading the
-  docs could predict which. What follows from it, stated rather than discovered
-  later: a visitor can learn that a published Recipe carries some word by probing
-  search terms, even though the values are never sent. Presence is testable, the
-  tags are not readable, and the hiding was only ever about display.
+  **There are three searched places and two of them are on this row.** The third is
+  the filing: a term also matches when the Recipe is filed under a Scope whose own
+  title or tags carries a word starting with it — *i need that we can apply tags,
+  i.e. additional search terms for scopes, too* — so a Recipe titled `abc def` filed
+  under `utwig`, and `utwig` tagged `backend tag2 tag3`, answers to `utw`, to
+  `backend`, and to `ab utw` with one term from each. `db.scope/search-clause` is
+  that clause and argues its own shape; it arrives here as
+  `build-word-prefix-search-clause`' per-term extra disjunct, which is what keeps
+  the rule *one term, anywhere* rather than *all the terms, somewhere*. The Scope's
+  description is deliberately not in it, for the reason useful-when is not: names and
+  curated words, never prose.
+
+  It follows that a Scope's words are **inherited and not copied**. Tagging the
+  Scope `utwig` with `backend` makes every Recipe filed there findable by `backend`
+  in one write, and unfiling one takes the word away again — where a Recipe's own
+  tags have to be typed onto each of them. Two Recipes in the same Scope are found
+  by the same Scope words whatever their own tags say.
+
+  **The two columns on the row do not depend on the audience, and that is the
+  owner's own decision.** An anonymous caller's search covers `tags` too, so a term
+  aimed at the row behaves one way whoever asks; columns that shifted with the
+  caller would make the same query mean two things and nobody reading the docs could
+  predict which. What follows from it, stated rather than discovered later: a visitor
+  can learn that a published Recipe carries some word by probing search terms, even
+  though the values are never sent. Presence is testable, the tags are not readable,
+  and the hiding was only ever about display.
+
+  **The Scope words are the exception, and they are the owner's search alone.** For a
+  visitor the third disjunct is not built at all, so their search is exactly the
+  two-column one described above. This is the *only* place the two kinds of tag part
+  company, and it is the Scopes' stronger boundary asserting itself rather than a
+  second opinion about search: a visitor is refused the filing outright — no `scopes`
+  key (`with-scopes`), and **neither** Scope filter honoured, three lines below — and
+  a search that matched a Scope's title would hand back the very inference those
+  refusals exist to prevent, one probe at a time and without needing a filter. The
+  uniformity argument above is about which of *this Recipe's* fields a term may
+  land in; it was never a licence to answer questions about the owner's shelf. So
+  the same query does still mean one thing per caller, and the sentence a reader has
+  to carry is short: the row's words are everybody's, the filing's words are his.
 
   `human-only?` narrows to the Recipes that carry a human edit — the
   `has_human_edit` bit described above. It composes with the search rather than
@@ -518,10 +559,23 @@
    ;; introduced later would be an error SQLite raises, not a filter that quietly
    ;; reads the wrong column.
    ;;
-   ;; The columns here are the same two for every audience, deliberately: see the
-   ;; docstring. What the audience decides is the projection, one line down.
-   (let [search-clause (db/build-word-prefix-search-clause search-term
-                                                           [:recipes.title :recipes.tags])
+   ;; The two columns here are the same for every audience, deliberately: see the
+   ;; docstring. What the audience decides is the projection, one line down — and
+   ;; the third source of words, one line up from that.
+   (let [;; **The Scope words, and the one narrowing an audience decides the
+         ;; *shape* of rather than the arguments to.** A per-term disjunct, so a
+         ;; term may land in the title, the tags, or the title or tags of any Scope
+         ;; the Recipe is filed under; nil for a visitor, and then this is the
+         ;; two-column search it always was. `when-not (visitor? ...)` is the same
+         ;; guard the two Scope filters below use, three of three now, for the
+         ;; reason the docstring's audience paragraph gives: `audience` is a user-id
+         ;; below the guard, which is exactly what `search-clause` requires and
+         ;; cannot check for itself.
+         scope-search (when-not (visitor? audience)
+                        (fn [term] (db.scope/search-clause audience :recipes.id term)))
+         search-clause (db/build-word-prefix-search-clause search-term
+                                                           [:recipes.title :recipes.tags]
+                                                           scope-search)
          ;; The visitor refusal, and it is *this* line rather than a check in the
          ;; handler: the audience is the answer, and a caller that could pass one
          ;; meaning 'a visitor' is the shape this avoids. `audience` is a user-id

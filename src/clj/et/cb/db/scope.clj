@@ -1,6 +1,18 @@
 (ns et.cb.db.scope
-  "**Scope**: a `title` and a `description`, and a Recipe can be filed under any
-  number of them. Cookbook's categories, under cookbook's own word for them.
+  "**Scope**: a `title`, a `description` and its `tags`, and a Recipe can be filed
+  under any number of them. Cookbook's categories, under cookbook's own word for
+  them.
+
+  **The `tags` are extra search terms, and they are the Scope's own** — *i need
+  that we can apply tags, i.e. additional search terms for scopes, too.* A Recipe
+  filed under `utwig`, where `utwig` is tagged `backend tag2 tag3`, is found by
+  `utwig` and by `backend` as surely as by a word of its own title: the Scope's
+  title and its tags join the Recipe's title and tags as one flat pool of words
+  per Recipe, so `ab utw` finds a Recipe titled `abc def` filed there. One write
+  on the Scope re-labels every Recipe in it, which is the whole point of the tags
+  hanging here rather than being copied onto each Recipe. `search-clause` below is
+  the clause, and `db.recipe/list-recipes` says how a term chooses between the
+  three sources.
 
   **The word means this and nothing else here.** It is not tracker's `scope`
   column, which says whether a task is private, and it is no longer the db layer's
@@ -33,6 +45,16 @@
   withholds. Absent values and an untestable presence are two halves of one refusal,
   and this is the half the tags deliberately do not have.
 
+  **`search-clause` is the third thing here that narrows a listing, and it is
+  refused a visitor beside the other two.** A Scope's words widen the owner's
+  search and nobody else's. That is the one place a Scope's tags behave unlike a
+  Recipe's — those are searched for every audience, and their presence is testable
+  as a stated consequence — and the asymmetry is the point rather than an oversight:
+  a search that matched a Scope's title for an anonymous caller would hand back
+  exactly the inference the two filters above are not run for, one probe at a time
+  and without needing a filter at all. `db.recipe/list-recipes` decides it, off the
+  audience, in the same `when-not` shape as its siblings.
+
   **The positive one leaks the same fact more directly**, which is worth saying here
   rather than only at the clause: excluding Scope 4 asks *which rows go away*, and a
   reader has to diff two listings to learn anything; including it asks *which rows
@@ -59,11 +81,19 @@
 
 (def ^:private scope-columns
   "What a Scope is, read back. There is no lean shape here and no column to
-  withhold: a Scope *is* its title and its description, so a projection that left
-  the description out would be most of the entity missing. Which is why the
+  withhold: a Scope *is* its title, its description and its tags, so a projection
+  that left one out would be most of the entity missing. Which is why the
   privacy boundary for Scopes is whether the join runs at all rather than which
-  columns it selects."
-  [:id :title :description])
+  columns it selects.
+
+  **`tags` is in here and deliberately not in `scopes-by-recipe`**, which is the one
+  read of a Scope that is not about the entity: it fetches what a *card's badge*
+  wears — the title it shows and the description its tooltip says — and a badge has
+  no use for the search words. Sending every Scope's tags with every row of the
+  shelf would be a listing paying for something nothing renders. So the four reads
+  of the Scope itself (`list-scopes`, `get-scope`, and what `create-scope` and
+  `update-scope` answer with) carry them, and the badge join does not."
+  [:id :title :description :tags])
 
 (defn- own
   "A Scope of this user's, by id. Both halves in one clause, so no caller can ask
@@ -131,16 +161,24 @@
            db/jdbc-opts)))
 
 (defn create-scope
-  "A new Scope: `{:title :description}`, the title trimmed like a Recipe's and the
-  description left as typed. nil when the user already has one by that title —
-  callers turn that into a 409 rather than a 500 from the unique index."
-  [ds user-id {:keys [title description]}]
+  "A new Scope: `{:title :description :tags}`, the title trimmed like a Recipe's and
+  the description and the tags left as typed. nil when the user already has one by
+  that title — callers turn that into a 409 rather than a 500 from the unique index.
+
+  **The tags are not trimmed, exactly as a Recipe's are not** (`db.recipe`'s
+  `merge-tags` says so from the other side): the column holds what the owner typed,
+  and the search reads it a word at a time — leading whitespace is one more
+  separator to a clause that already treats every separator alike. The title is
+  trimmed because it is a name, and because `UNIQUE(title, user_id)` would
+  otherwise let ` Baking` and `Baking` both exist."
+  [ds user-id {:keys [title description tags]}]
   (let [title (str/trim (str title))]
     (when-not (title-taken? ds user-id title nil)
       (let [result (jdbc/execute-one! (db/get-conn ds)
                      (sql/format {:insert-into :scopes
                                   :values [{:title title
                                             :description (or description "")
+                                            :tags (or tags "")
                                             :user_id user-id}]
                                   :returning scope-columns})
                      db/jdbc-opts)]
@@ -160,9 +198,12 @@
   ::title-taken)
 
 (defn update-scope
-  "Save a Scope's fields. **A field the caller left out keeps its value**, the
-  rule `db.recipe/merge-content` already sets for a Recipe, so an edit meant for
-  the description cannot silently blank the title.
+  "Save a Scope's fields — `{:title :description :tags}`. **A field the caller left
+  out keeps its value**, the rule `db.recipe/merge-content` already sets for a
+  Recipe, so an edit meant for the description cannot silently blank the title, and
+  a rename cannot silently drop the search words every Recipe in the Scope is found
+  by. An empty string is a real value and does clear the tags, which is the only way
+  to say 'none' — the pair `db.recipe/merge-tags` makes for a Recipe.
 
   Three outcomes: the saved Scope, `no-such-scope` when the id matches nothing the
   user owns, or `title-taken` when the new title is one of their other Scopes'.
@@ -175,7 +216,7 @@
   it names a clash that is not there and hides the deletion that is. Both
   decisions here are made inside one transaction off the same read, so the refusal
   cannot disagree with the state it was decided from."
-  [ds user-id id {:keys [title description]}]
+  [ds user-id id {:keys [title description tags]}]
   (jdbc/with-transaction [tx (db/get-conn ds)]
     (if-let [current (get-scope tx user-id id)]
       (let [title (if (some? title) (str/trim (str title)) (:title current))]
@@ -186,7 +227,10 @@
                                       :set {:title title
                                             :description (if (some? description)
                                                            description
-                                                           (:description current))}
+                                                           (:description current))
+                                            :tags (if (some? tags)
+                                                    tags
+                                                    (:tags current))}
                                       :where (own user-id id)
                                       :returning scope-columns})
                          db/jdbc-opts)]
@@ -456,3 +500,60 @@
                       [:= :recipe_scopes.recipe_id recipe-id-column]
                       [:in :recipe_scopes.scope_id (vec scope-ids)]
                       (db/user-id-where-clause :scopes.user_id user-id)]}]))
+
+(defn search-clause
+  "A clause for **one search term**: true when the Recipe at `recipe-id-column` is
+  filed under a Scope of this user's carrying a word that starts with `term`, in its
+  title or in its tags. The third thing here that narrows a listing, and the reason
+  `scopes.tags` exists — *additional search terms for scopes*.
+
+  **One term and not the whole search**, which is what makes this composable with
+  the columns on the Recipe's own row: `db.recipe/list-recipes` hands it to
+  `db/build-word-prefix-search-clause` as that function's `extra-disjunct-fn`, so
+  each term is ORed against `recipes.title`, `recipes.tags` and this, and the terms
+  are ANDed across the lot. `ab utw` then finds a Recipe titled `abc def` filed
+  under `utwig` — `ab` from the title, `utw` from the Scope — and no term needs to
+  know where any other one landed. A clause over the whole search would have meant
+  *and it is filed under something matching too*, which is a different question and
+  a narrower one.
+
+  **The title and the tags, and not the description.** The same pair as a Recipe's,
+  refused for the same reason `useful_when` and the body are: a Scope's description
+  is prose — the line saying what belongs in it, written for a reader and for an
+  agent choosing where to file — while a title is a name and a tag is a word chosen
+  to be found by. The rule stays 'names and curated words', whichever table it is
+  read from.
+
+  **A Recipe's several Scopes are an OR for free.** `EXISTS` asks whether *any* row
+  of the join satisfies the condition, so a Recipe in three Scopes matches a term
+  that lands in any one of their titles or tag lists, and there is nothing per-Scope
+  to write down. A Recipe filed under nothing falls out of it and is left to its own
+  two columns, which is the correct silence: it has no Scope words, so it is found
+  by its own words alone.
+
+  **It doubles the `instr` tests a term costs**, which is worth saying out loud
+  because the count is already large: the word rule tries every separator, so one
+  term is one test per separator per column, and this adds a second column pair
+  inside the subquery. It is affordable for the same reason the shape was
+  affordable to begin with — the correlation is on the join table's own primary key,
+  so the inner scan is over *this Recipe's* handful of associations rather than over
+  the Scopes, and the shelf being read is one person's.
+
+  Every argument its two siblings make about shape holds here unchanged: `EXISTS`
+  correlated on a **qualified** `recipe-id-column` rather than a second join, since
+  the listing already left-joins `recipe_history` under a `GROUP BY` and another
+  multi-row join would multiply the provenance counts — and an unqualified `id`
+  inside would correlate to `recipe_scopes` itself and be trivially true. It
+  narrows through `scopes.user_id` like every other read here, so a Scope is never
+  read across owners, and it takes a `user-id` and never an audience for the reason
+  they give: there is no value of this argument that means 'a visitor'. Who may
+  search Scope words at all is `list-recipes`' decision, made from the audience —
+  and unlike the tags on a Recipe, a visitor is not one of them."
+  [user-id recipe-id-column term]
+  [:exists {:select [[[:inline 1]]]
+            :from [:recipe_scopes]
+            :join [:scopes [:= :scopes.id :recipe_scopes.scope_id]]
+            :where [:and
+                    [:= :recipe_scopes.recipe_id recipe-id-column]
+                    (db/user-id-where-clause :scopes.user_id user-id)
+                    (db/word-prefix-term-clause term [:scopes.title :scopes.tags])]}])

@@ -849,6 +849,12 @@ html.dark-mode .pending-badge { background: rgba(245, 158, 11, 0.18); }
 }
 .scope-title-input { flex: 0 1 200px; }
 .scope-description-input { flex: 1 1 260px; }
+/* It grows with the description rather than staying narrow: the basis is what the
+   field *holds* — a handful of words — but the placeholder is what it has to *show*,
+   and that is the only sentence explaining what typing here does. At 180px it was
+   cut mid-word at ordinary window widths. `flex-wrap` on the compose row is what
+   catches both fields below that. */
+.scope-tags-input { flex: 1 1 240px; }
 .scopes-empty {
   padding: 14px 0 4px;
   color: var(--muted-text);
@@ -856,17 +862,23 @@ html.dark-mode .pending-badge { background: rgba(245, 158, 11, 0.18); }
 }
 .scopes-list { display: flex; flex-direction: column; }
 
-/* One row per Scope. `auto 1fr auto auto` so the title column is as wide as the
-   longest title and no wider, the description takes the slack, and the count and
-   the buttons stay put — a row whose buttons moved with the length of its
-   description would be a row you cannot aim at.
+/* One row per Scope. `auto 1fr auto auto auto` so the title column is as wide as
+   the longest title and no wider, the description takes the slack, and the tags,
+   the count and the buttons stay put — a row whose buttons moved with the length of
+   its description would be a row you cannot aim at.
    `as wide as the longest title` needs the cap on `.scope-row-title` below to
    mean anything: an `auto` track sizes to max-content, so one long title pushed
    the count and the buttons off the right of the viewport and left the row
-   unusable — Edit and Delete for the very Scope you would want to fix. */
+   unusable — Edit and Delete for the very Scope you would want to fix. The tags
+   column carries the same cap for the same reason.
+   The fifth track is the tags, and it is `auto` rather than a second `1fr`: the
+   description is the sentence and should keep the slack, while a tag list is a few
+   words that either fit or wrap. An untagged Scope renders it empty, so the track
+   collapses and only its gap is left — which is what keeps every row's Edit and
+   Delete in one column whether or not that row has tags. */
 .scope-row {
   display: grid;
-  grid-template-columns: auto 1fr auto auto;
+  grid-template-columns: auto 1fr auto auto auto;
   gap: 12px;
   align-items: center;
   padding: 10px 0;
@@ -888,6 +900,17 @@ html.dark-mode .pending-badge { background: rgba(245, 158, 11, 0.18); }
   font-size: 0.9em;
   overflow-wrap: anywhere;
 }
+/* Quieter than the description and quieter than the title: these are retrieval
+   words rather than something to read, and they sit next to a count that is also
+   metadata. `cursor: help` because the tooltip is where 'these find its Recipes'
+   is said — the placeholder in the edit row is the other half of that sentence. */
+.scope-row-tags {
+  color: var(--muted-text);
+  font-size: 0.85em;
+  overflow-wrap: anywhere;
+  max-width: 240px;
+  cursor: help;
+}
 .scope-row-count {
   color: var(--muted-text);
   font-size: 0.8em;
@@ -897,7 +920,7 @@ html.dark-mode .pending-badge { background: rgba(245, 158, 11, 0.18); }
 .scope-row-actions { display: flex; gap: 6px; }
 .scope-row-actions button { padding: 5px 11px; font-size: 0.85em; }
 
-/* Editing in place keeps the row's outer shape and swaps the two spans for their
+/* Editing in place keeps the row's outer shape and swaps the three spans for their
    inputs, so the list does not jump when one row opens. It loses the grid because
    the inputs want to flow. */
 .scope-row.editing {

@@ -116,7 +116,9 @@
 
 (deftest a-visitor-is-refused-the-narrowing-outright
   ;; **The privacy test.** `with-scopes` refuses a visitor the Scopes by not
-  ;; running the join, so their presence is not testable — nothing searches them.
+  ;; running the join, so their presence is not testable — and a visitor's search
+  ;; does not reach the filing either, which is the same refusal made a third time
+  ;; (`et.cb.search-test/a-visitors-search-does-not-reach-the-filing`).
   ;; Honouring an exclusion would hand that back: a caller could binary-search
   ;; which published Recipes carry Scope 4 by watching rows vanish.
   ;;

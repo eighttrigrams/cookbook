@@ -750,12 +750,22 @@
      ;; begins with the controls that narrow it, which is what the page is for.
      [:div.shelf-controls
       ;; The endpoint matches words from their start, in the title and in the
-      ;; tags, so the placeholder names both and says beginnings of words rather
-      ;; than letting a typist expect a substring to hit. It says the same thing
-      ;; signed out, and truthfully: tags are searched for everyone — only the
-      ;; values are the owner's.
+      ;; tags, so the placeholder names them and says beginnings of words rather
+      ;; than letting a typist expect a substring to hit.
+      ;;
+      ;; **And it names the Scopes signed in, because signed out they are not
+      ;; searched.** This used to say the same thing to both callers, and the note
+      ;; here was that it could — tags are searched for everyone, only the values
+      ;; are the owner's. A Scope's own title and tags are the one thing where that
+      ;; stops being true: they widen the owner's search and nobody else's (see
+      ;; `db.recipe/list-recipes`), so one string for both would have to be either
+      ;; a promise a visitor's search does not keep or a silence about what a
+      ;; signed-in search can now do. The branch is the only honest option, and it
+      ;; is the same `logged-in?` the tags on a card are gated on.
       [:input.search
-       {:type "text" :placeholder "Search titles and tags — start of any word"
+       {:type "text" :placeholder (if logged-in?
+                                    "Search titles, tags and Scopes — start of any word"
+                                    "Search titles and tags — start of any word")
         :value search
         :on-change #(state/set-search (-> % .-target .-value))}]
       ;; Shown signed out as well as in. A visitor is served the published

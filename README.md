@@ -306,8 +306,18 @@ Recipes carry a given Scope, one id at a time, and a caller who could ask for th
 filter is refused by the same line as the negative one rather than by a second decision
 that could come to differ. It is also where the Scopes are a stronger boundary than the
 tags — a tag's *presence* is testable through `?search=` even though its value is never
-sent, while nothing searches the Scopes and nothing narrows by them for an anonymous
-caller.
+sent, while nothing narrows by the Scopes for an anonymous caller and **a visitor's
+`?search=` does not reach them either**.
+
+That last clause is the third refusal and it earns its place beside the other two, now
+that a Scope carries tags of its own. A Scope's title and its tags are **extra search
+terms for every Recipe filed under it** — see *Recipes* — and they widen the search of a
+caller who may see the filing and of nobody else. A visitor searching `utwig` gets what
+they always got: the Recipes with that word in their own title or tags. Matching a
+Scope's title for them would hand back exactly what the two ignored filters are ignored
+to withhold, one probe at a time and without needing a filter at all. So the sentence
+that separates the two kinds of tag is short: **the words on the row are everybody's,
+the words of the filing are his.**
 
 ## Recipes
 
@@ -318,6 +328,22 @@ a bandwidth optimisation:
   relevant, the title being the one `?search=` matches on;
 - `description` — the body, fetched for exactly the one Recipe that turned out
   to be relevant.
+
+**And `?search=` matches three things**, of which the title above is the first: the
+title, the Recipe's own `tags`, and the **title and tags of every Scope it is
+filed under**. A tag is a word the owner chose to be found by, and a Scope's tags are
+the same idea one level up: *i need that we can apply tags, i.e. additional search
+terms for scopes, too.* So a Recipe titled `abc def` filed under `utwig`, where
+`utwig` is tagged `backend tag2 tag3`, is a hit for `utwig`, for `backend`, for
+`tag2` — and for `ab utw`, one term off the title and one off the Scope, since every
+term may land anywhere. Neither `useful_when` nor the body is searched, and neither
+is a Scope's *description*: names and curated words, never prose.
+
+The gain is that a Scope's words are **inherited rather than copied**. Tagging one
+Scope `backend` makes every Recipe in it answer to that word in a single edit, and
+unfiling a Recipe takes the word back — where a Recipe's own tags have to be typed
+onto each of them. The Scopes page is where those tags are edited, beside the title
+and the line saying what belongs in the Scope.
 
 So **lean is the default**, in the API and in the UI alike: a listing and a plain
 `GET` carry no `description` key at all, `?detail=full` adds it, and expanding a
@@ -340,6 +366,15 @@ its own — see *A Recipe's own address*.
 The shelf narrows four ways at once, all of them the endpoint's own clauses
 rather than anything the browser filters: the search box, the human-edited
 checkbox, and the two Scope filters — one that **keeps** and one that **hides**.
+
+**The search box and the Scopes meet twice, and only one of the two is a filter.**
+Typing a Scope's title or one of its tags into the box narrows by *words* — the
+Recipes filed there come back among whatever else carries that word, and can still be
+narrowed further by a second term — while picking the chip below narrows by *the
+filing*, exactly and only. So the box is the loose way to reach a category and the
+picker is the exact one, and the placeholder says which words are in play: signed in it
+reads *Search titles, tags and Scopes*, signed out it names the first two, because
+signed out the third is not searched.
 
 **Below the search box is every Scope you have, as toggles.** Pick one or more and
 the shelf keeps the Recipes carrying **at least one** of them — an OR, so each chip
@@ -504,10 +539,17 @@ are the interface, not decoration.
 
 - `GET /api/recipes` — the listing, **ranked by use**: `0.7 × view_count +
   0.3 × version` descending, then most recently modified, then highest id.
-  `?search=` narrows over the **title and the tags** by **word-prefix**, AND
+  `?search=` narrows over the **title, the tags, and the title and tags of the
+  Scopes the Recipe is filed under** by **word-prefix**, AND
   across whitespace-separated terms: `ab cd` finds `abc cde` but not `ad cd`, and
   `cd` does not find `abcd`. A word is a run of letters and digits, so `heating`
-  finds `Re-heating`. `%` and `_` are ordinary characters. `?human=true` narrows to
+  finds `Re-heating`. `%` and `_` are ordinary characters. Each term may land in a
+  different one of those places, so a Recipe titled `abc def` filed under a Scope
+  titled `utwig` is found by `ab utw`; a Scope's `description` is not searched, for
+  the reason `useful_when` is not. **The Scopes' words are searched for a caller who
+  may see the filing and for nobody else** — an anonymous `?search=` is the
+  title-and-tags one, which is the same refusal as the two ignored Scope filters
+  below and is argued in *What a visitor sees*. `?human=true` narrows to
   the Recipes a human has edited. `?exclude-scopes=3,7` **hides** the Recipes filed
   under those Scope ids — the *negative* one; several ids take more away, a Recipe
   filed under no Scope at all is never hidden by it, and an id you do not own hides

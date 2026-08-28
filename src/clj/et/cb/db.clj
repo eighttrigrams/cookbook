@@ -115,6 +115,30 @@
        "[\\]^_`"
        "{|}~"))
 
+(defn word-prefix-term-clause
+  "**One** term's condition over `columns`: true when `term` is the prefix of some
+  word in some one of them. An `[:or ...]` of `instr` tests, one per column per
+  separator.
+
+  `term` is expected lower-cased already, which is what
+  `build-word-prefix-search-clause` hands it — the `lower` in here is on the
+  column, and a term with an upper-case letter would simply never match.
+
+  **Split out so that a term can be asked of columns in another table.** The
+  caller that wants that is `db.scope/search-clause`, which puts this same
+  condition on `scopes.title` and `scopes.tags` inside an `EXISTS` — so a Scope's
+  words are word-prefix-matched by the identical rule as a Recipe's, rather than by
+  a second implementation that could come to disagree about what a word is. There
+  is one definition of the match and two places it is applied."
+  [term columns]
+  (into [:or]
+        (mapcat (fn [column]
+                  (let [value [:|| [:inline " "] [:lower column]]]
+                    (map (fn [separator]
+                           [:> [:instr value (str separator term)] [:inline 0]])
+                         word-separator-chars)))
+                columns)))
+
 (defn build-word-prefix-search-clause
   "Case-insensitive AND-of-terms **word-prefix** match over `columns`, a vector
   of them.
@@ -141,23 +165,34 @@
   to each value turns 'at the start of the value' into 'after a separator', so
   the first word of each column needs no case of its own.
 
+  **`extra-disjunct-fn` gives each term's `[:or ...]` one more branch**, and it is
+  how a term may be satisfied somewhere a vector of columns on this row cannot
+  name. It is called with the term — lower-cased, as the columns' own tests get it
+  — and its clause is ORed in beside them. `db.recipe/list-recipes` passes one that
+  reaches through `recipe_scopes` into the Scopes a Recipe is filed under, so
+  `ab utw` can take `ab` from the title and `utw` from a Scope's, and neither term
+  has to know where the other landed.
+
+  **Per term and not per search**, which is this function's own shape applied once
+  more: every term must be satisfied *somewhere*, and where each one lands is its
+  own business. A single extra clause ANDed onto the whole search would mean
+  something else entirely — *and it is also filed under something matching* — and
+  would make `sour bak` on a tagged Recipe stop matching. nil for no extra branch,
+  and then this is exactly the two-argument function it has always been.
+
   nil for a blank search, which every caller reads as 'no narrowing'."
-  [search-term columns]
-  (when-not (str/blank? search-term)
-    (let [terms (->> (str/split (str/trim search-term) #"\s+")
-                     (remove str/blank?)
-                     (map str/lower-case))]
-      (when (seq terms)
-        (into [:and]
-              (map (fn [term]
-                     (into [:or]
-                           (mapcat (fn [column]
-                                     (let [value [:|| [:inline " "] [:lower column]]]
-                                       (map (fn [separator]
-                                              [:> [:instr value (str separator term)] [:inline 0]])
-                                            word-separator-chars)))
-                                   columns)))
-                   terms))))))
+  ([search-term columns] (build-word-prefix-search-clause search-term columns nil))
+  ([search-term columns extra-disjunct-fn]
+   (when-not (str/blank? search-term)
+     (let [terms (->> (str/split (str/trim search-term) #"\s+")
+                      (remove str/blank?)
+                      (map str/lower-case))]
+       (when (seq terms)
+         (into [:and]
+               (map (fn [term]
+                      (cond-> (word-prefix-term-clause term columns)
+                        extra-disjunct-fn (conj (extra-disjunct-fn term))))
+                    terms)))))))
 
 (defn reset-all-data!
   "Dev-only: wipe user data (keeps schema). Child rows first, so nothing is left

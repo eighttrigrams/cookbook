@@ -192,7 +192,8 @@
 
 (defn list-recipes-handler
   "GET /api/recipes — the caller's recipes, **ranked by how much they are used**,
-  optionally narrowed by ?search over the **title and the tags**.
+  optionally narrowed by ?search over the **title, the tags and the words of the
+  Scopes the Recipe is filed under**.
 
   **The default order is a weighted sum: `0.7 × view_count + 0.3 × version`, highest
   first**, then most recently modified, then highest id. `view_count` is how often
@@ -226,20 +227,42 @@
   substring. A word is a run of letters and digits, so `heating` finds
   `Re-heating` and `start` finds `make/start`. The terms need not all land in the
   same column: a recipe titled `Sourdough starter` tagged `bread baking` is found
-  by `sour bak`. Nothing else is searched: not useful-when, not the description.
-  `%` and `_` are ordinary characters here, not wildcards.
+  by `sour bak`. Nothing else is searched on the row: not useful-when, not the
+  description. `%` and `_` are ordinary characters here, not wildcards.
 
-  **Tags are searched for every caller and sent only to the owner.** An anonymous
-  visitor's rows carry no `tags` key at all — the column is not in their
-  projection — while their ?search still matches against it, so a term returns the
-  same recipes whoever asks. That is deliberate: one search behaves one way, and
-  columns that shifted with the caller would make the same query mean two things.
-  The consequence, stated rather than left to be discovered: a visitor can find out
-  that a published Recipe carries some word by probing search terms, though the
-  tags themselves are never readable. A machine token reads in the owner's audience,
-  so an agent both reads and writes tags — cookbook is an agentic memory store and
-  a curated retrieval index is most of what an agent gets out of one. The boundary
-  here is around anonymous readers, not machines.
+  **The Scopes a Recipe is filed under lend it their words too** — their own
+  `title` and their own `tags` (see GET /api/scopes), searched by the same
+  word-prefix rule as if they were in the Recipe's title. A Recipe titled `abc def`
+  filed under a Scope titled `utwig` and tagged `backend tag2 tag3` is found by
+  `utwig`, by `backend`, by `tag2` — and by `ab utw`, one term off the title and one
+  off the Scope, since each term may land anywhere. A Scope's *description* is not
+  searched, for the reason useful-when is not: names and curated words, never prose.
+  Two things follow. A Scope's words are **inherited, not copied**: tagging one
+  Scope makes every Recipe in it findable by that word in a single write, and
+  unfiling a Recipe takes the words away again. And a Recipe filed under nothing is
+  searched by its own two columns exactly as before.
+
+  **Tags on the row are searched for every caller and sent only to the owner.** An
+  anonymous visitor's rows carry no `tags` key at all — the column is not in their
+  projection — while their ?search still matches against it, so a term aimed at the
+  row returns the same recipes whoever asks. That is deliberate: one search behaves
+  one way, and columns that shifted with the caller would make the same query mean
+  two things. The consequence, stated rather than left to be discovered: a visitor
+  can find out that a published Recipe carries some word by probing search terms,
+  though the tags themselves are never readable. A machine token reads in the
+  owner's audience, so an agent both reads and writes tags — cookbook is an agentic
+  memory store and a curated retrieval index is most of what an agent gets out of
+  one. The boundary here is around anonymous readers, not machines.
+
+  **The Scopes' words are the exception: they are searched for a caller who may see
+  the filing, and for nobody else.** An anonymous ?search is the two-column one
+  described above — the filing is not reached at all. It is the same refusal as
+  `?exclude-scopes` and `?include-scopes` being ignored for a visitor, arriving
+  through the search: a caller who could match a Scope's title could test which
+  published Recipes carry it, one probe at a time, which is precisely what those two
+  are not honoured for. So a Scope's tags are *more* private than a Recipe's, and
+  that is the only place the two kinds of tag differ. A machine token is on the
+  owner's side of the line, here as everywhere.
 
   **?human=true narrows to the Recipes a human has edited**, and only the exact
   value `true` does: absent, `false` or anything else leaves the listing alone.
@@ -290,7 +313,10 @@
   entirely**, and that is a refusal rather than the filter applied to fewer rows. A
   visitor is sent no `scopes` key on anything, and — unlike the tags, whose presence
   is testable through ?search — the Scopes' presence is not testable either, because
-  nothing searches them. Honouring either would hand that back, and the positive one
+  **a visitor's ?search does not reach the filing**: a Scope lends its title and its
+  tags to the search of a caller who may see the filing, and to nobody else's, which
+  is that same decision made a third time rather than an exception to it (see the
+  search paragraphs above). Honouring either would hand that back, and the positive one
   hands it back **directly**: rows vanishing on request is a way to ask which
   published Recipes carry Scope 4 one id at a time, and rows *arriving* on request is
   the same question answered in one call. Scopes are a stronger boundary than the
@@ -378,7 +404,9 @@
   `[{id, title, description}]`, empty for an unfiled Recipe; a visitor gets no
   `scopes` key at any ?detail, and there is no query that would produce one for
   them — the join is not run rather than run and then hidden. Unlike the tags,
-  their presence is not testable either: nothing searches them, and the two
+  their presence is not testable either: a visitor's ?search does not reach the
+  filing (a Scope's own title and tags widen the owner's search alone, which is why
+  a Scope's tags are stricter than a Recipe's), and the two
   parameters that could have made them testable — ?exclude-scopes and
   ?include-scopes on the listing — are both ignored outright for an anonymous caller
   rather than applied to their published rows. Watching rows vanish is a way of

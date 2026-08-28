@@ -1,0 +1,41 @@
+{:up ["ALTER TABLE scopes ADD COLUMN tags TEXT NOT NULL DEFAULT ''"]
+ ;; Extra words to find a Recipe by, which neither its title nor its own tags
+ ;; contain — carried by the **Scope** it is filed under instead of by the Recipe.
+ ;; *i need that we can apply tags, i.e. additional search terms for scopes, too.*
+ ;;
+ ;; **The same column shape as 006, deliberately identical.** One TEXT column
+ ;; holding whatever the owner typed, `NOT NULL DEFAULT ''`, not a tags table and
+ ;; not a join table — so a Scope's tags need no migrating, splitting or
+ ;; deduplicating any more than a Recipe's do, and `db/word-prefix-term-clause`
+ ;; reads the two columns with one rule rather than with two that could drift. The
+ ;; empty default is the honest state of a Scope nobody has tagged, and it keeps
+ ;; the search clause free of a null case for the reason 006 gives.
+ ;;
+ ;; **A Recipe's search terms now come from three columns and two tables**, which
+ ;; is the reason this column exists at all: `recipes.title`, `recipes.tags`, and
+ ;; the `scopes.title`/`scopes.tags` of every Scope it is filed under. A Recipe
+ ;; titled `abc def` filed under `utwig`, tagged `backend tag2 tag3`, answers to
+ ;; `ab utw` and to `abc backend` alike. `db.scope/search-clause` is where a term
+ ;; reaches through `recipe_scopes`, and `db.recipe/list-recipes` is where the
+ ;; three are ORed into one condition per term.
+ ;;
+ ;; **On `scopes` and not on `recipe_scopes`.** The tags describe the Scope, not one
+ ;; Recipe's membership of it: tagging `utwig` with `backend` says something about
+ ;; utwig, and every Recipe filed there inherits it in one write. Putting them on
+ ;; the association would mean re-typing them per Recipe and would make 'the Scope's
+ ;; tags' a question with as many answers as there are rows — the join table
+ ;; deliberately carries nothing of its own (see 007).
+ ;;
+ ;; **Not versioned, and there is nothing here that could version them.** A Scope
+ ;; has no history table: filing is not content, which is the call 006 made for
+ ;; `recipes.tags` and 007 made for the Scopes themselves.
+ ;;
+ ;; The column is **read for the owner's search only**, and that half is a query
+ ;; choice in `db.recipe/list-recipes` rather than a schema one. It is the one place
+ ;; a Scope's words behave differently from a Recipe's tags: an anonymous caller's
+ ;; search covers `recipes.tags` but never reaches through `recipe_scopes` at all,
+ ;; because a visitor is refused the filing outright — no `scopes` key, and neither
+ ;; Scope filter honoured — and a search that could test it would hand back the
+ ;; inference those two refusals exist to prevent. See the audience paragraph on
+ ;; `list-recipes`.
+ :down ["ALTER TABLE scopes DROP COLUMN tags"]}

@@ -9,11 +9,21 @@
   `state/go-to-page`, where being *one value* is what makes 'this page and the
   shelf are both up' unreachable rather than merely avoided.
 
-  A Scope is a title and a description and nothing else, so this page is a compose
-  row and a list. The description is not decoration: it is what the badge's tooltip
-  says on a card, and it is what an agent reads out of `/api/describe` to decide
-  which Scope a Recipe belongs under. An undescribed Scope still works and simply
-  tells a reader less.
+  A Scope is a title, a description and its tags and nothing else, so this page is a
+  compose row and a list. The description is not decoration: it is what the badge's
+  tooltip says on a card, and it is what an agent reads out of `/api/describe` to
+  decide which Scope a Recipe belongs under. An undescribed Scope still works and
+  simply tells a reader less.
+
+  **The tags are the one field here that changes the shelf.** They are extra search
+  terms the Scope lends to every Recipe filed under it — *additional search terms
+  for scopes* — so a Scope titled `utwig` tagged `backend tag2 tag3` makes each of
+  those words find its Recipes on the overview page, as if they were words of each
+  Recipe's title. That is why they are edited here rather than on a Recipe: one field
+  on one row relabels a whole category, and a word typed here never has to be typed
+  onto a Recipe again. They are the owner's alone in a stronger sense than a Recipe's
+  tags, which a signed-out reader's search still matches: a Scope's words widen no
+  search but his.
 
   Each row says how many Recipes are filed under it, from the endpoint's own
   `recipe_count` rather than counted from the shelf — the shelf may be narrowed by
@@ -34,18 +44,34 @@
 (def ^:private title-placeholder "Title")
 (def ^:private description-placeholder "What belongs in it")
 
+(def ^:private tags-placeholder
+  "The Recipe editor's `tags-placeholder` said from the other end: there, extra
+  words to find *this* by; here, words to find everything filed under it by. One
+  field, one sentence about what typing in it does — this and the row's tooltip are
+  the only explanation most of these words ever get.
+
+  A word shorter than its twin (`extra` is dropped) because this field shares its
+  row with the description rather than having a line to itself, and the placeholder
+  has to *fit*: the fuller wording measured one pixel wider than the input at an
+  ordinary window width and was cut mid-word — which is the one way a placeholder
+  can be worse than a shorter one."
+  "Tags — words to find its Recipes by")
+
 (defn- compose-row
-  "Add a Scope. Enter submits from either field, like the Recipe compose form."
+  "Add a Scope. Enter submits from any field, like the Recipe compose form."
   []
   (let [title (r/atom "")
-        description (r/atom "")]
+        description (r/atom "")
+        tags (r/atom "")]
     (fn []
       (let [submit (fn []
                      (when-not (str/blank? @title)
-                       (state/add-scope {:title @title :description @description}
+                       (state/add-scope {:title @title :description @description
+                                         :tags @tags}
                                         (fn []
                                           (reset! title "")
-                                          (reset! description "")))))]
+                                          (reset! description "")
+                                          (reset! tags "")))))]
         [:div.scopes-compose
          [:input.scope-title-input
           {:type "text" :placeholder title-placeholder
@@ -57,20 +83,32 @@
            :value @description
            :on-change #(reset! description (-> % .-target .-value))
            :on-key-down #(when (= (.-key %) "Enter") (submit))}]
+         [:input.scope-tags-input
+          {:type "text" :placeholder tags-placeholder
+           :value @tags
+           :on-change #(reset! tags (-> % .-target .-value))
+           :on-key-down #(when (= (.-key %) "Enter") (submit))}]
          [:button.scope-add {:on-click submit :disabled (str/blank? @title)} "Add"]]))))
 
 (defn- edit-row
-  "One Scope, in place. Editing here rather than in a modal because there are two
+  "One Scope, in place. Editing here rather than in a modal because there are three
   short fields and the list is where the neighbouring titles are — which is what
-  you need to see while renaming one of them."
+  you need to see while renaming one of them, and, now that a Scope lends its words
+  to a search, while deciding which words are still free to use.
+
+  **The save sends all three fields**, which matters for the tags for the reason it
+  already mattered for the title: the endpoint keeps whatever a call leaves out, so
+  the only way a field can be *cleared* here is by being sent empty."
   [scope]
   (let [title (r/atom (:title scope))
-        description (r/atom (:description scope))]
+        description (r/atom (:description scope))
+        tags (r/atom (:tags scope))]
     (fn [scope]
       (let [save (fn []
                    (when-not (str/blank? @title)
                      (state/save-scope (:id scope)
-                                       {:title @title :description @description}
+                                       {:title @title :description @description
+                                        :tags @tags}
                                        state/stop-editing-scope)))]
         [:div.scope-row.editing
          [:input.scope-title-input
@@ -82,6 +120,11 @@
           {:type "text" :placeholder description-placeholder
            :value @description
            :on-change #(reset! description (-> % .-target .-value))
+           :on-key-down #(when (= (.-key %) "Enter") (save))}]
+         [:input.scope-tags-input
+          {:type "text" :placeholder tags-placeholder
+           :value @tags
+           :on-change #(reset! tags (-> % .-target .-value))
            :on-key-down #(when (= (.-key %) "Enter") (save))}]
          [:span.scope-row-actions
           [:button.scope-save {:on-click save :disabled (str/blank? @title)} "Save"]
@@ -97,10 +140,16 @@
     1 "1 Recipe"
     (str n " Recipes")))
 
-(defn- scope-row [{:keys [id title description recipe_count]}]
+(defn- scope-row [{:keys [id title description tags recipe_count]}]
   [:div.scope-row
    [:span.scope-row-title title]
    [:span.scope-row-description description]
+   ;; **Rendered whether or not there are any**, as an empty span. The row is a
+   ;; grid, so an omitted cell would not leave a gap — it would shift the count and
+   ;; the buttons of that one row into the wrong columns, and a list where the
+   ;; untagged rows are the misaligned ones is worse than a narrow empty column.
+   [:span.scope-row-tags {:title "Extra words a search finds this Scope's Recipes by"}
+    tags]
    [:span.scope-row-count {:title "How many of your Recipes are filed under it"}
     (filed-count recipe_count)]
    [:span.scope-row-actions
@@ -148,15 +197,21 @@
     [:div.scopes
      [:h2 "Scopes"]
      [:p.settings-note
-      "Categories to file Recipes under — a title and a line saying what belongs in
-       it. A Recipe can be in any number of them, chosen when you write it or from
-       its Edit form, and they show as badges on the cards. "
+      "Categories to file Recipes under — a title, a line saying what belongs in
+       it, and tags. A Recipe can be in any number of them, chosen when you write it
+       or from its Edit form, and they show as badges on the cards. "
+      [:strong "The tags are extra search terms"]
+      ": a Scope's title and its tags find everything filed under it on the
+       overview page, as if those words were in each Recipe's own title — so
+       tagging one Scope "
+      [:code "backend"]
+      " makes every Recipe in it answer to that word, in one edit. "
       [:strong "Yours alone"]
-      ": a signed-out reader of a published Recipe is not sent them at all, and
-       neither is anyone else. An agent with credentials is — it reads this list
-       from "
+      ": a signed-out reader of a published Recipe is not sent them at all, neither
+       is anyone else, and a Scope's words widen nobody's search but yours. An agent
+       with credentials is on your side of both — it reads this list from "
       [:code "/api/describe"]
-      " to know where to file what it writes."]
+      " to know where to file what it writes, and what to search for."]
      [compose-row]
      (if (empty? scopes)
        [:div.scopes-empty "No Scopes yet."]

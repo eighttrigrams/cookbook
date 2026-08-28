@@ -182,8 +182,9 @@
 (deftest a-visitors-include-scopes-changes-nothing
   ;; **The privacy test, and the more urgent of the pair.** A visitor is sent no
   ;; `scopes` key on anything, and unlike the tags — whose presence is testable
-  ;; through ?search — nothing searches the Scopes, so their presence is not
-  ;; testable either. The exclusion would hand that back by inference; this
+  ;; through ?search — a visitor's ?search does not reach the filing, so the
+  ;; Scopes' presence is not testable either. The exclusion would hand that back by
+  ;; inference; this
   ;; parameter would hand it back outright, since the rows that came back would be
   ;; exactly the published Recipes carrying the named Scope.
   (let [bread (scope! "Bread")

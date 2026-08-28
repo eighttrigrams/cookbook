@@ -51,12 +51,22 @@
 
 (defn list-scopes-handler
   "GET /api/scopes — the owner's Scopes, by title, each with `id`, `title`,
-  `description` and `recipe_count`.
+  `description`, `tags` and `recipe_count`.
 
   **A Scope is a category a Recipe can be filed under**: 0 to n of them per
   Recipe, written on the Recipe's own write path as `scope_ids` (see POST and PUT
   /api/recipes). `recipe_count` is how many Recipes are filed under it right now,
   which is what makes deleting one an informed decision rather than a guess.
+
+  **`tags` are extra search terms the Scope lends to everything filed under it.**
+  One string of words, like a Recipe's own `tags`: a Recipe filed under a Scope
+  titled `utwig` and tagged `backend tag2 tag3` is a `?search=` hit for `utwig`,
+  `backend`, `tag2` and `tag3` as if those words were in its title — see GET
+  /api/recipes. So they are the cheap way to make a whole category findable by the
+  words a reader will actually type, and they are inherited rather than copied:
+  one write here relabels every Recipe in the Scope. They are searched **for the
+  owner's audience only**, unlike a Recipe's tags, because a visitor is refused
+  the filing outright.
 
   Authenticated callers only — a machine token included, since an agent that
   cannot read this list cannot file a Recipe under the right Scope. An anonymous
@@ -70,30 +80,39 @@
     forbidden))
 
 (defn add-scope-handler
-  "POST /api/scopes — create a Scope from {:title :description}. The title is
-  required and must be non-blank; the description defaults to empty.
+  "POST /api/scopes — create a Scope from {:title :description :tags}. The title is
+  required and must be non-blank; the description and the tags default to empty.
+
+  `tags` is one string of extra search terms for everything filed under this Scope
+  — see GET /api/scopes for what they do. It is stored as typed, like a Recipe's
+  tags; only the title is trimmed.
 
   The title is trimmed and is **unique per owner**, so a second Scope by the same
   name is a 409 rather than a duplicate nobody can tell apart in a list. 201 with
   the created Scope, 400 on a blank title, 403 when nobody is signed in."
   [req]
   (if (common/authenticated? req)
-    (let [{:keys [title description]} (:body req)]
+    (let [{:keys [title description tags]} (:body req)]
       (if (str/blank? (str title))
         {:status 400 :body {:error "title is required"}}
         (if-let [created (db.scope/create-scope (common/ensure-ds) (caller req)
-                                                {:title title :description description})]
+                                                {:title title :description description
+                                                 :tags tags})]
           {:status 201 :body created}
           {:status 409 :body {:error "You already have a Scope with that title"}})))
     forbidden))
 
 (defn update-scope-handler
-  "PUT /api/scopes/:id — save {:title :description}. **A field you leave out keeps
-  its current value**, the way it does for a Recipe, so an edit meant for the
-  description cannot silently blank the title. A blank title is refused.
+  "PUT /api/scopes/:id — save {:title :description :tags}. **A field you leave out
+  keeps its current value**, the way it does for a Recipe, so an edit meant for the
+  description cannot silently blank the title, and a rename cannot silently drop
+  the search words every Recipe in the Scope is found by. An empty `tags` string is
+  a real value and clears them. A blank title is refused.
 
   Renaming a Scope does not touch which Recipes are filed under it: the
-  association is by id, so the badges follow the rename. 200 with the saved Scope,
+  association is by id, so the badges follow the rename — and so do the search
+  terms, which is the other half of the same fact. Retagging it changes what every
+  Recipe filed under it answers to, in one call. 200 with the saved Scope,
   400 on a blank title, 409 when the new title is one of your other Scopes', 404
   when the id matches nothing you own, 403 when nobody is signed in.
 
@@ -123,7 +142,7 @@
 
         :else
         (let [saved (db.scope/update-scope ds user-id id
-                                           (select-keys body [:title :description]))]
+                                           (select-keys body [:title :description :tags]))]
           (condp = saved
             db.scope/no-such-scope
             {:status 404 :body {:error "Scope not found"}}

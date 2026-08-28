@@ -4,11 +4,19 @@
 
   The shape of the feature is a matrix, so most cases assert both halves at once:
 
-  | caller  | reads Scopes | writes Scopes | sees them on a Recipe |
-  |---------|--------------|---------------|-----------------------|
-  | owner   | yes          | yes           | yes                   |
-  | machine | yes          | yes           | yes                   |
-  | anon    | **403**      | **403**       | **no key**            |
+  | caller  | reads Scopes | writes Scopes | sees them on a Recipe | searches their words |
+  |---------|--------------|---------------|-----------------------|----------------------|
+  | owner   | yes          | yes           | yes                   | yes                  |
+  | machine | yes          | yes           | yes                   | yes                  |
+  | anon    | **403**      | **403**       | **no key**            | **no**               |
+
+  **The last column is the one that reads differently from the tags' matrix.** A
+  Scope carries `tags` of its own — extra search terms it lends to every Recipe
+  filed under it — and a Recipe's tags are searched for *everybody*
+  (`et.cb.tags-integration-test`), while a Scope's words are searched for a caller
+  who may see the filing and for nobody else. That is the same refusal as
+  `?exclude-scopes`/`?include-scopes` being ignored for a visitor, arriving through
+  the search rather than through a parameter.
 
   A machine is on the owner's side of every line here. That is the app's default
   and not a decision made for Scopes — the README's *unsupervised writes* — and the
@@ -78,6 +86,95 @@
               id and not by title"
       (is (= 200 (:status (PUT-json (str "/api/scopes/" (:id created)) {:title "Baking"}))))
       (is (= ["Baking"] (titles-on (first (:body (GET-json "/api/recipes")))))))))
+
+;; ---------------------------------------------------------------------------
+;; a Scope's own tags: extra search terms for everything filed under it
+
+(deftest a-scopes-tags-are-written-and-read-back-over-http
+  (let [created (:body (POST-json "/api/scopes" {:title "utwig"
+                                                 :tags "backend tag2 tag3"}))]
+    (is (= "backend tag2 tag3" (:tags created)))
+    (testing "a create that says nothing about them reads as untagged rather than
+              as null, and the key is there for both"
+      (is (= "" (:tags (:body (POST-json "/api/scopes" {:title "Deployment"}))))))
+    (testing "the listing carries them beside the description"
+      (is (= {"utwig" "backend tag2 tag3" "Deployment" ""}
+             (into {} (map (juxt :title :tags)) (:body (GET-json "/api/scopes"))))))
+    (let [path (str "/api/scopes/" (:id created))]
+      (testing "a rename keeps them — the words every Recipe in the Scope is found
+                by are not something an edit to another field may drop"
+        (let [body (:body (PUT-json path {:title "zwutig"}))]
+          (is (= "zwutig" (:title body)))
+          (is (= "backend tag2 tag3" (:tags body)))))
+      (testing "and a tags-only save keeps the title and the description"
+        (let [body (:body (PUT-json path {:tags "frontend"}))]
+          (is (= "zwutig" (:title body)))
+          (is (= "frontend" (:tags body)))))
+      (testing "while an empty string is a real value and clears them"
+        (is (= "" (:tags (:body (PUT-json path {:tags ""})))))))))
+
+(deftest a-scopes-words-widen-the-search-over-http
+  ;; The order's own example, end to end and through a query string: *i can hit a
+  ;; title of a recipe "abc def", scoped as "utwig", by entering "ab utw"*.
+  (let [{utwig :id} (:body (POST-json "/api/scopes" {:title "utwig"
+                                                     :tags "backend tag2 tag3"}))
+        _filed (recipe! "abc def" [utwig])
+        _loose (recipe! "unfiled")
+        found (fn [query] (set (map :title (:body (GET-json (str "/api/recipes?search=" query))))))]
+    (testing "the Scope's title and each word of its tags find the Recipe filed
+              under it, as if they were words of its own title"
+      (is (= #{"abc def"} (found "utwig")))
+      (is (= #{"abc def"} (found "utw")))
+      (is (= #{"abc def"} (found "backend")))
+      (is (= #{"abc def"} (found "tag2"))))
+    (testing "and a term off the title beside a term off the Scope, with the space
+              carried either way a query string can encode it"
+      (is (= #{"abc def"} (found "ab%20utw")))
+      (is (= #{"abc def"} (found "ab+utw")))
+      (is (= #{"abc def"} (found "abc+backend"))))
+    (testing "the terms are still ANDed, and the unfiled Recipe is never dragged in"
+      (is (empty? (found "utwig+unfiled")))
+      (is (empty? (found "utw+zzz"))))
+    (testing "retagging the Scope changes what everything in it answers to, in one
+              call"
+      (is (= 200 (:status (PUT-json (str "/api/scopes/" utwig) {:tags "frontend"}))))
+      (is (empty? (found "backend")))
+      (is (= #{"abc def"} (found "frontend"))))))
+
+(deftest a-machine-searches-a-scopes-words-and-a-visitor-does-not
+  ;; **The one place a Scope's tags are stricter than a Recipe's.** A Recipe's tags
+  ;; are searched for everybody — `et.cb.tags-integration-test`'s
+  ;; `an-anonymous-search-matches-a-tag-and-the-answer-still-hides-it` — while a
+  ;; Scope's words widen the search of a caller who may see the filing and nobody
+  ;; else's. Same refusal as `?include-scopes` being ignored for a visitor, arriving
+  ;; through the search: a caller who could match a Scope's title could test which
+  ;; published Recipes carry it, one probe at a time.
+  (let [{utwig :id} (:body (POST-json "/api/scopes" {:title "utwig"
+                                                     :tags "sekritword"}))
+        {:keys [id]} (recipe! "Signed" [utwig])
+        token (machine-token!)]
+    (POST-json (str "/api/recipes/" id "/publish") {})
+    (testing "the owner finds it by the Scope's title and by the Scope's tags"
+      (is (= [id] (map :id (:body (GET-json "/api/recipes?search=utwig")))))
+      (is (= [id] (map :id (:body (GET-json "/api/recipes?search=sekritword"))))))
+    (testing "and so does a machine token, which reads in the owner's audience —
+              an agent searching its own memory store is the primary caller here"
+      (is (= [id] (map :id (:body (h/API :get "/api/recipes?search=sekritword"
+                                         {:token token})))))
+      (is (= [id] (map :id (:body (h/API :get "/api/recipes?search=utw"
+                                         {:token token}))))))
+    (h/with-real-auth
+      (let [anon (fn [query] (:body (h/API :get (str "/api/recipes?search=" query)
+                                           {:anonymous? true})))]
+        (testing "a visitor is served the published Recipe and finds it by its title"
+          (is (= [id] (map :id (anon "signed")))))
+        (testing "but a Scope's words are not in their search at all"
+          (is (empty? (anon "utwig")))
+          (is (empty? (anon "sekritword")))
+          (is (empty? (anon "utw"))))
+        (testing "not even beside a term that would have matched on its own, so the
+                  filing cannot be tested one probe at a time"
+          (is (empty? (anon "signed+utwig"))))))))
 
 (deftest the-refusals-each-have-their-own-status
   (let [{:keys [id]} (scope! "Bread" "")]
@@ -224,6 +321,9 @@
               the table rather than maintained by hand"
       (is (= [["Bread" "Anything with flour in it"] ["Deployment" "Getting it onto the box"]]
              (mapv (juxt :title :description) (:scopes body)))))
+    (testing "and with its tags, which are the words an agent should search with —
+              discovering the filing and discovering its vocabulary are one call"
+      (is (every? #(contains? % :tags) (:scopes body))))
     (testing "and with its id, since an agent that cannot name a Scope cannot file
               anything under it"
       (is (every? #(int? (:id %)) (:scopes body))))))
@@ -262,6 +362,27 @@
       (is (re-find #"scope_ids" (doc-for "POST" "/api/recipes")))
       (is (re-find #"scope_ids" (doc-for "PUT" "/api/recipes/:id")))
       (is (re-find #"(?i)empty array" (doc-for "PUT" "/api/recipes/:id"))))
+    ;; **The patterns below are anchored on words the old docstrings did not
+    ;; contain**, which is the whole difficulty of asserting against prose: a
+    ;; regex loose enough to survive a rewrite is usually also loose enough to
+    ;; pass with the sentence deleted. `(?i)scopes?[^.]*(?:lend|words)` and
+    ;; `(?i)anonymous|visitor` were both tried here and both matched the listing's
+    ;; *pre-feature* text — `Scopes are a stronger boundary than the tags … in as
+    ;; many words`, and the four other places `anonymous` already appeared — so
+    ;; they pinned nothing at all. `lend` and `nobody else` appear nowhere in the
+    ;; old file, which is what makes these bite. `\s+` and not a literal space,
+    ;; for the reason given three assertions down.
+    (testing "the Scope routes say what their `tags` are for, and the listing says
+              a Scope lends its words to what is filed under it — an agent that
+              cannot read that cannot know why a Recipe came back for a word that
+              is nowhere in it"
+      (is (re-find #"(?i)tags" (doc-for "GET" "/api/scopes")))
+      (is (re-find #"(?i)tags" (doc-for "POST" "/api/scopes")))
+      (is (re-find #"(?i)tags" (doc-for "PUT" "/api/scopes/:id")))
+      (is (re-find #"(?i)lend\s+it\s+their\s+words" (doc-for "GET" "/api/recipes"))))
+    (testing "and it says whose search they widen, which is the one rule a caller
+              would otherwise get wrong by analogy with a Recipe's tags"
+      (is (re-find #"(?i)scopes'?\s+words[^.]*nobody\s+else" (doc-for "GET" "/api/recipes"))))
     (testing "the reads say a visitor is sent no key"
       ;; \s+ rather than a space: these docstrings are wrapped, so a literal " "
       ;; would be asserting where the line breaks fall

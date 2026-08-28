@@ -119,7 +119,7 @@
            :inbox []             ;; the owner's unseen changes his agents made, oldest first
            :dismissing-proposal nil ;; event id of the proposal awaiting a dismiss confirmation
            :machine-user nil     ;; {:exists :username :password_set_at} — never a password
-           :scopes []            ;; the owner's Scopes — [{:id :title :description :recipe_count}]
+           :scopes []            ;; the owner's Scopes — [{:id :title :description :tags :recipe_count}]
            :editing-scope nil    ;; id of the Scope being edited in place
            :deleting-scope nil})) ;; id of the Scope awaiting a delete confirmation
 
@@ -662,21 +662,29 @@
 ;; ---------------------------------------------------------------------------
 ;; Scopes
 ;;
-;; The owner's categories: a title, a description, and 0 to n of them on any
-;; Recipe. Owner-only on the server — a signed-out caller gets a 403 from
+;; The owner's categories: a title, a description, its tags, and 0 to n of them on
+;; any Recipe. Owner-only on the server — a signed-out caller gets a 403 from
 ;; `/api/scopes` and no `scopes` key on any Recipe — so everything here is only
 ;; ever called while signed in, and `logout` drops the list rather than hiding it.
 ;;
+;; A Scope's `tags` are extra search terms it lends to every Recipe filed under it,
+;; so the shelf's search box answers to them — see `views/scopes` for what the field
+;; says and `db.scope/search-clause` for the query. Nothing here has to teach the
+;; search about them: the words are added by the endpoint the shelf already asks.
+;;
 ;; Anything that changes a Scope refetches the **Recipes** too, not just the list:
-;; the badges on the cards carry each Scope's title, so a rename that refreshed
-;; only this list would leave the shelf showing the old word.
+;; the badges on the cards carry each Scope's title, and the search terms of the
+;; whole shelf now include its words — so a rename or a retag that refreshed only
+;; this list would leave the shelf showing the old word and answering to it.
 
 (defn fetch-scopes []
   (api/fetch-json "/api/scopes" (auth-headers)
     (fn [scopes] (swap! *app-state assoc :scopes (vec scopes)))))
 
-(defn add-scope [{:keys [title description]} on-success]
-  (api/post-json "/api/scopes" {:title title :description (or description "")}
+(defn add-scope [{:keys [title description tags]} on-success]
+  (api/post-json "/api/scopes" {:title title
+                                :description (or description "")
+                                :tags (or tags "")}
                  (auth-headers)
     (fn [_]
       (fetch-scopes)

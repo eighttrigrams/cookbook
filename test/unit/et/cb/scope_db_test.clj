@@ -4,9 +4,12 @@
 
   Three questions are kept apart here because they fail independently.
 
-  *The entity* — a title and a description, unique per owner, an omitted field
-  keeping its value on a save. Ordinary CRUD, and the only surprise in it is that
-  a duplicate title comes back as nil rather than as a SQLite exception.
+  *The entity* — a title, a description and its tags, unique per owner, an omitted
+  field keeping its value on a save. Ordinary CRUD, and the only surprise in it is
+  that a duplicate title comes back as nil rather than as a SQLite exception. The
+  tags are checked here as a *column* only: what they do — lend their words to the
+  search of everything filed under the Scope — is a `:where` clause, and it is
+  pinned in `et.cb.search-test`.
 
   *The associations* — absent keeps, present replaces, empty clears, and an id the
   caller does not own is dropped. Plus the thing that makes them filing rather than
@@ -104,6 +107,50 @@
     (testing "an empty description is a real value and does clear it"
       (is (= "" (:description (db.scope/update-scope h/*ds* h/*user-id* id
                                                      {:description ""})))))))
+
+(deftest a-scope-carries-tags-of-its-own
+  ;; The column itself. **What the tags *do* is not here**: they are extra search
+  ;; terms for everything filed under the Scope, and that is a `:where` clause, so
+  ;; it is pinned in `et.cb.search-test` beside the rest of the search semantics —
+  ;; over HTTP in `et.cb.scopes-integration-test`.
+  (testing "a create that says nothing about them leaves the column at its default,
+            so every Scope reads as untagged rather than as null"
+    (is (= "" (:tags (scope! "Deployment")))))
+  (testing "and one that does carries them straight through, untrimmed like a
+            Recipe's — the title is the only field here that is a name"
+    (let [created (db.scope/create-scope h/*ds* h/*user-id*
+                                         {:title "  utwig  "
+                                          :tags "  backend tag2 tag3"})]
+      (is (= "utwig" (:title created)))
+      (is (= "  backend tag2 tag3" (:tags created)))))
+  (testing "they come back on every read of the entity, since a Scope now *is* the
+            three of them"
+    (let [utwig (first (filter #(= "utwig" (:title %)) (scopes)))]
+      (is (= "  backend tag2 tag3" (:tags utwig)))
+      (is (= "  backend tag2 tag3" (:tags (db.scope/get-scope h/*ds* h/*user-id*
+                                                              (:id utwig))))))
+    (is (= {"Deployment" "" "utwig" "  backend tag2 tag3"}
+           (into {} (map (juxt :title :tags)) (scopes))))))
+
+(deftest an-omitted-tags-key-keeps-what-is-there
+  (let [{:keys [id]} (db.scope/create-scope h/*ds* h/*user-id*
+                                            {:title "utwig" :tags "backend"})]
+    (testing "a rename cannot silently drop the words every Recipe in the Scope is
+              found by — the pair `merge-tags` makes for a Recipe"
+      (let [saved (db.scope/update-scope h/*ds* h/*user-id* id {:title "zwutig"})]
+        (is (= "zwutig" (:title saved)))
+        (is (= "backend" (:tags saved)))))
+    (testing "nor can an edit meant for the description"
+      (is (= "backend" (:tags (db.scope/update-scope h/*ds* h/*user-id* id
+                                                     {:description "the backend one"})))))
+    (testing "while a new value replaces them, and the neighbours are left alone"
+      (let [saved (db.scope/update-scope h/*ds* h/*user-id* id {:tags "frontend"})]
+        (is (= "frontend" (:tags saved)))
+        (is (= "zwutig" (:title saved)))
+        (is (= "the backend one" (:description saved)))))
+    (testing "and an empty string is a real value that clears them, which is the
+              only way to say 'none'"
+      (is (= "" (:tags (db.scope/update-scope h/*ds* h/*user-id* id {:tags ""})))))))
 
 (deftest a-rename-onto-another-title-is-refused-but-onto-its-own-is-not
   (let [{bread :id} (scope! "Bread")
