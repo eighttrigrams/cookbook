@@ -238,7 +238,14 @@
             (is (= "2021-06-06 06:06:06" (:modified_at after)))
             (is (= 7 (:version after))))
           (testing "and the same for a history row"
-            (is (= (dissoc history-before :source) (dissoc history-after :source)))
+            ;; Key by key here too, and for the reason the recipe half above already
+            ;; gives — which had it right first and left this line to be found by the
+            ;; next migration that added a column. That was 015 (`reason`,
+            ;; `context`): whole-map equality failed because the *later* migration
+            ;; had done its job, which is a test asserting the absence of work rather
+            ;; than the correctness of the rebuild under test.
+            (let [carried (dissoc history-before :source)]
+              (is (= carried (select-keys history-after (keys carried)))))
             (is (= "old body" (:description history-after))))))
       (finally (clean!)))))
 

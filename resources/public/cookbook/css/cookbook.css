@@ -1213,6 +1213,25 @@ html.dark-mode .pending-badge { background: rgba(245, 158, 11, 0.18); }
 .diff-meta-row.changed { background: rgba(180, 83, 9, 0.12); }
 .diff-meta-row.changed .diff-meta-value { color: var(--accent); font-weight: 600; }
 
+/* What the agent said about its own write — `Why` and `Context`, since migration
+   015. Ruled off from the two rows above because it is a different kind of thing:
+   those are the fields being compared and marked when they differ, this is one
+   side's account of itself and is never marked. Quieter than them for the same
+   reason — it is read once, after the difference has been seen, and it must not
+   compete with the accent wash that means 'this is what changed'. The rule and the
+   whole block are absent when there is nothing to say, which is every version the
+   owner wrote and every version older than 015. */
+.diff-meta-explanation {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--glass-border);
+  font-size: 0.92em;
+}
+.diff-meta-explanation .diff-meta-value { color: var(--text-secondary); }
+
 .diff-editor {
   border: 1px solid var(--border-color);
   border-radius: 10px;

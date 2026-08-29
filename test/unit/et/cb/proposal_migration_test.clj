@@ -48,8 +48,13 @@
   (let [[ds clean!] (temp-file-db "cb-proposals-up")]
     (try
       (is (contains? (tables ds) "recipe_proposals"))
+      ;; `reason` and `context` are 015's, not 011's: this database is migrated all
+      ;; the way up, so the set below is the table's *current* shape. Named rather
+      ;; than loosened to `contains?`, so a column arriving here has to be written
+      ;; down somewhere — and this is the file that notices.
       (is (= #{"id" "recipe_id" "user_id" "base_version" "title" "useful_when"
-               "description" "created_at" "modified_at" "resolved_at" "resolution"}
+               "description" "created_at" "modified_at" "resolved_at" "resolution"
+               "reason" "context"}
              (columns ds "recipe_proposals")))
       (testing "three content fields and no filing: a proposal is a proposed
                 *version*, and tags and Scopes are not versioned"

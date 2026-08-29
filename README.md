@@ -237,7 +237,10 @@ caller with no credentials.
 something left to open.** The version viewer is where a change is read: what a
 `modified` save changed, what a `created` Recipe says, and on a `proposed` entry the
 agent's text against the Recipe's, with Approve and Dismiss in the viewer's header
-beside the pair on the row. **Not on every entry, though** — a `deleted` entry's title
+beside the pair on the row. **And it is where the agent says why** — `reason` and
+`context` are shown on the item page, under the fields being compared and on the
+agent's side of them, never in the overview: the queue's rows are for deciding what to
+look at, and an explanation is what you read once you are looking. **Not on every entry, though** — a `deleted` entry's title
 is plain text, and so is a `created` or `modified` one whose Recipe has since gone: the
 history went with it, so there is nothing to show and a link would 404. `openable?`
 decides that from the server's `recipe_exists` rather than from the kind, because the
@@ -599,6 +602,7 @@ are the interface, not decoration.
   body — see *Which lines are his*.
 - `POST /api/recipes` — `{:title :useful_when :description}`. Title required.
   The new recipe is version 1 and private; `published` is not accepted here.
+  **From a machine token, `reason` and `context` are required too** — see below.
 - `PUT /api/recipes/:id` — the same three fields; anything you leave out keeps
   its current value, on a proposal exactly as on a save. Pass `modified_at` from your
   last read to be told (409) when someone else saved in between. A save that changes
@@ -610,11 +614,35 @@ are the interface, not decoration.
   Recipe a `tags` or `scope_ids` key makes the whole call a 403. **A save that made a
   new version answers with `caution` beside the row** — the split of the version it just
   wrote; one that made none does not carry the key at all, and does not need to.
+- **Every machine write says why: `reason` and `context`, both required, on POST and
+  PUT alike.** *evry create or change needs a reason, that will be part of that
+  verion.* `reason` is why the change was made; `context` is **what the agent was
+  working on when it made it** — the task, the repository, the bug — and it is the
+  half that cannot be reconstructed from the diff afterwards, which is why it is a
+  field of its own rather than a hopeful sentence in the first one. Missing or blank
+  either is a **400 that writes nothing at all**: no Recipe, no version, no filing, no
+  proposal, no inbox entry. It holds even when the write turns out to change nothing,
+  because whether it would is only knowable after the comparison the answer would
+  depend on — one rule an agent can hold beats one that is true except when it is not.
+  The owner's own writes carry neither and are never asked: the pair exists to explain
+  an agent's work to the person reviewing it, and he is that person.
+
+  **The pair follows the write wherever it lands.** Straight through, it is stored on
+  the version. Filed as a proposal, it rides with the proposal, is shown on the item
+  page where the proposal is approved or dismissed, and is **copied onto the version
+  on approval** — so the sentences read while deciding are the sentences the version
+  page keeps. A revision (`?overwrite=true`) replaces them along with the text they
+  explain, and a new version never inherits the last one's: a reason describes the
+  write it arrived with or it describes nothing.
 - `DELETE /api/recipes/:id` — the recipe and its whole history. Its inbox entries
   survive it; a pending proposal on it is closed.
 - `GET /api/recipes/:id/versions` — every version, newest first, each with all
-  three fields, its `created_at` and its `source`. The newest carries
-  `current: true`. Owner-only.
+  three fields, its `created_at`, its `source` and — where a machine wrote it — the
+  `reason` and `context` it gave. The newest carries `current: true`. Owner-only.
+  **Both are absent far more often than not**: every version older than the rule, and
+  every version the owner wrote, has neither, so the version page shows those two
+  lines where there is something to show and nothing where there is not. Absent is
+  the ordinary case and not a gap to be filled in later.
 - `POST /api/recipes/:id/publish` — set the latch. **Idempotent**: publishing
   something already published is a 200 no-op and does not move `published_at`,
   because the first publish is the fact being recorded. Not a content change —

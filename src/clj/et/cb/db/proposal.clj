@@ -43,10 +43,18 @@
 
 (def ^:private proposal-columns
   "What a proposal is, read back. The three content fields, what it was written
-  against, and the two stamps — `created_at` for its place in the queue and
-  `modified_at` for the last revision of it."
+  against, the two stamps — `created_at` for its place in the queue and
+  `modified_at` for the last revision of it — and the agent's own two sentences
+  about the write.
+
+  **`reason` and `context` are read back because this *is* the review surface.**
+  They were asked for here first — *shown on the inbox when i look at the item …
+  on the item page for review* — and a proposal that could not hand them to the page
+  deciding on it would be the one place the pair is missing when it matters most.
+  They are NULL on every proposal filed before migration 015, and the page shows a
+  line only where there is one."
   [:id :recipe_id :base_version :title :useful_when :description
-   :created_at :modified_at])
+   :created_at :modified_at :reason :context])
 
 (defn- unresolved
   "The clause that makes this table's whole design work, in one place: a proposal is
@@ -151,15 +159,27 @@
   Either way the entry is titled with the **Recipe's** title and never with the
   proposal's — see `recipe-title`.
 
+  **`reason` and `context` ride with the text and are replaced with it**, which is
+  the only thing a revision could do with them: the pending proposal is whatever the
+  agent last proposed, so a second `?overwrite=true` write carrying a new
+  explanation is now explaining the text it also just replaced. Keeping the first
+  attempt's sentences beside the third attempt's text is the mismatch this avoids.
+
   Returns the proposal as it now reads."
-  [ds user-id recipe-id current-version {:keys [title useful_when description]}]
+  [ds user-id recipe-id current-version {:keys [title useful_when description reason context]}]
   (jdbc/with-transaction [tx (db/get-conn ds)]
     (let [existing (pending-for tx user-id recipe-id)
           title-now (recipe-title tx user-id recipe-id)
           values {:base_version current-version
                   :title title
                   :useful_when (or useful_when "")
-                  :description (or description "")}]
+                  :description (or description "")
+                  ;; NULL rather than `""` for a caller that sends nothing, so that
+                  ;; 'not recorded' stays distinguishable from 'said nothing' — 015's
+                  ;; call. Through the API a machine cannot send nothing (400), so in
+                  ;; practice a NULL here is a proposal from before that rule.
+                  :reason reason
+                  :context context}]
       (if existing
         (let [result (jdbc/execute-one! tx
                        (sql/format {:update :recipe_proposals
@@ -349,6 +369,16 @@
                                                 :recipe_proposals.description
                                                 :recipe_proposals.created_at
                                                 :recipe_proposals.modified_at
+                                                ;; The agent's account of the write,
+                                                ;; and **this** is the read that
+                                                ;; carries it to the page he decides
+                                                ;; on: the item page draws the entry
+                                                ;; out of the queue rather than
+                                                ;; fetching the proposal again. NULL
+                                                ;; on anything filed before 015, and
+                                                ;; the surface draws no line for one.
+                                                :recipe_proposals.reason
+                                                :recipe_proposals.context
                                                 [:recipes.version :recipe_version]
                                                 [:recipes.published :recipe_published]
                                                 [:recipes.title :current_title]

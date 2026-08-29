@@ -1,0 +1,52 @@
+{:up ["ALTER TABLE recipes ADD COLUMN reason TEXT"
+      "ALTER TABLE recipes ADD COLUMN context TEXT"
+      "ALTER TABLE recipe_history ADD COLUMN reason TEXT"
+      "ALTER TABLE recipe_history ADD COLUMN context TEXT"
+      "ALTER TABLE recipe_proposals ADD COLUMN reason TEXT"
+      "ALTER TABLE recipe_proposals ADD COLUMN context TEXT"]
+ ;; **Why a version exists and what its writer was doing**, in the agent's own
+ ;; words, recorded at the moment it wrote: *evry create or change needs a reason,
+ ;; that will be part of that verion and shown on the inbox when i look at the item
+ ;; … and then also on that versions page.*
+ ;;
+ ;; **Two fields and not one, because they answer two questions.** *make it
+ ;; explicit. lets make two fields there, both mandatory. reason and context.* The
+ ;; first version of this migration had a single `reason` whose documentation asked
+ ;; the agent to also say what it had been working on — which is a field with two
+ ;; jobs and a docstring hoping for the second one. `reason` is why this change was
+ ;; made; `context` is what the agent was doing when it made it, the session and the
+ ;; task around the edit. A reviewer reading a rewrite months later needs both, and
+ ;; only one of them can be guessed from the diff.
+ ;;
+ ;; **Three tables, and each is the same pair in the place that fact lives.**
+ ;; `recipes` and `recipe_history` are 005's split kept whole: the current version is
+ ;; the row and the superseded ones are history rows, so a per-version column has to
+ ;; be on both or a Recipe's newest reason would vanish the moment it was superseded.
+ ;; `recipe_proposals` is the third because a machine write does not always become a
+ ;; version — on a Recipe the owner has touched, or a published one, it is filed as a
+ ;; proposal instead — and *that* is the surface these were asked for on. They ride
+ ;; with the proposal and are copied onto the version when the owner approves, so the
+ ;; sentences he reads while deciding are the sentences the history keeps.
+ ;;
+ ;; **Nullable with no default, and NULL means 'not recorded' rather than 'none'** —
+ ;; 005's call, made again for the same reason and with his blessing: *its ok when
+ ;; old entries doent have that yet, but new ones must have it.* Every version and
+ ;; every proposal that exists when this runs comes out NULL, and nothing can recover
+ ;; what an agent was thinking months ago; a `DEFAULT ''` would make 'unrecorded' and
+ ;; 'said nothing' the same answer, and the surfaces that show these would have to
+ ;; guess which they were looking at. They show a line when there is one and stay
+ ;; silent when there is not.
+ ;;
+ ;; **The requirement is on the writer, not on the column.** A machine `POST` or
+ ;; `PUT` missing either one is a 400 before anything is written — see
+ ;; `server.recipe-handler` — while the owner's own writes carry neither and never
+ ;; will, because his edits are not the ones being reviewed. So the columns are
+ ;; nullable in the schema and mandatory in the only path that can fill them, which
+ ;; is the honest arrangement: `NOT NULL` here would have forced his every save to
+ ;; invent a value, and a `CHECK` cannot tell a machine write from his.
+ :down ["ALTER TABLE recipes DROP COLUMN reason"
+        "ALTER TABLE recipes DROP COLUMN context"
+        "ALTER TABLE recipe_history DROP COLUMN reason"
+        "ALTER TABLE recipe_history DROP COLUMN context"
+        "ALTER TABLE recipe_proposals DROP COLUMN reason"
+        "ALTER TABLE recipe_proposals DROP COLUMN context"]}

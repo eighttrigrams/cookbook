@@ -215,22 +215,55 @@
      ;; words.
      [:span.diff-meta-value (str value)])])
 
+(defn- explanation-rows
+  "**Why this write happened and what its author was doing**, when there is an
+  answer — the pair a machine write has carried since migration 015.
+
+  Rendered only where present, and absent is the ordinary case rather than a gap:
+  every version written before 015 has neither, and a version the *owner* wrote
+  never will, because the pair exists to explain an agent's work to the person
+  reviewing it. A row reading `Why: —` on his own writes would be a column of
+  em-dashes down the whole history saying nothing.
+
+  **Never marked as changed**, unlike the two content rows beside them. `meta-row`'s
+  mark means *this is what differs between the two versions you are comparing*, and
+  two versions written months apart always have different reasons — a mark that is
+  on by definition tells a reader nothing and drowns the marks that mean something.
+  These are not being compared; each side's pair belongs to that side alone."
+  [{:keys [reason context]}]
+  (let [reason? (not (str/blank? (str reason)))
+        context? (not (str/blank? (str context)))]
+    ;; Wrapped, and only when there is something — so the rule above it is a
+    ;; separator between two kinds of thing and never a line under nothing. The two
+    ;; content rows are what the columns are comparing; this is what one side's
+    ;; author said about their own write.
+    (when (or reason? context?)
+      [:div.diff-meta-explanation
+       (when reason? [meta-row "Why" reason false])
+       (when context? [meta-row "Context" context false])])))
+
 (defn- side
-  "One column of the metadata strip, from a heading, a subheading and the two short
-  fields. `other` is what is on the far side, so a field that differs is marked on
-  both — the reader is comparing, and a mark on only one column would make them hunt
-  for what it replaced.
+  "One column of the metadata strip, from a heading, a subheading, the two short
+  fields and — where a machine wrote it — its account of itself. `other` is what is
+  on the far side, so a field that differs is marked on both: the reader is
+  comparing, and a mark on only one column would make them hunt for what it
+  replaced.
 
   It takes its two labels rather than deriving them, because there are two things
   being compared in this app now: two versions of a Recipe, and a Recipe against a
   proposal that is not a version at all. The layout is the same and the words are
-  not."
+  not.
+
+  The explanation sits under the two content rows and not above them: the fields are
+  what the reader is comparing, and the paragraph saying why is what they reach for
+  once they have seen the difference."
   [{:keys [heading sub] :as entry} other]
   [:div.diff-meta-side
    [:div.diff-meta-version heading]
    [:div.diff-meta-when sub]
    [meta-row "Title" (:title entry) (not= (:title entry) (:title other))]
-   [meta-row "Useful when" (:useful_when entry) (not= (:useful_when entry) (:useful_when other))]])
+   [meta-row "Useful when" (:useful_when entry) (not= (:useful_when entry) (:useful_when other))]
+   [explanation-rows entry]])
 
 (defn- as-side
   "One entry of a version list, with the two labels this comparison wants on it. The
@@ -361,13 +394,21 @@
     :title (:current_title proposal)
     :useful_when (:current_useful_when proposal)
     :description (:current_description proposal)}
+   ;; **The agent's own two sentences go on the agent's side**, which is the surface
+   ;; they were asked for — *shown on the inbox when i look at the item … on the item
+   ;; page for review*. On the right and never on the left: they explain the write
+   ;; being proposed, and the left column is the Recipe as it stands, whose own
+   ;; reason belongs to whoever last wrote it. They are absent on a proposal filed
+   ;; before migration 015, and the rows simply do not render.
    {:heading "Proposed by an agent"
     :sub (str "Against version " (:base_version proposal)
               (when (:modified_at proposal)
                 (str " · last revised " (:modified_at proposal))))
     :title (:title proposal)
     :useful_when (:useful_when proposal)
-    :description (:description proposal)}])
+    :description (:description proposal)
+    :reason (:reason proposal)
+    :context (:context proposal)}])
 
 (defn- proposal-actions
   "The two answers, **in the top bar above the surface he read them on.** *also, on the

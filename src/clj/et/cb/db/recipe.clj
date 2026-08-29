@@ -244,11 +244,23 @@
   verbosity one — `read-split-columns` argues why the pair is withheld where the
   total beside it is not. So the audience branch now adds three things rather than
   one, which is the shape to keep: one branch, one question, everything that
-  answers to it in the same place."
+  answers to it in the same place.
+
+  **`reason` and `context` ride on *both* axes**, which no other pair here does, and
+  each half is a different argument. They are the owner's — an agent's `context` is
+  the session it was in when it wrote, which is a fact about how he works rather
+  than about the Recipe, the side of the line `tags` and `scopes` are already on. And
+  they are **not lean**, unlike the tags: nothing on a collapsed card shows them, so
+  putting them on every row of a listing would be paying for a paragraph per card
+  that no surface reads. The two places that do read them — the review page and the
+  version page — both ask for one Recipe, and `update-recipe`'s own read is
+  `{:lean? false}`, which is what lets `archive!` carry the outgoing version's pair
+  into history."
   [lean? audience]
   (cond-> lean-select-columns
     (not lean?) (conj :description)
-    (not (visitor? audience)) (into (conj read-split-columns :tags))))
+    (not (visitor? audience)) (into (conj read-split-columns :tags))
+    (and (not lean?) (not (visitor? audience))) (into [:reason :context])))
 
 (defn- qualify
   "The same columns, `recipes.`-prefixed. Only the listing needs this, and only
@@ -886,7 +898,7 @@
   this one. His own create appends nothing: the inbox is what the agents did, and he
   does not need to be told about the Recipe he is looking at having written."
   ([ds user-id fields] (create-recipe ds user-id fields {}))
-  ([ds user-id {:keys [title useful_when description tags scope_ids]} opts]
+  ([ds user-id {:keys [title useful_when description tags scope_ids reason context]} opts]
    (jdbc/with-transaction [tx (db/get-conn ds)]
      (let [human? (:human? opts)
            result (jdbc/execute-one! tx
@@ -898,6 +910,14 @@
                                            :version 1
                                            :has_human_edit (if human? 1 0)
                                            :source (source-of opts)
+                                           ;; Whatever the caller said, including
+                                           ;; nothing: NULL is 'not recorded' and is
+                                           ;; the owner's normal case (see 015).
+                                           ;; That a *machine* create must say
+                                           ;; something is the handler's rule, made
+                                           ;; where a caller can be told why.
+                                           :reason reason
+                                           :context context
                                            :user_id user-id}]
                                  :returning (select-columns false user-id)})
                     db/jdbc-opts)]
@@ -983,7 +1003,14 @@
   Backwards, every version would be attributed to whoever wrote the *next* one: an
   agent's edit would retroactively relabel the owner's previous version as machine
   work. That reads as plausible in the UI and is wrong everywhere, which is why
-  `archive-order-is-the-whole-design` in the db tests pins it."
+  `archive-order-is-the-whole-design` in the db tests pins it.
+
+  **`reason` and `context` travel with `source` and for the identical reason.** They
+  are the outgoing version's own words about itself, so they go into history off the
+  row that is leaving, never off the save displacing it — otherwise an agent's
+  explanation of *this* edit would be filed as the explanation of the one before it,
+  which is the same backwards attribution one field along. They are NULL for every
+  version written before 015, and stay NULL: nothing can recover them."
   [tx current]
   (jdbc/execute-one! tx
     (sql/format {:insert-into :recipe_history
@@ -992,7 +1019,9 @@
                            :title (:title current)
                            :useful_when (:useful_when current)
                            :description (:description current)
-                           :source (:source current)}]})))
+                           :source (:source current)
+                           :reason (:reason current)
+                           :context (:context current)}]})))
 
 (defn update-recipe
   "Save the given fields as the new current state and archive the outgoing one.
@@ -1118,6 +1147,19 @@
                                                                      :tags incoming-tags
                                                                      :version (inc (:version current))
                                                                      :source (source-of opts)
+                                                                     ;; **Not merged the way the
+                                                                     ;; content is.** An omitted
+                                                                     ;; title keeps the old one;
+                                                                     ;; an omitted reason must
+                                                                     ;; *not* keep the old one,
+                                                                     ;; because it would then read
+                                                                     ;; as this version's own
+                                                                     ;; explanation while
+                                                                     ;; describing the last one.
+                                                                     ;; The new version says why
+                                                                     ;; it exists or says nothing.
+                                                                     :reason (:reason fields)
+                                                                     :context (:context fields)
                                                                      :modified_at [:raw "datetime('now')"])
                                                         human? (assoc :has_human_edit 1))
                                                  :where [:= :id id]
@@ -1175,7 +1217,15 @@
   - **`archive!` is called before the write**, like every other save here, so the
     outgoing version goes into history with its *own* source rather than with
     `machine`. Approving must not relabel what he wrote — the
-    `archive-order-is-the-whole-design` property, met by a second write path."
+    `archive-order-is-the-whole-design` property, met by a second write path.
+  - **The proposal's `reason` and `context` are copied onto the version**, which is
+    what makes the pair worth having at all: the sentences he read while deciding
+    become the sentences the version page shows afterwards, so the answer to *why
+    does v4 say this* is the same text on both surfaces rather than something the
+    review page knew and the history lost. They travel with `source`, and for the
+    same reason — this text is the agent's account of the write, and approving does
+    not make it the owner's. A proposal filed before migration 015 carries NULL and
+    hands NULL on, which is the honest answer for a version nobody explained."
   [ds user-id proposal]
   (jdbc/with-transaction [tx (db/get-conn ds)]
     (let [current (get-recipe tx user-id (:recipe_id proposal) {:lean? false})]
@@ -1191,6 +1241,8 @@
                                         :description (or (:description proposal) "")
                                         :version (inc (:version current))
                                         :source [:inline "machine"]
+                                        :reason (:reason proposal)
+                                        :context (:context proposal)
                                         :modified_at [:raw "datetime('now')"]}
                                   :where [:= :id (:recipe_id proposal)]
                                   :returning (select-columns false user-id)})
@@ -1431,7 +1483,15 @@
   entry's off the row, the older ones off their own history rows. It is always one
   of `'ui'` and `'machine'`; a nil was possible until migration 010 and is not any
   more, so a reader stepping through a history no longer meets a version whose
-  origin is a third thing."
+  origin is a third thing.
+
+  **`:reason` and `:context` come the same two ways and are `nil` far more often**,
+  which is the difference worth stating. They are what the agent said it was doing
+  when it wrote that version, they are mandatory only on a machine write, and no
+  version written before migration 015 has them — so a reader stepping through a
+  history meets them on the newest entries and not on the old ones, and the page
+  shows a line only where there is one. A version the *owner* wrote never has them
+  by design, so their absence is not a gap to be filled in later."
   [ds user-id id]
   ;; **Tombstones included**, which is what makes a deleted Recipe visitable: the
   ;; queue's `deleted` entry opens the version viewer, and the viewer asks for this.
@@ -1442,7 +1502,7 @@
   (when-let [current (get-recipe ds user-id id {:lean? false :tombstones? true})]
     (let [history (jdbc/execute! (db/get-conn ds)
                     (sql/format {:select [:version :title :useful_when :description :created_at
-                                          :source]
+                                          :source :reason :context]
                                  :from [:recipe_history]
                                  :where [:= :recipe_id id]
                                  :order-by [[:version :desc]]})
@@ -1451,6 +1511,8 @@
                                :version (:version current)
                                :created_at (:modified_at current)
                                :source (:source current)
+                               :reason (:reason current)
+                               :context (:context current)
                                :current true)]
                        history)
        :total (inc (count history))

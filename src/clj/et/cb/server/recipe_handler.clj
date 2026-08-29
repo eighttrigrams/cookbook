@@ -84,8 +84,58 @@
   "What a recipe write may carry. Named once so the create and the save cannot
   drift apart about it, and as an allowlist rather than a dissoc of the fields that
   are refused: `published`, `has_human_edit` and `source` are not writable from a
-  body, and a key nobody selected is a key nobody can smuggle in."
-  [:title :useful_when :description :tags :scope_ids])
+  body, and a key nobody selected is a key nobody can smuggle in.
+
+  **`reason` and `context` are in the list and are still not content.** They are
+  writable — a version records what its writer said about itself — but they change
+  no text, so `content-would-change?` never consults them: a machine `PUT` carrying
+  only a new reason changes nothing, and a no-op stays a no-op. What makes them
+  unlike the other five is that they are *required* of one kind of caller, which is
+  `machine-write-explanation-missing` below and not this list."
+  [:title :useful_when :description :tags :scope_ids :reason :context])
+
+(def ^:private explanation-fields
+  "The pair a machine write has to carry: **why** the change was made, and **what
+  the agent was doing** when it made it.
+
+  Two fields rather than one — *make it explicit. lets make two fields there, both
+  mandatory. reason and context* — because they answer two questions and only one
+  of them is guessable from the diff. A rewrite six months old shows *what* changed;
+  `reason` says why it was worth changing, and `context` says what the agent was
+  working on at the time, which is the thing that makes the queue readable in a
+  batch: the entries from one session read as one session."
+  [:reason :context])
+
+(defn- machine-write-explanation-missing
+  "The field names a machine write left blank, in order, or nil when it carried
+  both. nil for the owner's own writes, always.
+
+  **Only a machine is held to this**, and the asymmetry is the point: the pair
+  exists to explain an agent's edit to the person reviewing it, and the owner is
+  that person — a field asking him why he edited his own Recipe would be a prompt on
+  every save answered by nobody. So his writes carry NULL, the schema allows it (see
+  migration 015), and this is the only place the requirement lives.
+
+  Blank counts as missing, whitespace included: an agent that sends `\" \"` to get
+  past a presence check has satisfied nothing, and the surfaces would show an empty
+  line where an explanation was promised."
+  [req body]
+  (when (common/machine-caller? req)
+    (seq (filterv #(str/blank? (str (get body %))) explanation-fields))))
+
+(defn- explanation-missing-response
+  "One 400 for both writes, naming the fields that were missing and what they are
+  for — an agent that gets this back has to be able to fix it without reading
+  anything else, which is the same standard `/api/describe` is held to."
+  [missing]
+  {:status 400
+   :body {:error (str "A machine write must say why: "
+                      (str/join " and " (map name missing))
+                      " "
+                      (if (= 1 (count missing)) "is" "are")
+                      " required. `reason` is why this change was made; `context` is"
+                      " what you were working on when you made it.")
+          :missing (mapv name missing)}})
 
 (defn- bad-scope-ids?
   "Whether `scope_ids` is present and is not an array of integers.
@@ -118,10 +168,17 @@
   one shape, so a caller that learns to read it from one learns to read the other.
   `base_version` is in it because that is what tells the agent what the proposal was
   written against, and `modified_at` because that is what says whether it is the text
-  the agent itself last wrote or a revision it has since forgotten."
+  the agent itself last wrote or a revision it has since forgotten.
+
+  **`reason` and `context` are in it for the second of those reasons**, one field
+  further: an agent meeting the 409 is reading a proposal it may not have written —
+  another agent's, or its own from a session it no longer remembers — and the two
+  sentences saying why that text is there are what decide whether replacing it with
+  `?overwrite=true` is right. On the 202 they are the receipt for what was just
+  filed."
   [proposal]
   (select-keys proposal [:title :useful_when :description :base_version
-                         :created_at :modified_at]))
+                         :created_at :modified_at :reason :context]))
 
 (defn- stale-write-response
   "The 409 for a save that raced somebody else, **named**. PUT /api/recipes/:id can
@@ -552,7 +609,27 @@
   **A machine's create is announced in the owner's inbox** (GET /api/inbox) as a
   `created` entry, so writing here is not writing unobserved: he goes through what
   his agents wrote oldest-first. His own creates make no entry — the inbox is the
-  record of what the agents did, not a change log."
+  record of what the agents did, not a change log.
+
+  **From a machine token, `reason` and `context` are required, and a create without
+  both is a 400 that writes nothing** — no Recipe and no inbox entry. They are two
+  questions, and answering one in the other's field wastes the pair:
+
+  - **`reason`** — why this Recipe is worth writing. What you learned, what it is
+    for, why it deserves a place on the shelf rather than living in the transcript
+    of the session that produced it.
+  - **`context`** — *what you were working on when you wrote it.* The task, the
+    repository, the bug, the conversation. Name it concretely enough that a reader
+    six months from now can tell which piece of work this came out of: `debugging a
+    flaky auth test in tracker` says something, `working on code` does not. This is
+    the field the owner reads to make sense of a queue of entries in a batch — the
+    ones from a single session read as a single session — and it is the one thing
+    that cannot be recovered from the diff afterwards.
+
+  Both are stored on the version this create makes and shown beside it on the
+  Recipe's version page. Blank or whitespace does not count as an answer. The owner's
+  own creates carry neither and are never asked for them: the pair exists to explain
+  an agent's work to the person reviewing it."
   [req]
   (let [user-id (common/get-user-id req)
         {:keys [title] :as body} (:body req)]
@@ -563,16 +640,49 @@
       (bad-scope-ids? body)
       bad-scope-ids-response
 
+      ;; Checked before the write and after the shape checks, so a machine that
+      ;; forgot to say why is told that and not something else — and so that a
+      ;; refused create writes nothing at all, inbox entry included.
       :else
-      {:status 201
-       :body (db.recipe/create-recipe (common/ensure-ds) user-id
-                                      (select-keys body writable-fields)
-                                      {:human? (human-write? req)})})))
+      (if-let [missing (machine-write-explanation-missing req body)]
+        (explanation-missing-response missing)
+        {:status 201
+         :body (db.recipe/create-recipe (common/ensure-ds) user-id
+                                        (select-keys body writable-fields)
+                                        {:human? (human-write? req)})}))))
 
 (defn update-recipe-handler
   "PUT /api/recipes/:id — save {:title :useful_when :description :tags
-  :scope_ids}. A field you leave out keeps its current value, so an edit meant for
-  one field cannot silently clear the others; a blank title is refused with 400.
+  :scope_ids}, plus {:reason :context} from a machine. A field you leave out keeps
+  its current value, so an edit meant for one field cannot silently clear the
+  others; a blank title is refused with 400.
+
+  **From a machine token, `reason` and `context` are required on every write to this
+  route, and one without both is a 400 that writes nothing** — not the content, not
+  the filing, not a proposal. Two questions, and the second is the one agents get
+  wrong by answering the first twice:
+
+  - **`reason`** — why you are changing this Recipe. What was wrong, missing or
+    newly learned.
+  - **`context`** — *what you were working on when you changed it.* The task, the
+    repository, the bug, the conversation that led you here. `while fixing a
+    flaky auth test in tracker` is a context; `improving the docs` is not. It is
+    what lets the owner read a queue of entries in a batch and see which session
+    each one came out of, and it is the only part of a write that cannot be
+    reconstructed from the diff.
+
+  **The pair follows the write wherever it lands.** If the save goes straight
+  through, they are stored on the version it makes. If it becomes a proposal (below),
+  they ride with the proposal, are shown on the item page where you approve or
+  dismiss it, and are **copied onto the version on approval** — so the sentences read
+  while deciding are the sentences the version page keeps. They are replaced whole by
+  a revision (`?overwrite=true`), never merged from the previous version: a reason is
+  about the write it came with. Blank or whitespace is not an answer.
+
+  **The requirement holds even when the write turns out to change nothing**, because
+  whether it would is only knowable after the comparison the answer would depend on.
+  One rule — every machine write says why — rather than one that is true except when
+  it happens not to be. The owner's own saves carry neither and are never asked.
 
   Every save that changes **content** archives the outgoing state as a version
   and moves the row to the next one. A save that changes nothing is a no-op —
@@ -712,6 +822,22 @@
       (bad-scope-ids? body)
       bad-scope-ids-response
 
+      ;; **Before the branch that decides whether this is a save or a proposal**, so
+      ;; that one rule covers both landings: an agent has to say why whatever becomes
+      ;; of its write. Below the shape checks for the reason the create's copy of this
+      ;; is, and above every write — including the filing-only one inside the proposal
+      ;; branch, which would otherwise apply the tags of a request that is about to be
+      ;; refused.
+      ;;
+      ;; It covers a machine PUT that turns out to be a **no-op** too, and that is
+      ;; deliberate rather than overlooked: whether the text would change is a question
+      ;; only the db layer answers, so a caller cannot be told 'you may skip the reason
+      ;; this time' without first doing the comparison the answer depends on. One rule
+      ;; an agent can hold — *every write says why* — beats a rule that is true except
+      ;; when it happens not to be.
+      (machine-write-explanation-missing req body)
+      (explanation-missing-response (machine-write-explanation-missing req body))
+
       ;; **The three conditions that make this a proposal instead of a save**, in this
       ;; order and all of them. A machine caller, a Recipe that is not the agents' to
       ;; write, and content that would actually change — the last one is what keeps a
@@ -762,8 +888,17 @@
               ;; `update-recipe` would have applied had this been a direct write. That
               ;; is the point: the same PUT means the same thing whether it lands or
               ;; waits. `merge-content` also trims the title, like every other write.
+              ;; **The explanation is taken off the body and never merged from
+              ;; `current`.** `merge-content` exists because an omitted field keeps
+              ;; its value; the pair beside it must do the opposite, for the reason
+              ;; `update-recipe` gives one file over — a reason inherited from the
+              ;; version being proposed against would read as this proposal's own
+              ;; account of itself while describing somebody else's write. The 400
+              ;; above is what makes an omission unreachable here for a machine.
               proposal (db.proposal/propose! ds user-id id (:version current)
-                                             (db.recipe/merge-content current body))]
+                                             (assoc (db.recipe/merge-content current body)
+                                                    :reason (:reason body)
+                                                    :context (:context body)))]
           {:status 202
            :body {:pending (pending-body proposal)
                   :recipe (db.recipe/get-recipe ds user-id id {:lean? false :scopes? true})}}))

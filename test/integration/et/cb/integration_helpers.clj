@@ -100,13 +100,45 @@
   [owner-id]
   (auth/create-machine-token owner-id "machine-user"))
 
+(def machine-explanation
+  "The `reason` and `context` every machine write to a Recipe route must carry
+  since migration 015, as a test would send them.
+
+  **Merged into a machine's write body by `build-request` rather than typed at
+  sixty call sites**, and that is a decision about what these tests are *for*. Every
+  one of them — the caution splits, the provenance labels, the proposal matrix — is
+  about something else, and a machine `PUT` that omitted the pair would now be a 400
+  in all of them: sixty tests failing for one reason none of them is about, and
+  sixty places to edit again the next time a write gains a required field.
+
+  A helper that made the tests exempt from the rule would be worse, so it does not:
+  it sends what a real agent has to send. The rule itself is asserted where it
+  belongs, in `et.cb.write-reason-integration-test`, which builds its bodies by hand
+  precisely so that this default cannot satisfy the assertions about its absence."
+  {:reason "why the test's agent made this change"
+   :context "the test that was running when it did"})
+
+(defn- machine-token?
+  "Whether this token is a machine's, read off the claim rather than off how the
+  test happened to obtain the string — the same question `common/machine-caller?`
+  asks of a real request."
+  [token]
+  (boolean (:machine? (auth/verify-token token))))
+
 (defn- build-request [method path {:keys [body token anonymous? as-user]}]
-  (cond-> (mock/request method path)
-    token (mock/header "Authorization" (str "Bearer " token))
-    (and (not token) (not anonymous?))
-    (mock/header "X-User-Id" (str (or as-user *user-id*)))
-    body (-> (mock/header "Content-Type" "application/json")
-             (mock/body (json/generate-string body)))))
+  (let [body (cond-> body
+               ;; Only a machine's write, and only a write: a human token's body is
+               ;; left exactly as the test wrote it, because the owner's saves carry
+               ;; neither field and a helper adding them would be storing an
+               ;; explanation the app says he never gives.
+               (and body token (machine-token? token) (#{:post :put} method))
+               (#(merge machine-explanation %)))]
+    (cond-> (mock/request method path)
+      token (mock/header "Authorization" (str "Bearer " token))
+      (and (not token) (not anonymous?))
+      (mock/header "X-User-Id" (str (or as-user *user-id*)))
+      body (-> (mock/header "Content-Type" "application/json")
+               (mock/body (json/generate-string body))))))
 
 (defn API-raw
   "One request, body left exactly as the app produced it. For the routes that
