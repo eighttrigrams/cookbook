@@ -698,10 +698,27 @@
   for one. **Where it learns that from is `:versions-deleted-at` and not `:details`**,
   which is not a detail: `/api/recipes/:id` answers 404 for a tombstone, so `:details`
   never holds one at all, and the version list is the one read that sees it. What it
-  draws instead is `deleted-note`."
+  draws instead is `deleted-note`.
+
+  **And a fifth: not when this was opened from the Recipe's own page.** *since scopes
+  are not version controlled on recipes, we can make that we dont show the scopes on
+  that version page for a recipe.* Opened that way this surface is a history — the
+  filing is not in it, cannot be stepped through it, and a row of chips above two
+  versions reads as though it were part of what changed. It is also one click behind
+  you: the picker on the Recipe page is where you just came from, so nothing is lost
+  by not repeating it.
+
+  **Which is why this is a condition and not a deletion.** The tray's pages keep it,
+  because he asked for it there in as many words — *on the individual pages reachable
+  from the review tray lets have the option to add or change scopes* — and triaging
+  what an agent wrote and filing it really are one motion. The two instructions only
+  hold together if the origin decides, and `:page` already answers *where did I come
+  from* for `back-to-origin`, so this reads the same field rather than introducing a
+  second answer that could disagree with it."
   [recipe-id]
-  (let [{:keys [logged-in? details versions-deleted-at]} @state/*app-state]
+  (let [{:keys [logged-in? details versions-deleted-at page]} @state/*app-state]
     (when (and logged-in? recipe-id
+               (not= :recipe page)
                (get details recipe-id)
                (nil? (get versions-deleted-at recipe-id)))
       [recipe-fields/scope-picker

@@ -240,7 +240,13 @@ agent's text against the Recipe's, with Approve and Dismiss in the viewer's head
 beside the pair on the row. **And it is where the agent says why** — `reason` and
 `context` are shown on the item page, under the fields being compared and on the
 agent's side of them, never in the overview: the queue's rows are for deciding what to
-look at, and an explanation is what you read once you are looking. **Not on every entry, though** — a `deleted` entry's title
+look at, and an explanation is what you read once you are looking.
+
+**The Scopes are on the tray's pages and not on a Recipe's own version page.** Filing
+is not versioned, so a row of chips above two versions reads as though it were part of
+what changed; on the page a queue row opens it stays, because triaging what an agent
+wrote and filing it are one motion, and on the version page reached from a Recipe it
+goes, because the picker there is one click behind you. **Not on every entry, though** — a `deleted` entry's title
 is plain text, and so is a `created` or `modified` one whose Recipe has since gone: the
 history went with it, so there is nothing to show and a link would 404. `openable?`
 decides that from the server's `recipe_exists` rather than from the kind, because the
