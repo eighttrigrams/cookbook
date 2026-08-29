@@ -478,6 +478,23 @@ Recipe, not part of it*, so there is nothing for a form to batch and nothing an 
 would have to unwind. Unfiling the last one clears the set rather than leaving it
 alone, which is `[]` and not an omitted key on the wire.
 
+**Once the list outgrows being scanned, the row carries a find-box** — *an search
+input, when i put something in, it matches scopes by title or tags as usual and only
+shows the filtered ones, whether they are active or not*. It narrows the chips by the
+same word-prefix rule the shelf's search uses, over each Scope's title **and its
+tags**, so `clau` leaves `claude-code` and `claude-coordinator` and `apple` finds the
+Scope that has claimed the word in its tags. It is indifferent to whether a chip is
+lit — the box answers *which Scopes are called this*, never *which are selected*, so
+the same word finds the chip whether you are filing under it or unfiling from it — and
+an **×** clears it, appearing only while there is something to clear. Narrowing what is
+on screen changes nothing, so a filter can be left in place and no surface has to
+remember to clear it before saving.
+
+It is on the three surfaces that *file* — a Recipe's own page, the Add form, and the
+page a queue row opens — and deliberately **not** on the shelf, whose chip row sits an
+inch under a search box that already narrows Recipes by a Scope's words. Two inputs
+that close together doing two different things is worse than a long row.
+
 **Editing is a second address: `/recipe/<id>?edit=true`.** The four content fields
 — title, useful-when, tags, body — behind a Save, on a page rather than in a modal,
 so it can be linked to, reloaded and left with Back like everything else here. It

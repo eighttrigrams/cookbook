@@ -186,3 +186,33 @@
             the one place the two evaluators of this rule differ, stated where a
             reader of either would meet it"
     (is (true? (filters/word-prefix-match? "kä" "KÄSE")))))
+
+(deftest matching-scopes-narrows-a-list-of-scopes
+  ;; The two surfaces that ask this ask it for opposite reasons — the Scopes page
+  ;; while a name is being typed, a picker to find one chip among forty — so it is
+  ;; one function and this is where it is pinned.
+  (let [scopes [{:id 1 :title "claude-code" :tags "anthropic cli"}
+                {:id 2 :title "claude-coordinator" :tags "orchestration"}
+                {:id 3 :title "macos" :tags "apple laptop"}
+                {:id 4 :title "taxes" :tags ""}]
+        titles #(mapv :title (filters/matching-scopes scopes %))]
+    (testing "a prefix of any word in the title, across the hyphen"
+      (is (= ["claude-code" "claude-coordinator"] (titles "clau")))
+      (is (= ["claude-coordinator"] (titles "coord")))
+      (is (= ["claude-code"] (titles "code"))))
+    (testing "**and a word that is only in the tags**, which is the half a
+              title-only filter would lose: the Scope claiming that word is exactly
+              the one you are looking for"
+      (is (= ["macos"] (titles "apple")))
+      (is (= ["claude-code"] (titles "cli"))))
+    (testing "two terms, ANDed, each free to land in either field"
+      (is (= ["claude-code"] (titles "clau cli")))
+      (is (empty? (titles "clau apple"))))
+    (testing "a blank filter leaves the list whole, which is what makes it a filter
+              and not a mode"
+      (is (= 4 (count (filters/matching-scopes scopes ""))))
+      (is (= 4 (count (filters/matching-scopes scopes nil)))))
+    (testing "a Scope with no tags is matched on its title alone rather than skipped"
+      (is (= ["taxes"] (titles "tax"))))
+    (testing "and nothing matching is empty rather than everything"
+      (is (empty? (titles "zzz"))))))

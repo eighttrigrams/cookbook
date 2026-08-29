@@ -724,7 +724,11 @@
       [recipe-fields/scope-picker
        {:selected (state/filed-under recipe-id)
         :on-toggle #(state/toggle-recipe-scope recipe-id %)
-        :class "diff-filing"}])))
+        :class "diff-filing"
+        ;; The row he was looking at when he asked for the find-box: this is the
+        ;; page a queue row opens, where forty chips sit above the text being
+        ;; reviewed and the Scope wanted is one he can already name.
+        :filterable? true}])))
 
 (defn- deleted-note
   "Said on the surface when what is open is a **deleted** Recipe: it is off the shelf,

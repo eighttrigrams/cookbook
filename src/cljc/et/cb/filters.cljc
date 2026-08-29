@@ -114,6 +114,24 @@
   (let [terms (search-terms search)]
     (every? (fn [term] (some #(word-prefix-match? term %) values)) terms)))
 
+(defn matching-scopes
+  "The Scopes a half-typed string leaves on screen: the shelf's own word-prefix
+  rule, over each Scope's **title and its tags**.
+
+  **Two surfaces ask this and they ask it for opposite reasons**, which is why it
+  lives here rather than on either. The Scopes page filters while a name is being
+  typed, to show what the new name might collide with; a Scope picker filters to
+  find one chip among forty. Same question — *which of these answers to what I have
+  typed* — so the answer is one function, and a picker cannot come to disagree with
+  the page that made the Scopes about what a word is.
+
+  **The tags are in it because they are already what a Scope answers to.** A word
+  typed here is a word that finds this Scope's Recipes on the shelf, so matching on
+  title alone would hide the Scope that has claimed it. A blank search leaves the
+  list whole, which is what makes this a filter and not a mode."
+  [scopes search]
+  (filterv #(matches-word-prefix-search? search [(:title %) (:tags %)]) scopes))
+
 (defn badge-gesture
   "Which of a Scope badge's two filter gestures a click runs, or nil for none.
 

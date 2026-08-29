@@ -91,4 +91,8 @@
      ;; default says *Categories this Recipe is filed under*, and there is no Recipe
      ;; yet to be filed — what a chip means here is where this one will go.
      :label "Scopes"
-     :label-title "Categories to file this Recipe under when you save it"}]])
+     :label-title "Categories to file this Recipe under when you save it"
+     ;; The find-box, for the same reason the Recipe's own page has one — the list is
+     ;; the same forty chips, and here it sits under a body you have just written,
+     ;; where four lines of them push Save off the bottom of the form.
+     :filterable? true}]])

@@ -10,7 +10,10 @@
   Same argument as `ui.recipe-badges` and `ui.scope-badges` one field along: what
   is here is here because two surfaces would otherwise each grow their own, and
   two spellings of one control is how they drift."
-  (:require [et.cb.ui.cm-textarea :as cm-textarea]
+  (:require [clojure.string :as str]
+            [reagent.core :as r]
+            [et.cb.filters :as filters]
+            [et.cb.ui.cm-textarea :as cm-textarea]
             [et.cb.ui.state :as state]))
 
 (def tags-placeholder
@@ -141,25 +144,83 @@
   moment later and swallowing it would lose it, here there is nothing for it to do
   at all. `:disabled-title` is what to say instead of the description, because a
   refused control that does not say why is the trap `excluded-scopes-strip` exists
-  to prevent, one layer up."
-  [{:keys [selected on-toggle class label label-title disabled? disabled-title]
-    :or {label "Scopes"
-         label-title "Categories this Recipe is filed under"}}]
-  ;; The deref happens out here, before the `for`. A deref inside the body of a
-  ;; lazy seq is evaluated after reagent has stopped watching, so the chips would
-  ;; not repaint when one was clicked — and reagent says so at the console rather
-  ;; than silently.
-  (let [scopes (:scopes @state/*app-state)]
-    (when (seq scopes)
-      [:div.scope-picker {:class class}
-       [:span.scope-picker-label {:title label-title} label]
-       (for [{:keys [id title description]} scopes]
-         ^{:key id}
-         [:button.scope-chip
-          {:type "button"
-           :class (str (when (contains? selected id) "on")
-                       (when disabled? " refused"))
-           :disabled (boolean disabled?)
-           :title (if disabled? disabled-title description)
-           :on-click #(on-toggle id)}
-          title])])))
+  to prevent, one layer up.
+
+  **`:filterable?` puts a find-box at the head of the row**, for the surfaces where
+  the list has outgrown being scanned: *i need a way to have an search input, when i
+  put something in, it matches scopes by title or tags as usual and only shows the
+  filtered ones, whether they are active or not. and then i can activate or
+  deactivate those matching ones. and an x button clears the filter.* Forty chips
+  over four lines is a control you read rather than use, and the Recipe you are
+  filing usually belongs to one you can already name.
+
+  Three things it deliberately does not do, each of which is a way of getting this
+  wrong:
+
+  - **It does not care whether a chip is on.** *whether they are active or not* —
+    the box answers *which Scopes are called this*, never *which are selected*, so
+    the same word finds the chip you meant whether you are about to file under it or
+    unfile from it. A filter that quietly dropped the active ones would hide exactly
+    the chip a second thought is about.
+  - **It does not touch the filing.** Narrowing what is on screen is not a change to
+    anything, and clearing the box brings every chip back with the same ones lit. So
+    it is honest to leave a filter in place, and no surface has to remember to clear
+    it before saving.
+  - **It holds its own text and nothing else.** The filter is a view of the list, not
+    a fact about the Recipe, so it lives in a ratom here rather than in
+    `state/*app-state` — nothing else reads it, and it dies with the surface.
+
+  It is **opt-in and off on the shelf**, which is the one caller that must not have
+  it: the shelf's chip row sits directly under a search box that already narrows
+  Recipes by a Scope's words, and two inputs an inch apart doing two different
+  things is worse than a long row. `:label` made the same call for the same reason —
+  what a surface gets to say about a shared control is what it is for *here*."
+  [_]
+  (let [filter-text (r/atom "")]
+    (fn [{:keys [selected on-toggle class label label-title disabled? disabled-title
+                 filterable?]
+          :or {label "Scopes"
+               label-title "Categories this Recipe is filed under"}}]
+      ;; The deref happens out here, before the `for`. A deref inside the body of a
+      ;; lazy seq is evaluated after reagent has stopped watching, so the chips would
+      ;; not repaint when one was clicked — and reagent says so at the console rather
+      ;; than silently.
+      (let [scopes (:scopes @state/*app-state)
+            typed (if filterable? @filter-text "")
+            shown (filters/matching-scopes scopes typed)]
+        (when (seq scopes)
+          [:div.scope-picker {:class class}
+           [:span.scope-picker-label {:title label-title} label]
+           (when filterable?
+             [:span.scope-picker-find
+              [:input.scope-picker-filter
+               {:type "text"
+                :placeholder "Find a Scope…"
+                :value @filter-text
+                :disabled (boolean disabled?)
+                :title (when disabled? disabled-title)
+                :on-change #(reset! filter-text (-> % .-target .-value))}]
+              ;; Only while there is something to clear. A permanent `×` beside an
+              ;; empty box is a control that cannot do anything — the same argument
+              ;; that renders this whole picker as nothing when there are no Scopes.
+              (when-not (str/blank? @filter-text)
+                [:button.scope-picker-clear
+                 {:type "button"
+                  :title "Clear the filter"
+                  :on-click #(reset! filter-text "")}
+                 "×"])])
+           (for [{:keys [id title description]} shown]
+             ^{:key id}
+             [:button.scope-chip
+              {:type "button"
+               :class (str (when (contains? selected id) "on")
+                           (when disabled? " refused"))
+               :disabled (boolean disabled?)
+               :title (if disabled? disabled-title description)
+               :on-click #(on-toggle id)}
+              title])
+           ;; Said rather than left as an empty row, which is indistinguishable from
+           ;; a picker that has failed to load — the argument `body-unchanged-note`
+           ;; makes on the diff surface.
+           (when (and filterable? (seq (str typed)) (empty? shown))
+             [:span.scope-picker-none "no Scope matches"])])))))

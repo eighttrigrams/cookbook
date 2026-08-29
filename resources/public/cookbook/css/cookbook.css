@@ -963,6 +963,49 @@ html.dark-mode .pending-badge { background: rgba(245, 158, 11, 0.18); }
   font-size: 0.8em;
   cursor: help;
 }
+
+/* The find-box, at the head of the row and inline with the chips rather than on a
+   line of its own: it is part of the control, and a row of forty chips is already
+   three lines tall on a Recipe page. Sized to a word or two — what gets typed here
+   is `clau` or `taxes`, never a sentence — so it takes no more room from the chips
+   than one of them does.
+   The `×` sits inside the box's own border, which is what makes the pair read as one
+   control; `.scope-picker-find` is the border, and the input inside it has none. */
+.scope-picker-find {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 4px 0 8px;
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  background: var(--glass-bg-subtle);
+}
+.scope-picker-filter {
+  width: 120px;
+  padding: 3px 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 0.85em;
+  color: var(--text-primary);
+}
+.scope-picker-clear {
+  padding: 0 4px;
+  border: none;
+  background: none;
+  color: var(--muted-text);
+  font-size: 1em;
+  line-height: 1;
+  cursor: pointer;
+}
+.scope-picker-clear:hover { color: var(--text-primary); }
+/* Said rather than left blank — an empty row where chips were is indistinguishable
+   from a picker that failed to load. */
+.scope-picker-none {
+  color: var(--muted-text);
+  font-size: 0.8em;
+  font-style: italic;
+}
 .scope-chip {
   padding: 3px 11px;
   border-radius: 999px;

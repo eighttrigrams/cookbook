@@ -196,7 +196,10 @@
   [recipe-fields/scope-picker
    {:selected (state/filed-under id)
     :on-toggle #(state/toggle-recipe-scope id %)
-    :class "recipe-page-filing"}])
+    :class "recipe-page-filing"
+    ;; Same list and the same problem, so the same box: filing from the Recipe
+    ;; itself is where most of it happens.
+    :filterable? true}])
 
 (defn navigation-actions
   "**Edit and Versions, in the top bar's left slot beside `← Shelf`.** *edit and

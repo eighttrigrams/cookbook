@@ -80,21 +80,13 @@
      (first (filter #(and (not= except-id (:id %)) (same-name? title (:title %)))
                     scopes)))))
 
-(defn matching-scopes
-  "The Scopes a half-typed title should leave on screen: the shelf's own
-  word-prefix rule, over each Scope's title **and its tags**, evaluated here rather
-  than fetched — *immediate feedback!*
-
-  **The tags are in it because they are already what a Scope answers to.** A word
-  typed in this box is a word that will find this Scope's Recipes, so filtering on
-  title alone would hide the Scope most likely to make the new name a bad idea: the
-  one already claiming that word for its own.
-
-  A blank title leaves the list whole, which is what makes this a filter and not a
-  mode — nothing to dismiss, and the page reads as it always did until you type."
-  [scopes title]
-  (filterv #(filters/matches-word-prefix-search? title [(:title %) (:tags %)])
-           scopes))
+(def matching-scopes
+  "The Scopes a half-typed title should leave on screen — `filters/matching-scopes`,
+  which is where it went once the Scope picker needed the same answer for the
+  opposite reason (find one chip among forty, rather than see what a new name might
+  collide with). Aliased here because this page's own code reads as one sentence
+  about composing a Scope, and because the name is what the test calls."
+  filters/matching-scopes)
 
 (defn- compose-row
   "Add a Scope. Enter submits from any field, like the Recipe compose form.
