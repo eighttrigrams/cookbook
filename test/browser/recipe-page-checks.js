@@ -200,26 +200,30 @@
                              right: barSlots('.top-bar-right')};
       await step('collapse it again', () => clickIn(cardFor(SUBJECT), '.card-header'));
 
-      // 13. **the card's footer is one button.** Publish, Edit, Versions and Delete
-      //     were beside Page and are on the Recipe's page now — *all the buttons go
-      //     to that page then* — so a footer that grew a fifth button back is this
-      //     change coming undone. Every card and not only the subject's: the footer
-      //     is `card`'s and one Recipe's would pass while the rest regressed.
+      // 13. **a card carries no buttons at all in its body.** Publish, Edit, Versions
+      //     and Delete moved to the Recipe's page — *all the buttons go to that page
+      //     then* — and Page itself has now gone the same way as a *gesture*: *instead
+      //     the page buttons … clicking on the text brings us to the page.* So the
+      //     footer is gone, and a card that grew one back is this change coming undone.
+      //     Every card and not only the subject's: the body is `card`'s and one
+      //     Recipe's would pass while the rest regressed.
       //
       //     It runs before check 1 because check 1 navigates. Numbers here are names
       //     and not positions, which the README says at length.
-      await check('13 a card carries Page and nothing else', () => {
+      await check('13 a card carries no buttons, and its text is what opens it', () => {
         const perCard = cards().map(c => ({
           title: c.querySelector('.card-title')?.textContent?.trim().slice(0, 30),
-          buttons: [...c.querySelectorAll('.card-actions button')].map(b => b.textContent.trim())}));
+          buttons: [...c.querySelectorAll('.card-footer button, .card-actions button')]
+            .map(b => b.textContent.trim()),
+          openableText: !!c.querySelector('.card-text.openable')}));
         return {pass: perCard.length > 0
-                      && perCard.every(c => c.buttons.length === 1 && c.buttons[0] === 'Page'),
+                      && perCard.every(c => c.buttons.length === 0 && c.openableText),
                 evidence: {loggedIn: stateGet('logged-in?'), perCard}};
       });
 
-      // 1. the one button navigates, and what it lands on is the Recipe
-      await check('1 the Page button opens the Recipe at its own address', async () => {
-        clickIn(cardFor(SUBJECT), '.card-actions button', 'Page');
+      // 1. the text navigates, and what it lands on is the Recipe
+      await check('1 clicking a card\'s text opens the Recipe at its own address', async () => {
+        cardFor(SUBJECT).querySelector('.card-text').click();
         await until(() => page() && document.querySelector('.recipe-page-body'));
         const title = text('.recipe-page-title');
         const body = text('.recipe-page-body');
@@ -403,7 +407,7 @@
       // a second run finds the row cached and paints it in one frame. An intermittent
       // red about a control that is there.
       await step('go back to the Recipe page', () =>
-        clickIn(cardFor(SUBJECT), '.card-actions button', 'Page'));
+        cardFor(SUBJECT).querySelector('.card-text').click());
       await until(() => page() && document.querySelector('.recipe-page-body'), 8000);
 
       // 14. **the four actions are reachable, across three containers.** Still the

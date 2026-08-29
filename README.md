@@ -383,11 +383,27 @@ anywhere. A card also wears a `proposal` badge while an agent is waiting for
 approval on it — see *Edits that need approving* — and that one is a badge and
 not a control: the deciding happens in the inbox, against the agent's text.
 
-**The shelf's cards carry one button, *Page*.** Publishing, editing, deleting,
-reading a version history and **filing under Scopes** are all on the Recipe's own
-page: a card is a retrieval index and the page is the one surface that is about one
-Recipe, so that is where the things you can do to it are. Editing has an address of
-its own — see *A Recipe's own address*.
+**The shelf's cards carry no buttons at all — the text is the way to the page.**
+Publishing, editing, deleting, reading a version history and **filing under Scopes**
+are all on the Recipe's own page: a card is a retrieval index and the page is the one
+surface that is about one Recipe, so that is where the things you can do to it are.
+Editing has an address of its own — see *A Recipe's own address*.
+
+There used to be a `Page` button in a footer for that last hop, and it is now the
+card's own text: *instead the page buttons, whether collapsed or open, clicking on
+the text brings us to the page.* The rule reads in one line — **the title collapses,
+the text opens** — and it holds in both states, since collapsed the text is the
+useful-when line and the filing words, and expanded the body joins them.
+
+**Selecting a line to copy it out still works**, which is the whole difficulty:
+*beware, selecting text for copy and paste must not be affected, so, it is simple
+clicking.* A click opens the Recipe only when nothing is selected, when it is the
+first click of its run, and when it did not land on something that already means
+something — a link in the body is followed, and **See more** does what it says and
+shows the rest. The one gesture it cannot tell from a plain click is the first click
+of a double-click-to-select-a-word; drag-select, which is how a line actually gets
+copied, is fully covered. The gesture is the owner's, like the button before it: a
+signed-out reader's card is text and nothing else.
 
 The shelf narrows four ways at once, all of them the endpoint's own clauses
 rather than anything the browser filters: the search box, the human-edited

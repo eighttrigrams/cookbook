@@ -9,8 +9,6 @@
   .search { flex: 1 1 100%; }
   .card { padding: 14px; }
   .card-title { font-size: 1em; }
-  .card-footer { flex-wrap: wrap; gap: 8px 12px; }
-  .card-actions { margin-left: 0; }
   .login-form { max-width: none; flex-wrap: wrap; }
   .login-form input { flex: 1 1 100%; }
   .top-bar-right { flex-wrap: wrap; }

@@ -407,6 +407,61 @@
                                :hint (scope-badge-hint gate)
                                :on-click badge-click}])
 
+(def ^:private text-click-exceptions
+  "What a click inside the card's text must be left alone for, as one selector.
+
+  Everything here already means something else, and a card that answered them by
+  navigating would be answering a gesture with the wrong page: `a` follows a link in
+  a rendered body, `button` is any control that finds its way in, and `.see-more`
+  is the one that would be maddening — it says what it does, and *the see more
+  button also must work properly and take us not to the page, but do what it says*."
+  "a, button, .see-more")
+
+(defn- open-page-on-plain-click
+  "The card's text as the way to the Recipe's page — *clicking on the text (but
+  beware, selecting text for copy and paste must not be affected, so, it is simple
+  clicking) brings us to the page*.
+
+  **A simple click and not any click**, which is three conditions:
+
+  - **Nothing is selected.** A drag-select ends in a `click` on the element the
+    gesture stayed within, so without this every attempt to copy a line out of a
+    card would land on another page with the selection thrown away. `isCollapsed`
+    is the browser's own answer to 'is there a selection', asked at the moment of
+    the click rather than tracked across the gesture — no mousedown coordinates to
+    keep, and nothing to go stale if the component re-renders mid-drag.
+  - **It is the first click of its run.** `detail` counts a multi-click, so the
+    second click of a double-click does not fire this a second time. `<= 1` and not
+    `= 1`, because a click dispatched in script — `el.click()`, which is how the
+    browser checks drive this — reports `detail: 0`, and a guard that read it as
+    'not a real click' would make the gesture untestable by the one harness that can
+    test it.
+  - **It did not land on something that already means something** — see
+    `text-click-exceptions`.
+
+  **The one gesture this cannot protect is double-click-to-select-a-word**: the
+  first click of it arrives with nothing yet selected and is indistinguishable from
+  a plain one, so it navigates. Stated rather than left to be discovered, because
+  the alternative is a timer on every click — a card that opens 200ms after you ask
+  it to, to serve a gesture that ends in `⌘C` on a page where the same words are
+  still selectable. Drag-select, which is how a line actually gets copied out of a
+  card, is fully covered.
+
+  **Owner-only, at the call site.** The Page button this replaces was gated, and
+  `card`'s own docstring argued why: a visitor has no route from the shelf to a
+  Recipe's page and ungating one would be a visibility change he has not asked for.
+  Replacing a button with a gesture must not quietly make that change."
+  [id]
+  {:on-click
+   (fn [e]
+     (let [target (.-target e)
+           selection (.getSelection js/window)]
+       (when (and (<= (.-detail e) 1)
+                  (or (nil? selection) (.-isCollapsed selection))
+                  (instance? js/Element target)
+                  (nil? (.closest target text-click-exceptions)))
+         (state/open-recipe-page id))))})
+
 (defn- card [{:keys [id title useful_when tags scopes version published published_at modified_at
                      pending]
               :as recipe}
@@ -446,39 +501,37 @@
       ;; that must not be made twice.
       [recipe-badges/views-badge recipe]
       [:span.card-date (recipe-badges/day modified_at)]]
-     (when (seq useful_when)
-       [:div.card-useful-when [markdown/render-inline useful_when]])
-     (when (and logged-in? (seq tags))
-       [recipe-badges/tags tags {:class "card-tags"}])
-     (when expanded?
-       [card-body (get details id)])
-     (when logged-in?
-       ;; **One button, and it is the way off the shelf.** Publish, Edit, Versions
-       ;; and Delete were here beside it and are on the Recipe's own page now — he
-       ;; asked for a card that carries nothing else and said where they were to go:
-       ;; *all the buttons go to that page then*. What is left is a card that is only
-       ;; the retrieval index this namespace's docstring says it is, and one route to
-       ;; the surface that can change the Recipe. `views.recipe/actions` is where the
-       ;; four went; nothing about them lives here any more.
-       ;;
-       ;; **"Page" and not "Open"**, because expanding the card is what "open"
-       ;; already means here — a reader with both words in front of them would have
-       ;; to guess which one leaves the shelf. What this does is put the Recipe at an
-       ;; address, so it is named after the thing it takes you to.
-       ;;
-       ;; **Still owner-only, and that is a decision rather than a leftover.** With
-       ;; the other four gone the gate around a single navigation looks like it could
-       ;; come off, and the consequence of keeping it is worth stating rather than
-       ;; discovering: a signed-out visitor has no footer, so from the shelf there is
-       ;; no button to a Recipe's page. They can still *follow* a link to a published
-       ;; one, which is what the address is for. Ungating it would be a visibility
-       ;; change he has not asked for, so it stays as it was.
-       [:div.card-footer
-        [:span.card-actions
-         [:button.secondary
-          {:on-click #(state/open-recipe-page id)
-           :title "Open this Recipe on a page of its own, at an address you can keep"}
-          "Page"]]])]))
+     ;; **Everything below the header is one click target**, and that is what makes
+     ;; the rule sayable in a sentence: the title collapses and the text opens. Both
+     ;; states, because the request was *whether collapsed or open* — collapsed, the
+     ;; text is the useful-when line and the filing words under it; expanded, the
+     ;; body joins them and the region simply grows.
+     ;;
+     ;; A wrapper rather than the handler on each of the three: they come and go
+     ;; independently (no useful-when, a visitor's missing tags, an unexpanded card),
+     ;; and three copies of one gesture is three places for it to come to differ. The
+     ;; div is empty and clickable on a Recipe with no useful-when that is collapsed,
+     ;; which costs nothing — it has no height.
+     ;; **And the footer went with the button.** *instead the page buttons … clicking
+     ;; on the text brings us to the page.* What stood here was one `Page` button and
+     ;; the argument for it — that a card is a retrieval index with exactly one route
+     ;; off it — and that argument is untouched: there is still exactly one route off
+     ;; a card, and it is now the text itself. The gate is not: it moved onto the
+     ;; wrapper below, so a visitor still has no way from the shelf to a page.
+     ;;
+     ;; What is lost with the button is the **keyboard**, and it is worth saying
+     ;; rather than discovering: a `div` with an `on-click` is not tabbable, so the
+     ;; text opens to a mouse and to nothing else. The title beside it is a real
+     ;; control and still collapses from the keyboard.
+     [:div.card-text
+      (cond-> {:class (when logged-in? "openable")}
+        logged-in? (merge (open-page-on-plain-click id)))
+      (when (seq useful_when)
+        [:div.card-useful-when [markdown/render-inline useful_when]])
+      (when (and logged-in? (seq tags))
+        [recipe-badges/tags tags {:class "card-tags"}])
+      (when expanded?
+        [card-body (get details id)])]]))
 
 (defn- order-switcher
   "Which of the two orders the shelf is in — *i also need a switcher on the main page

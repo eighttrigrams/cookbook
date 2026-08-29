@@ -617,15 +617,17 @@ html.dark-mode .pending-badge { background: rgba(245, 158, 11, 0.18); }
   text-decoration: underline;
 }
 
-.card-footer {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: 12px;
-  font-size: 0.85em;
-}
-.card-actions { display: flex; gap: 8px; margin-left: auto; }
-.card-actions button { padding: 6px 12px; font-size: 0.9em; }
+/* Everything below a card's header, and — for the owner — the way to the Recipe's
+   page. It replaced a `Page` button in the footer that used to be here, so the
+   footer is gone and this carries the only route off a card.
+
+   `cursor: pointer` on a block of prose is the one thing about it that has to be
+   got right: it is what tells a reader the text is a control, and it is *not* on a
+   visitor's card, where the text is only text. `user-select` is deliberately left
+   alone — selecting a line to copy it out is the gesture the click handler bends
+   over backwards not to break, and turning selection off here would break it in the
+   name of making the click tidier. */
+.card-text.openable { cursor: pointer; }
 
 /* --------------------------------------------------------------------------
    the edit modal */
