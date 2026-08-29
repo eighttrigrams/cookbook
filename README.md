@@ -345,6 +345,23 @@ unfiling a Recipe takes the word back — where a Recipe's own tags have to be t
 onto each of them. The Scopes page is where those tags are edited, beside the title
 and the line saying what belongs in the Scope.
 
+**A Scope's name is unique per owner, and the same name in another case is the same
+name.** `Baking`, `baking` and `BAKING` are one name and the second of them is
+refused — a shelf carrying all three is one where every filing decision is a guess
+and two badges on a card cannot be told apart. Leading and trailing space was
+already trimmed away, and the fold is a Unicode one, so `KÄSE` collides with `Käse`
+too. A rename is refused on the same rule, while re-casing a Scope's *own* name is
+not a clash with itself.
+
+**And the page says so before you commit to anything.** Typing a title filters the
+list below it by the shelf's own word-prefix rule — over each Scope's title *and its
+tags*, so `cla co` leaves `claude-code` and `claude-coordinator` standing, and a word
+that is only a tag still surfaces the Scope claiming it. If the name is taken the row
+it collides with is the one left on screen, Add goes dead and says which Scope it
+means; if nothing matches, the page says the name is free. The rule is shared code
+(`et.cb.filters`), not a second implementation: the search box and this filter agree
+about what a word is because they read the same string of separators.
+
 So **lean is the default**, in the API and in the UI alike: a listing and a plain
 `GET` carry no `description` key at all, `?detail=full` adds it, and expanding a
 card in the browser goes and fetches it. Recipes are **fully versioned** — every

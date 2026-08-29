@@ -1,6 +1,7 @@
 (ns et.cb.db
   (:require [next.jdbc :as jdbc]
             [next.jdbc.result-set :as rs]
+            [et.cb.filters :as filters]
             [et.cb.migrations :as migrations]
             [clojure.string :as str]
             [honey.sql :as sql]
@@ -97,23 +98,18 @@
      [:is column nil])))
 
 (def word-separator-chars
-  "What ends a word for `build-word-prefix-search-clause`.
+  "What ends a word, **defined in `et.cb.filters` and only aliased here**.
 
-  **The call:** a word is a run of letters and digits, and *every* other ASCII
-  character ends one — whitespace, but punctuation too. One rule with no
-  exceptions to remember, and it is the one that makes the real titles behave:
-  `re-heating` is two words, so `heating` finds it, and `make/start` is two, so
-  `start` does. A curated list would have to answer why `.` separates and `+`
-  does not.
+  It moved the day the Scopes page had to answer the same question about a list it
+  already holds, while the owner types — see `filters/matches-word-prefix-search?`.
+  Two evaluators, one rule: this file turns the string into `instr` tests for
+  SQLite and that one walks it directly, so `claude-coordinator` answers to
+  `coordinator` in the search box and in the compose filter alike.
 
-  Anything **outside** ASCII is a word character, deliberately: `Käse` stays one
-  word, so `se` does not find it. Treating every non-alphanumeric byte as a
-  separator would have made every accented letter a word boundary."
-  (str " \t\n\r"
-       "!\"#$%&'()*+,-./"
-       ":;<=>?@"
-       "[\\]^_`"
-       "{|}~"))
+  Kept as a name in this namespace rather than deleted, because the clause below
+  reads as one sentence about words and would otherwise be the only place in it
+  reaching into another namespace for a constant."
+  filters/word-separator-chars)
 
 (defn word-prefix-term-clause
   "**One** term's condition over `columns`: true when `term` is the prefix of some

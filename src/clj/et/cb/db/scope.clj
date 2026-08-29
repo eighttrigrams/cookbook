@@ -143,22 +143,45 @@
     db/jdbc-opts))
 
 (defn- title-taken?
-  "Whether this user already has a Scope with that title, ignoring `except-id` so
-  a rename onto its own title is not a clash.
+  "Whether this user already has a Scope by that name, ignoring `except-id` so a
+  rename onto its own title is not a clash.
 
-  `UNIQUE(title, user_id)` is the real constraint and this is the readable answer
-  in front of it — a caller gets 'that title is taken' instead of a SQLite
-  exception surfacing as a 500. It does not bind the nil owner's rows, because
-  SQLite treats NULLs in a UNIQUE index as distinct, so in dev this check *is* the
-  constraint rather than a friendlier restatement of it."
+  **The same name, whatever the case** — *make sure that in cookbook we cant create
+  two scopes with the same name.* `Baking`, `baking` and `BAKING` are one name, and
+  before this they were three Scopes: a shelf with all three on it is one where
+  every filing decision is a guess, and the badges on a card are indistinguishable
+  at a glance. Trimming already made ` Baking` the same name; case is the other
+  half of the same sentence.
+
+  **So this is now the constraint rather than a readable answer in front of one.**
+  `UNIQUE(title, user_id)` is still there and still catches an exact duplicate, but
+  it is a backstop that this check is strictly stricter than — and it is deliberately
+  *not* being replaced by a case-insensitive index. Two reasons, both about real
+  data: SQLite's `NOCASE` collation folds ASCII only, so it would disagree with the
+  fold below on the first non-ASCII title and leave two rules where there is meant to
+  be one; and a `CREATE UNIQUE INDEX` migration **fails outright** on a database that
+  already holds a case-variant pair, which is a deploy that stops on the owner's own
+  Scopes rather than a check that quietly starts refusing new ones. Existing rows are
+  left alone; what changes is what can be written from here on.
+
+  The fold is `str/lower-case`, which is the host's Unicode one, so `KÄSE` and `käse`
+  are the same name too — where SQLite's `lower()` would have called them different.
+  That is also why the comparison happens in Clojure over the user's own titles
+  rather than in the `:where` clause: the query cannot fold what this can, and the
+  list being read is one person's Scopes.
+
+  It does not bind the nil owner's rows through the index either, because SQLite
+  treats NULLs in a UNIQUE index as distinct — so in dev this check *is* the whole
+  constraint, exactly as it was before, and now it is the whole constraint everywhere."
   [ds user-id title except-id]
-  (some? (jdbc/execute-one! (db/get-conn ds)
-           (sql/format {:select [:id] :from [:scopes]
-                        :where (cond-> [:and
-                                        [:= :title title]
-                                        (db/user-id-where-clause user-id)]
+  (let [wanted (str/lower-case (str title))]
+    (->> (jdbc/execute! (db/get-conn ds)
+           (sql/format {:select [:id :title] :from [:scopes]
+                        :where (cond-> [:and (db/user-id-where-clause user-id)]
                                  except-id (conj [:<> :id except-id]))})
-           db/jdbc-opts)))
+           db/jdbc-opts)
+         (some (fn [row] (= wanted (str/lower-case (str (:title row))))))
+         boolean)))
 
 (defn create-scope
   "A new Scope: `{:title :description :tags}`, the title trimmed like a Recipe's and

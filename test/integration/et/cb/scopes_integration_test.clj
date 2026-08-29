@@ -185,9 +185,20 @@
       (let [resp (POST-json "/api/scopes" {:title "Bread"})]
         (is (= 409 (:status resp)))
         (is (re-find #"(?i)already" (:error (:body resp))))))
-    (testing "a rename onto another Scope's title is the same 409"
+    (testing "**and the same name in another case is the same name** — the 409 is
+              the code check's and not the index's here, since `UNIQUE(title,
+              user_id)` would have let all three of these through"
+      (doseq [t ["bread" "BREAD" "bReAd" "  BREAD  "]]
+        (is (= 409 (:status (POST-json "/api/scopes" {:title t}))) t))
+      (is (= ["Bread"] (mapv :title (:body (GET-json "/api/scopes"))))))
+    (testing "a rename onto another Scope's title is the same 409, in any case"
       (let [other (scope! "Deployment" "")]
-        (is (= 409 (:status (PUT-json (str "/api/scopes/" (:id other)) {:title "Bread"}))))))
+        (is (= 409 (:status (PUT-json (str "/api/scopes/" (:id other)) {:title "Bread"}))))
+        (is (= 409 (:status (PUT-json (str "/api/scopes/" (:id other)) {:title "bREAD"}))))
+        (testing "while re-casing its own name goes through, because a Scope does
+                  not clash with itself"
+          (is (= 200 (:status (PUT-json (str "/api/scopes/" (:id other))
+                                        {:title "deployment"})))))))
     (testing "and an id that matches nothing is a 404 on both the edit and the
               delete"
       (is (= 404 (:status (PUT-json "/api/scopes/99999" {:title "Ghost"}))))

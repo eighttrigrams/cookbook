@@ -121,3 +121,68 @@
       (when (and (:positive-active? gate) (not (:negative-active? gate)))
         (is (false? starts-negative?)
             (str "a badge may not start the negative filter from " gate))))))
+
+;; ---------------------------------------------------------------------------
+;; the word rule, which is here for the reason the gestures are
+;;
+;; `?search=` is a SQL clause and the Scopes page's compose filter is a predicate
+;; over a list already in hand, and they have to be the same rule. The clause's own
+;; behaviour is pinned against SQLite in `et.cb.search-test`; what is pinned here is
+;; the predicate, case for case against the same examples, so that a divergence
+;; shows up as a failure in one of the two files rather than as a filter that
+;; quietly disagrees with the search box above it.
+
+(deftest a-term-is-a-prefix-of-a-word-and-not-a-substring
+  (is (true? (filters/word-prefix-match? "cd" "abc cde")))
+  (is (false? (filters/word-prefix-match? "cd" "abcd")))
+  (testing "of any word, not only the first — the case the leading space buys"
+    (is (true? (filters/word-prefix-match? "star" "Sourdough starter")))
+    (is (true? (filters/word-prefix-match? "sour" "Sourdough starter"))))
+  (testing "and a whole word still matches, while one character past it does not"
+    (is (true? (filters/word-prefix-match? "abc" "abc cde")))
+    (is (false? (filters/word-prefix-match? "abcx" "abc cde")))))
+
+(deftest punctuation-ends-a-word-here-too
+  (testing "the two the order named, and the one the Scopes page is full of"
+    (is (true? (filters/word-prefix-match? "heating" "Re-heating pizza")))
+    (is (true? (filters/word-prefix-match? "start" "make/start")))
+    (is (true? (filters/word-prefix-match? "coordinator" "claude-coordinator"))))
+  (testing "a term may carry a separator, and then it has to be that one"
+    (is (true? (filters/word-prefix-match? "re-heat" "Re-heating pizza")))
+    (is (false? (filters/word-prefix-match? "re/heat" "Re-heating pizza"))))
+  (testing "while non-ASCII is a word character, so `se` does not find `Käse`"
+    (is (false? (filters/word-prefix-match? "se" "Käse")))
+    (is (true? (filters/word-prefix-match? "kä" "Käse")))))
+
+(deftest wildcards-are-ordinary-characters
+  ;; Neither side ever builds a pattern — the clause goes through `instr` and this
+  ;; goes through `includes?` — so this is the same fact asserted twice.
+  (is (true? (filters/word-prefix-match? "%" "100 % hydration")))
+  (is (false? (filters/word-prefix-match? "%" "Plain title")))
+  (is (true? (filters/word-prefix-match? "a_b" "a_b")))
+  (is (false? (filters/word-prefix-match? "a_b" "axb"))))
+
+(deftest terms-are-anded-and-values-are-ored
+  (let [scope ["claude-coordinator" "agentic backend"]]
+    (testing "each term may land in either value"
+      (is (true? (filters/matches-word-prefix-search? "cla back" scope)))
+      (is (true? (filters/matches-word-prefix-search? "back cla" scope)))
+      (is (true? (filters/matches-word-prefix-search? "coordinator agentic" scope))))
+    (testing "one term matching nothing fails the row, however well the others match"
+      (is (false? (filters/matches-word-prefix-search? "cla zzz" scope)))))
+  (testing "a blank search matches everything, the way the clause is nil for one"
+    (is (true? (filters/matches-word-prefix-search? "" ["anything"])))
+    (is (true? (filters/matches-word-prefix-search? "   \t " ["anything"])))
+    (is (true? (filters/matches-word-prefix-search? nil ["anything"]))))
+  (testing "and a nil value is a value with no words rather than an exception —
+            a Scope may have no tags"
+    (is (false? (filters/matches-word-prefix-search? "any" ["Title" nil])))
+    (is (true? (filters/matches-word-prefix-search? "tit" ["Title" nil])))))
+
+(deftest the-fold-is-case-insensitive-both-directions
+  (is (true? (filters/word-prefix-match? "ab" "ABC CDE")))
+  (is (true? (filters/matches-word-prefix-search? "AB CD" ["abc cde"])))
+  (testing "and it is the host's Unicode fold, unlike SQLite's ASCII `lower()` —
+            the one place the two evaluators of this rule differ, stated where a
+            reader of either would meet it"
+    (is (true? (filters/word-prefix-match? "kä" "KÄSE")))))

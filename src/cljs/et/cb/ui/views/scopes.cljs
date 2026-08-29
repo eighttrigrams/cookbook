@@ -38,6 +38,7 @@
   dialog says, with the count in it, and that is why it exists at all."
   (:require [reagent.core :as r]
             [clojure.string :as str]
+            [et.cb.filters :as filters]
             [et.cb.ui.page-lock :as page-lock]
             [et.cb.ui.state :as state]))
 
@@ -57,15 +58,59 @@
   can be worse than a shorter one."
   "Tags — words to find its Recipes by")
 
+(defn same-name?
+  "Whether two titles are **the same name** — trimmed and case-folded, which is
+  exactly what `db.scope/title-taken?` decides on the server.
+
+  Public so the page and its test read the one predicate. The client cannot be the
+  authority here (two tabs, an agent, a stale list), so this is not a second gate:
+  the endpoint still answers 409 and the error banner still works. What this buys is
+  that the owner is told *before* typing a description he is about to lose."
+  [a b]
+  (= (str/lower-case (str/trim (str a)))
+     (str/lower-case (str/trim (str b)))))
+
+(defn clashing-scope
+  "The Scope `title` would collide with, or nil. `except-id` is the row being
+  renamed, whose own name is not a clash with itself — the `except-id` of the
+  server's own check, in the same shape."
+  ([scopes title] (clashing-scope scopes title nil))
+  ([scopes title except-id]
+   (when-not (str/blank? (str title))
+     (first (filter #(and (not= except-id (:id %)) (same-name? title (:title %)))
+                    scopes)))))
+
+(defn matching-scopes
+  "The Scopes a half-typed title should leave on screen: the shelf's own
+  word-prefix rule, over each Scope's title **and its tags**, evaluated here rather
+  than fetched — *immediate feedback!*
+
+  **The tags are in it because they are already what a Scope answers to.** A word
+  typed in this box is a word that will find this Scope's Recipes, so filtering on
+  title alone would hide the Scope most likely to make the new name a bad idea: the
+  one already claiming that word for its own.
+
+  A blank title leaves the list whole, which is what makes this a filter and not a
+  mode — nothing to dismiss, and the page reads as it always did until you type."
+  [scopes title]
+  (filterv #(filters/matches-word-prefix-search? title [(:title %) (:tags %)])
+           scopes))
+
 (defn- compose-row
-  "Add a Scope. Enter submits from any field, like the Recipe compose form."
-  []
-  (let [title (r/atom "")
-        description (r/atom "")
+  "Add a Scope. Enter submits from any field, like the Recipe compose form.
+
+  **The title lives one level up**, in `scopes-block`, because the list below is
+  filtered by it as it is typed. It is a ratom passed in rather than a value and a
+  callback, and rather than a key in `state/*app-state`: a half-typed name is not
+  application state — nothing else reads it, `logout` need not clear it, and it dies
+  with the page the way a half-written Recipe does."
+  [title]
+  (let [description (r/atom "")
         tags (r/atom "")]
-    (fn []
-      (let [submit (fn []
-                     (when-not (str/blank? @title)
+    (fn [title]
+      (let [clash (clashing-scope (:scopes @state/*app-state) @title)
+            submit (fn []
+                     (when (and (not (str/blank? @title)) (nil? clash))
                        (state/add-scope {:title @title :description @description
                                          :tags @tags}
                                         (fn []
@@ -88,7 +133,19 @@
            :value @tags
            :on-change #(reset! tags (-> % .-target .-value))
            :on-key-down #(when (= (.-key %) "Enter") (submit))}]
-         [:button.scope-add {:on-click submit :disabled (str/blank? @title)} "Add"]]))))
+         [:button.scope-add
+          {:on-click submit :disabled (or (str/blank? @title) (some? clash))
+           :title (when clash (str "You already have a Scope called " (:title clash)))}
+          "Add"]
+         ;; **The whole row, so the note lands under the fields rather than beside
+         ;; them.** `flex-basis: 100%` on a wrapping flex row is the one way to say
+         ;; 'break here' without a nested container, and a note squeezed into the
+         ;; row's own gap is the shape that pushes Add off the end on a narrow window.
+         (when clash
+           [:div.scope-clash
+            "You already have a Scope called "
+            [:strong (:title clash)]
+            ". Names are the same name whatever the case, so pick another."])]))))
 
 (defn- edit-row
   "One Scope, in place. Editing here rather than in a modal because there are three
@@ -98,14 +155,22 @@
 
   **The save sends all three fields**, which matters for the tags for the reason it
   already mattered for the title: the endpoint keeps whatever a call leaves out, so
-  the only way a field can be *cleared* here is by being sent empty."
+  the only way a field can be *cleared* here is by being sent empty.
+
+  **A rename is the other way to end up with two Scopes of one name**, so it gets
+  the same warning the compose row does, off the same predicate and with this row
+  excepted — re-casing a Scope's own name (`ops` → `Ops`) is a rename onto itself
+  and must stay possible. The list is *not* filtered from this field, unlike the
+  compose one: the row you are editing would be the first thing to vanish out from
+  under the cursor."
   [scope]
   (let [title (r/atom (:title scope))
         description (r/atom (:description scope))
         tags (r/atom (:tags scope))]
     (fn [scope]
-      (let [save (fn []
-                   (when-not (str/blank? @title)
+      (let [clash (clashing-scope (:scopes @state/*app-state) @title (:id scope))
+            save (fn []
+                   (when (and (not (str/blank? @title)) (nil? clash))
                      (state/save-scope (:id scope)
                                        {:title @title :description @description
                                         :tags @tags}
@@ -127,8 +192,16 @@
            :on-change #(reset! tags (-> % .-target .-value))
            :on-key-down #(when (= (.-key %) "Enter") (save))}]
          [:span.scope-row-actions
-          [:button.scope-save {:on-click save :disabled (str/blank? @title)} "Save"]
-          [:button.secondary {:on-click state/stop-editing-scope} "Cancel"]]]))))
+          [:button.scope-save
+           {:on-click save :disabled (or (str/blank? @title) (some? clash))
+            :title (when clash (str "You already have a Scope called " (:title clash)))}
+           "Save"]
+          [:button.secondary {:on-click state/stop-editing-scope} "Cancel"]]
+         (when clash
+           [:div.scope-clash
+            "That is the name of your Scope "
+            [:strong (:title clash)]
+            "."])]))))
 
 (defn- filed-count
   "`recipe_count` in words. Spelled out rather than shown as a bare number so the
@@ -192,37 +265,60 @@
           (if @sending? "Deleting…" "Delete")]
          [:button.secondary {:on-click state/stop-deleting-scope} "Cancel"]]]])))
 
-(defn- scopes-block []
-  (let [{:keys [scopes editing-scope]} @state/*app-state]
-    [:div.scopes
-     [:h2 "Scopes"]
-     [:p.settings-note
-      "Categories to file Recipes under — a title, a line saying what belongs in
-       it, and tags. A Recipe can be in any number of them, chosen when you write it
-       or from its Edit form, and they show as badges on the cards. "
-      [:strong "The tags are extra search terms"]
-      ": a Scope's title and its tags find everything filed under it on the
-       overview page, as if those words were in each Recipe's own title — so
-       tagging one Scope "
-      [:code "backend"]
-      " makes every Recipe in it answer to that word, in one edit. "
-      [:strong "Yours alone"]
-      ": a signed-out reader of a published Recipe is not sent them at all, neither
-       is anyone else, and a Scope's words widen nobody's search but yours. An agent
-       with credentials is on your side of both — it reads this list from "
-      [:code "/api/describe"]
-      " to know where to file what it writes, and what to search for."]
-     [compose-row]
-     (if (empty? scopes)
-       [:div.scopes-empty "No Scopes yet."]
-       [:div.scopes-list
-        ;; The key goes on each branch's vector and not on the `if`: metadata on an
-        ;; `if` form is metadata on the form, which the reader drops before reagent
-        ;; ever sees it, and the result is a unique-key warning for every row.
-        (for [scope scopes]
-          (if (= editing-scope (:id scope))
-            ^{:key (:id scope)} [edit-row scope]
-            ^{:key (:id scope)} [scope-row scope]))])]))
+(defn- scopes-block
+  "The panel: the note, the compose row, and the list the compose row filters.
+
+  **A form-2 component now, and it has to be**, because the half-typed title is a
+  `r/atom` created here and read by both children. Created in the `let` that runs
+  once rather than in the render body, where it would be a fresh atom on every
+  keystroke's re-render — which is the bug that shape produces: a field that
+  discards what you type."
+  []
+  (let [compose-title (r/atom "")]
+    (fn []
+      (let [{:keys [scopes editing-scope]} @state/*app-state
+              typed @compose-title
+              shown (matching-scopes scopes typed)]
+        [:div.scopes
+         [:h2 "Scopes"]
+         [:p.settings-note
+          "Categories to file Recipes under — a title, a line saying what belongs in
+           it, and tags. A Recipe can be in any number of them, chosen when you write it
+           or from its Edit form, and they show as badges on the cards. "
+          [:strong "The tags are extra search terms"]
+          ": a Scope's title and its tags find everything filed under it on the
+           overview page, as if those words were in each Recipe's own title — so
+           tagging one Scope "
+          [:code "backend"]
+          " makes every Recipe in it answer to that word, in one edit. "
+          [:strong "Yours alone"]
+          ": a signed-out reader of a published Recipe is not sent them at all, neither
+           is anyone else, and a Scope's words widen nobody's search but yours. An agent
+           with credentials is on your side of both — it reads this list from "
+          [:code "/api/describe"]
+          " to know where to file what it writes, and what to search for."]
+         [compose-row compose-title]
+         ;; **Three empty states, and they are three different facts.** No Scopes at
+         ;; all; a title that matches none of them, which is the *good* answer while
+         ;; composing and says so; and the list itself. Collapsing the middle one into
+         ;; "No Scopes yet." would tell the owner of forty Scopes that he has none.
+         (cond
+           (empty? scopes)
+           [:div.scopes-empty "No Scopes yet."]
+
+           (empty? shown)
+           [:div.scopes-empty
+            "No Scope matches " [:strong typed] " — that name is free."]
+
+           :else
+           [:div.scopes-list
+            ;; The key goes on each branch's vector and not on the `if`: metadata on an
+            ;; `if` form is metadata on the form, which the reader drops before reagent
+            ;; ever sees it, and the result is a unique-key warning for every row.
+            (for [scope shown]
+              (if (= editing-scope (:id scope))
+                ^{:key (:id scope)} [edit-row scope]
+              ^{:key (:id scope)} [scope-row scope]))])]))))
 
 (defn scopes-page
   "The panel and its confirmation, as **siblings**.

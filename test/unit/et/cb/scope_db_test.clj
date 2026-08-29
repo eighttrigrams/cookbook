@@ -94,6 +94,47 @@
     (is (some? (scope! "Deployment")))
     (is (= ["Bread" "Deployment"] (mapv :title (scopes))))))
 
+(deftest the-same-name-in-another-case-is-the-same-name
+  ;; *make sure that in cookbook we cant create two scopes with the same name.*
+  ;; `Baking`, `baking` and `BAKING` were three Scopes before this, which is a shelf
+  ;; where every filing decision is a guess and the badges on a card are
+  ;; indistinguishable at a glance. Trimming already made ` Baking` one name; this is
+  ;; the other half of that sentence.
+  (scope! "Baking")
+  (testing "every casing of it is refused, and so is a casing with space around it"
+    (is (nil? (scope! "baking")))
+    (is (nil? (scope! "BAKING")))
+    (is (nil? (scope! "bAkInG")))
+    (is (nil? (scope! "  BaKing  "))))
+  (testing "the fold is the host's Unicode one and not SQLite's ASCII `lower()`,
+            which would have called these two different names"
+    (is (some? (scope! "Käse")))
+    (is (nil? (scope! "KÄSE"))))
+  (testing "a name that merely starts the same is still a different name — this is
+            equality, not the page's prefix filter"
+    (is (some? (scope! "Baking soda"))))
+  (testing "and nothing was written by any of the refusals"
+    (is (= ["Baking" "Baking soda" "Käse"] (mapv :title (scopes)))))
+  (testing "while another owner's shelf is untouched by all of it: the name is
+            unique *per owner*, which is what migration 007 fixed"
+    (is (some? (db.scope/create-scope h/*ds* (inc h/*user-id*) {:title "baking"})))))
+
+(deftest a-rename-into-another-case-of-a-name-is-refused-too
+  ;; The other way to end up with two Scopes of one name, and the one a check on
+  ;; create alone would miss.
+  (let [{bread :id} (scope! "Bread")
+        {deploy :id} (scope! "Deployment")]
+    (is (= db.scope/title-taken
+           (db.scope/update-scope h/*ds* h/*user-id* deploy {:title "bREAD"})))
+    (testing "the refused rename left the row alone"
+      (is (= "Deployment" (:title (db.scope/get-scope h/*ds* h/*user-id* deploy)))))
+    (testing "**but re-casing a Scope's own name is not a clash with itself** —
+              `except-id` is what makes `Bread` → `bread` a rename and not a
+              refusal, and it is the one case a naive check gets wrong"
+      (is (= "bread" (:title (db.scope/update-scope h/*ds* h/*user-id* bread
+                                                    {:title "bread"}))))
+      (is (= "bread" (:title (db.scope/get-scope h/*ds* h/*user-id* bread)))))))
+
 (deftest an-omitted-field-keeps-its-value-on-a-save
   (let [{:keys [id]} (scope! "Bread" "Anything with flour in it")]
     (testing "an edit meant for the description cannot silently blank the title"

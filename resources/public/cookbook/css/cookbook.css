@@ -860,6 +860,17 @@ html.dark-mode .pending-badge { background: rgba(245, 158, 11, 0.18); }
   color: var(--muted-text);
   font-size: 0.9em;
 }
+/* The name-clash note, in the compose row and in an editing row alike — both are
+   wrapping flex rows, so `flex-basis: 100%` is what puts it on a line of its own
+   instead of squeezing it in beside the fields and pushing the button off the end.
+   It reads as a refusal rather than an error: the button beside it is already
+   disabled, so nothing has failed and nothing was sent. */
+.scope-clash {
+  flex-basis: 100%;
+  padding-top: 6px;
+  color: #ff3b30;
+  font-size: 0.85em;
+}
 .scopes-list { display: flex; flex-direction: column; }
 
 /* One row per Scope. `auto 1fr auto auto auto` so the title column is as wide as
