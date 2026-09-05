@@ -550,6 +550,98 @@ and a published Recipe is served to anonymous visitors, so `marked` output
 reaching the DOM unsanitized would be an XSS route no sibling app has. Until all
 three are in, bodies render as plain text.
 
+## Encryption — the prose is sealed, the search surface is not
+
+Cookbook's **prose** is end-to-end encrypted: a Recipe's `description`, its
+`useful_when` line, the `reason` and `context` an agent writes about its own
+change — on the current row, on every superseded version, and on every proposal
+waiting in the inbox — and a Scope's `description`. Thirteen columns.
+
+Everything you **find** things by stays in the clear: titles, tags, Scopes and
+Scope tags. That is not a compromise, it is the same line this app already drew.
+`db.recipe/list-recipes` searches exactly those four things and the docstring
+argued for it before encryption was on the table — *names and curated words,
+never prose*. So sealing costs the search nothing at all: no rewritten query, no
+lost filter, no client-side fallback.
+
+### Where the seal lives, and why it is not here
+
+Cookbook runs on fly, and **the key is never sent there**. There is therefore no
+trusted middle process to seal in: the seal lives in the clients, and there are
+exactly two.
+
+- **The browser.** `et.cb.seal` on WebCrypto, with a non-extractable `CryptoKey`
+  in IndexedDB. Paste the key once into the ⚙ panel; the page can use it and
+  cannot read it back.
+- **`plurama-cli` / `cookbook-tui`.** `cookbook_seal.clj` on `javax.crypto`. This
+  is how agents read and write.
+
+Nothing in `src/clj` holds a key or needs one. The server stores text it cannot
+read, and every guard it applies — the publish latch, the `modified_at` race
+check, the machine-write rules, the search — runs on columns that are still in
+the clear.
+
+**Two credentials, and they answer different questions.** The machine-user
+password says who may *write*; the key says who may *read prose*.
+
+### The envelope
+
+    enc:v1:<base64(nonce ‖ ciphertext ‖ tag)>
+
+AES-256-GCM, a fresh 96-bit nonce per value, a 128-bit tag. It is stored as text
+in the column it came from, so the seal needs no schema migration, and the
+`enc:v1:` prefix is what makes **mixed state legal, permanently**: a value
+without it is plaintext and is handed back untouched.
+
+The AAD binds a ciphertext to what its column *means* — `recipe/description`,
+`scope/description` — so it cannot be lifted from one column into another by
+anyone holding the database file. It binds the meaning rather than the table
+because the server *moves these values between tables without a key*:
+`archive!` copies the row into `recipe_history` on every save, and
+`approve-proposal!` copies a proposal into the row. Bind to the table and a
+Recipe's own history stops opening after its first save.
+
+Three rules live in the seal API rather than at its call sites:
+
+1. **Never seal blank.** `nil` stays `nil`, `""` stays `""`, whitespace stays
+   whitespace. `reason` and `context` are nullable because *not recorded* and
+   *recorded, and nothing* mean different things, and ciphertext is neither.
+2. **Never re-seal an unchanged value** — echo the stored ciphertext byte for
+   byte. `content-would-change?` compares prose values server-side to decide
+   no-op versus version bump versus proposal, and a fresh nonce would make every
+   resend look like a change.
+3. **`unseal` is prefix-driven**, which is what makes 1 safe and a migration
+   resumable.
+
+### The fixture is the drift control
+
+Two implementations of one envelope is exactly what this codebase's docstrings
+warn about, and the answer is not discipline:
+**`test/fixtures/seal-vectors.edn`** holds a known key, known nonces, the exact
+ciphertext each must produce, the blanks that must pass through, and the tampered
+envelopes that must fail. Both suites read that one file — `make test-cljs` here,
+`bb test` in the `plurama-cli` checkout beside this one. A divergence is a red
+test rather than a Recipe nobody can open six months from now.
+
+### No key is a legitimate state
+
+A visitor has none and must never have one; a new browser has not been given one
+yet; an unmigrated shelf has nothing to open. All of them read everything that is
+not prose, and prose reads as `enc:v1:…`, which is what an unreadable value
+honestly looks like. On the client side, absent key means sealing is off — which
+is this app's behaviour before any of it existed.
+
+### Not done yet
+
+- **`caution`** — the per-line provenance split — is computed on the server from
+  the version history, and the server cannot read a sealed history. On a sealed
+  Recipe it currently reports one range over one line. The fix is to move
+  `et.uvt.caution` to `.cljc` and compute it in the browser.
+- **Publishing** a sealed Recipe would hand a visitor `enc:v1:…`. Publish has to
+  become a client-driven one-way unseal before anything sealed is published.
+- **The migration** that seals what is already on the shelf is not written. Until
+  it runs, sealing applies to what the clients write and nothing else.
+
 ## Hosting
 
 Runs standalone in dev, and in production inside the [plurama](../plurama)
@@ -567,9 +659,10 @@ The defaults are declared in `config.edn` / `config.edn.template` and
 ## Development
 
 ```bash
-make start   # shadow-cljs watch + the clojure server
+make start      # shadow-cljs watch + the clojure server
 make stop
-make test
+make test       # the clojure suite
+make test-cljs  # the seal's test vectors, under node
 make lint
 ```
 
@@ -839,5 +932,9 @@ nothing about unsupervised writes argues for removing it.
 - `src/clj/et/cb` — ring/compojure backend, next.jdbc + honeysql over SQLite,
   ragtime migrations in `resources/migrations/net/et/cb`.
 - `src/cljs/et/cb/ui` — reagent SPA.
+- `src/cljs/et/cb/seal.cljs` — the encryption envelope and the inventory of
+  sealed columns; `ui/key_store.cljs` holds the key in IndexedDB.
+- `test/cljs` — the ClojureScript suite (`make test-cljs`), which today is the
+  seal's half of the shared test vectors in `test/fixtures/seal-vectors.edn`.
 - `resources/public/cookbook` — `index.html`, `styles.css`, `css/` (amber theme
   in `base.css`, app layout in `cookbook.css`, phone rules last in `mobile.css`).

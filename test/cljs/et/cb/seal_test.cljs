@@ -10,7 +10,7 @@
   native to node and the envelope has nothing browser-shaped about it. What *is*
   browser-shaped — the non-extractable key in IndexedDB — cannot be tested here
   and is checked in the browser instead."
-  (:require [cljs.test :refer-macros [deftest is testing async use-fixtures]]
+  (:require [cljs.test :refer-macros [deftest is testing async]]
             [cljs.reader :as reader]
             [clojure.string :as str]
             [et.cb.seal :as seal]))
