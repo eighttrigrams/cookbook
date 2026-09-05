@@ -843,10 +843,14 @@ html.dark-mode .pending-badge { background: rgba(245, 158, 11, 0.18); }
   color: #ff3b30;
 }
 .settings-warning { margin: 12px 0 0; }
+/* Forgetting the key on this device is not a destructive act — the key itself
+   survives, in secrets.yaml and on paper — so this is not `.secondary.danger`.
+   It borrows `button.secondary` outright rather than restating it: a second
+   spelling of one control is how the two come to disagree. */
 .seal-key-forget {
-  background: transparent;
-  border: 1px solid var(--glass-border);
-  color: var(--text-secondary);
+  background: var(--glass-bg);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
 }
 .seal-key-forget:hover { background: var(--glass-bg-elevated); }
 
