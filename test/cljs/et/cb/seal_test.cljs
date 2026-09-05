@@ -170,8 +170,20 @@
       (-> (other-key)
           (.then (fn [k]
                    (let [{:keys [sealed]} (first (:vectors @fixture))]
-                     (.then (seal/unseal k :recipes :description sealed)
-                            (fn [out] (is (= sealed out)))))))
+                     (-> (seal/seal k :recipes :useful_when "this one opens")
+                         (.then (fn [readable]
+                                  (js/Promise.all
+                                   (into-array
+                                    [(seal/unseal k :recipes :description sealed)
+                                     ;; and a whole body is unsealed as far as it
+                                     ;; can be, not abandoned at the first failure
+                                     (seal/unseal-body k {:id 1 :version 2
+                                                          :description sealed
+                                                          :useful_when readable})]))))
+                         (.then (fn [[one body]]
+                                  (is (= sealed one))
+                                  (is (= sealed (:description body)))
+                                  (is (= "this one opens" (:useful_when body)))))))))
           (.then done)))))
 
 (deftest a-round-trip-holds-for-a-fresh-nonce
