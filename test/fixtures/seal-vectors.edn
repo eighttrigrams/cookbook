@@ -20,25 +20,42 @@
 ;;   enc:v1:<base64(nonce ‖ ciphertext ‖ tag)>
 ;;
 ;; AES-256-GCM, a fresh random 96-bit nonce per value, a 128-bit tag, standard
-;; base64 with padding. The AAD is the UTF-8 bytes of "<table>/<column>", which
-;; binds a ciphertext to the column it belongs in — see the :tamper section,
-;; where the same ciphertext read as another column has to fail.
+;; base64 with padding. The AAD is the UTF-8 bytes of "<binding>/<column>".
+;;
+;; ## :binding, and why it is not the table name
+;;
+;; The AAD binds a value to what its column *means*, and `recipes`,
+;; `recipe_history` and `recipe_proposals` all mean the same four things. That is
+;; not a convenience: the server **moves these values between those tables,
+;; verbatim, with no key** — `archive!` copies the outgoing row into the history
+;; on every save, `approve-proposal!` copies a proposal into the row,
+;; `merge-content` fills a partial proposal from the row. Bind to the table and a
+;; Recipe's own history stops opening after its first save, with no error
+;; anywhere to say why. That is not hypothetical; it is what the first end-to-end
+;; run did, and it is why this file was regenerated.
+;;
+;; What the binding still refuses is every move the server does not make: a
+;; description read as a useful-when, a reason read as a context, a Scope's prose
+;; read as a Recipe's. Those are in :tamper, and they have to fail.
 ;;
 ;; ## What is in here
 ;;
+;;   :binding           table → the name its values are bound under. Both suites
+;;                      assert their own inventory against this.
 ;;   :key-base64        the key every :vectors entry was sealed under
 ;;   :other-key-base64  a second key, used only by the wrong-key tamper case
 ;;   :vectors           nonce + plaintext + the exact ciphertext it must produce.
 ;;                      Seal with that nonce and you must get that string, byte
 ;;                      for byte; unseal that string and you must get the
-;;                      plaintext back.
+;;                      plaintext back. `:table` and `:column` are what a client
+;;                      is handed; `:aad` is what they resolve to.
 ;;   :blank             values `seal` must hand back untouched — nil is the
-;;                      fourteenth of them and cannot be written in a vector
-;;                      beside strings without reading as one, so the suites add
-;;                      it themselves. "Never seal blank" is what keeps NULL
-;;                      ("not recorded") apart from "" ("recorded, and nothing"),
-;;                      and what leaves the server's mandatory-reason check able
-;;                      to see a blank reason at all.
+;;                      sixth of them and cannot be written in a vector beside
+;;                      strings without reading as one, so the suites add it
+;;                      themselves. "Never seal blank" is what keeps NULL ("not
+;;                      recorded") apart from "" ("recorded, and nothing"), and
+;;                      what leaves the server's mandatory-reason check able to
+;;                      see a blank reason at all.
 ;;   :passthrough       values `unseal` must hand back untouched, because they do
 ;;                      not carry the prefix. Mixed state is legal forever, so a
 ;;                      near miss — enc:v0:, ENC:V1:, a leading space — is a
@@ -55,7 +72,8 @@
 ;; not reach for the real one — the vectors are meant to be public.
 ;;
 ;; Regenerating changes every ciphertext in here, which is a deliberate act
-;; (a new envelope version, say), not a way to make a red test go green.
+;; (a new envelope version, a corrected binding), not a way to make a red test
+;; go green.
 {:envelope
  {:prefix "enc:v1:",
   :cipher "AES-256-GCM",
@@ -63,160 +81,164 @@
   :tag-bits 128,
   :key-bytes 32,
   :layout "enc:v1: ++ base64(nonce || ciphertext || tag)",
-  :aad "utf-8 bytes of \"<table>/<column>\""},
+  :aad "utf-8 bytes of \"<binding>/<column>\", see :binding"},
  :key-base64 "Zszlv8TcuDBPlL11JP5ae4xqUtG151uNHQf2C+bbso0=",
  :vectors
  [{:name "a plain one-line description",
    :table :recipes,
    :column :description,
-   :aad "recipes/description",
+   :aad "recipe/description",
    :nonce "advSGDmKNcEADotw",
    :plaintext "The shelf is ranked by consumption, not by date.",
    :sealed
-   "enc:v1:advSGDmKNcEADotwIvpt72HZ0iLDure4zYp1E40hm/GyH2ub/k2gEa2iimqU3PAqksJVBAT76U+uI46617y5cL13N9yNDGkJAB9l2w=="}
+   "enc:v1:advSGDmKNcEADotwIvpt72HZ0iLDure4zYp1E40hm/GyH2ub/k2gEa2iimqU3PAqksJVBAT76U+uI466Aevg2gPo3ucQrv5Hw8HgiA=="}
   {:name "a body with newlines and markdown",
    :table :recipes,
    :column :description,
-   :aad "recipes/description",
+   :aad "recipe/description",
    :nonce "xg9AEpePoK/BrEan",
    :plaintext
    "## Why\n\nBecause `content-would-change?` compares values.\n\n- one\n- two\n",
    :sealed
-   "enc:v1:xg9AEpePoK/BrEanEJXRLeJAax/i4hmOUq+kge832D9KFl4/zpqambEq/IlQoLBR7FZU4GdNuQ6dCGt9AUfn5dfZJPSHETKs7OmvRksnnryF3Pcg9K834b6/Ha5Rs7Vfi4c="}
+   "enc:v1:xg9AEpePoK/BrEanEJXRLeJAax/i4hmOUq+kge832D9KFl4/zpqambEq/IlQoLBR7FZU4GdNuQ6dCGt9AUfn5dfZJPSHETKs7OmvRksnnryF3PSukGFOox6GOM/5sRzoLQg="}
   {:name "non-ascii, because UTF-8 is the only encoding here",
    :table :recipes,
    :column :description,
-   :aad "recipes/description",
+   :aad "recipe/description",
    :nonce "iBc9XYzKKoC4Qv4F",
    :plaintext "Über den Wolken — 八卦 · 🦫 · naïve café",
    :sealed
-   "enc:v1:iBc9XYzKKoC4Qv4FZIT8PUf/EjW5VR1R+rjUeuHGiXZkZNnnoyRlyBcREe/1OLyyTqxZA/SprbrDlzYeYvtSF/kfY9d0RdzFZPb4SA1o+w=="}
+   "enc:v1:iBc9XYzKKoC4Qv4FZIT8PUf/EjW5VR1R+rjUeuHGiXZkZNnnoyRlyBcREe/1OLyyTqxZA/SprbrDlzYeYvtS8QAeFTcEZTOjBreQLSOWpA=="}
   {:name "a useful-when line",
    :table :recipes,
    :column :useful_when,
-   :aad "recipes/useful_when",
+   :aad "recipe/useful_when",
    :nonce "nA4EpQvVrSLdmIgu",
    :plaintext
    "You are about to seal a column and wonder what the AAD is for.",
    :sealed
-   "enc:v1:nA4EpQvVrSLdmIguE+QTOVh2ZXmqpo3BjZtUq+WizNsdIFIRhrLZ2GpKOzbeSWp6nfHZ5k60CR0EUVXOCEDzcSpS2Hb7pbE7uLNB6g3N70kUT1QscvdaCtKU"}
+   "enc:v1:nA4EpQvVrSLdmIguE+QTOVh2ZXmqpo3BjZtUq+WizNsdIFIRhrLZ2GpKOzbeSWp6nfHZ5k60CR0EUVXOCEDzcSpS2Hb7pbE7uLMLDVSgmMiINgXh+h+u3kWj"}
   {:name "an agent's reason",
    :table :recipes,
    :column :reason,
-   :aad "recipes/reason",
+   :aad "recipe/reason",
    :nonce "N3NxEXqIaiTyLPnz",
    :plaintext
    "The docstring implied the server validates content; it validates presence.",
    :sealed
-   "enc:v1:N3NxEXqIaiTyLPnza6WsAUnTcVYfJHFTrnuWjQLJwKY9pTBaRUHkg+cFVWCqkSRAO1/FAoVytTuHWJz2oG+NkL5g4bG0YYGmqcGbkdKJYBgD4NCLlZ6B6kZ7ezMqMkrKVF0t7NHG"}
+   "enc:v1:N3NxEXqIaiTyLPnza6WsAUnTcVYfJHFTrnuWjQLJwKY9pTBaRUHkg+cFVWCqkSRAO1/FAoVytTuHWJz2oG+NkL5g4bG0YYGmqcGbkdKJYBgD4NCLlZ6qn+IvnFx18W/2dc9w75sS"}
   {:name "an agent's context",
    :table :recipes,
    :column :context,
-   :aad "recipes/context",
+   :aad "recipe/context",
    :nonce "6q5rTcOCpR6BgGHh",
    :plaintext
    "Wiring plurama-cli through the cookbook envelope, steps 1-4.",
    :sealed
-   "enc:v1:6q5rTcOCpR6BgGHhWrqwHztRuhcSbi3EibW5xQqVoSyH06OEGYWuYZZZllMX12/cSh5l4SgkLSncg45e8SkM3JWj+FGwHCzmbsdyCc2u3VtsAAyQDJufZQ=="}
+   "enc:v1:6q5rTcOCpR6BgGHhWrqwHztRuhcSbi3EibW5xQqVoSyH06OEGYWuYZZZllMX12/cSh5l4SgkLSncg45e8SkM3JWj+FGwHCzm8Sov1mrya6jWw0fQcVkhKQ=="}
   {:name "a superseded version's body",
    :table :recipe_history,
    :column :description,
-   :aad "recipe_history/description",
+   :aad "recipe/description",
    :nonce "9lNim6Mxu9wNmd+6",
    :plaintext "The first draft, which said something else entirely.",
    :sealed
-   "enc:v1:9lNim6Mxu9wNmd+6jm5CHk/VhD/UdwS4kw7mgXOpZoXH+j3KYkmdGyg5IBzD76t6JmCqVAOjFYxxHEOLaI/74UcbKBUpZrdLuzHrKYQJlLE="}
+   "enc:v1:9lNim6Mxu9wNmd+6jm5CHk/VhD/UdwS4kw7mgXOpZoXH+j3KYkmdGyg5IBzD76t6JmCqVAOjFYxxHEOLaI/74SUm+G14/VepBSEsihTO3Mg="}
   {:name "a superseded version's useful-when",
    :table :recipe_history,
    :column :useful_when,
-   :aad "recipe_history/useful_when",
+   :aad "recipe/useful_when",
    :nonce "G2bC9FPU9CsXw88P",
    :plaintext "Back when this Recipe was about something narrower.",
    :sealed
-   "enc:v1:G2bC9FPU9CsXw88PMVIceRtIUUQyJMTUDdqK+sgnPydbVMIJbO4AtqZdRN22sYqZgBzfK7FITzR5VkJ01Bd2XpCzNHO9kSrWAmjKrSZT6A=="}
+   "enc:v1:G2bC9FPU9CsXw88PMVIceRtIUUQyJMTUDdqK+sgnPydbVMIJbO4AtqZdRN22sYqZgBzfK7FITzR5VkJ01Bd2UnhV9/gM4gd5oKnBcETIag=="}
   {:name "a superseded version's reason",
    :table :recipe_history,
    :column :reason,
-   :aad "recipe_history/reason",
+   :aad "recipe/reason",
    :nonce "xfp/rYgn1NHTgFUN",
    :plaintext "Renamed the thing after the second read of it.",
    :sealed
-   "enc:v1:xfp/rYgn1NHTgFUNyVBvVjqOPnESQN0pFF2hLu4BjzrNbiUnqgra8eXCm7tAwxAyKUUsKrtB0OqCg1XBF2d71l21cCFjrswx08A="}
+   "enc:v1:xfp/rYgn1NHTgFUNyVBvVjqOPnESQN0pFF2hLu4BjzrNbiUnqgra8eXCm7tAwxAyKUUsKrtB0OqCg1Sfb6mfALJqvqqjZlpttMM="}
   {:name "a superseded version's context",
    :table :recipe_history,
    :column :context,
-   :aad "recipe_history/context",
+   :aad "recipe/context",
    :nonce "axTf1qroJUzaStqz",
    :plaintext "A cleanup pass over the older Recipes.",
    :sealed
-   "enc:v1:axTf1qroJUzaStqzJXVsftHjARVlKWHTBtrG9JM0eP/7TELTHz2jWmr5UD3ipItQSf+yb7x78xojzrIpg/V6wCRa"}
+   "enc:v1:axTf1qroJUzaStqzJXVsftHjARVlKWHTBtrG9JM0eP/7TELTHz2jWmr5UD3ipItQSf8VTjynFOAUVjy7f1TT2/jc"}
   {:name "a proposal's body",
    :table :recipe_proposals,
    :column :description,
-   :aad "recipe_proposals/description",
+   :aad "recipe/description",
    :nonce "x9+wv0r5i5yc7IDk",
    :plaintext "What the agent would like this Recipe to say instead.",
    :sealed
-   "enc:v1:x9+wv0r5i5yc7IDkuYUcUV7NeY1oKDIm1j10lTGn5+TwUOGn5BknLF1Q44pm3EUOpvNHwHTJGSKiP/rG2zANF1wAMrZ3sB7LERKMcXpaqw6E"}
+   "enc:v1:x9+wv0r5i5yc7IDkuYUcUV7NeY1oKDIm1j10lTGn5+TwUOGn5BknLF1Q44pm3EUOpvNHwHTJGSKiP/rG2zANF1ygU6Q2wWfhog6ZSH/77kNc"}
   {:name "a proposal's useful-when",
    :table :recipe_proposals,
    :column :useful_when,
-   :aad "recipe_proposals/useful_when",
+   :aad "recipe/useful_when",
    :nonce "GVSduzI7anBJ+KD/",
    :plaintext
    "When you meet the 409 and have to decide about overwrite.",
    :sealed
-   "enc:v1:GVSduzI7anBJ+KD/kf0tYcOsvDCCRp078xjPyGWwnDJsKwCjlEDcP5m2ArqQLmX7p0pYzUjKMxomvV6UEgnqKPeXO5iV2VBerF9En9CQDv3oydPf4A=="}
+   "enc:v1:GVSduzI7anBJ+KD/kf0tYcOsvDCCRp078xjPyGWwnDJsKwCjlEDcP5m2ArqQLmX7p0pYzUjKMxomvV6UEgnqKPeXO5iVoW3Wsp5bXz8sMOKOOrWn8Q=="}
   {:name "a proposal's reason",
    :table :recipe_proposals,
    :column :reason,
-   :aad "recipe_proposals/reason",
+   :aad "recipe/reason",
    :nonce "0lKEBLBhX2QQUTHl",
    :plaintext "The example in it no longer matches the API.",
    :sealed
-   "enc:v1:0lKEBLBhX2QQUTHlcx9CI9dWgsgZgSmZ22RdBZ2hTAAjrZvBa8ifr6B5A4A1agGYh0KTDod6zllgs6n+YOB6G7QdbB5BYxa0"}
+   "enc:v1:0lKEBLBhX2QQUTHlcx9CI9dWgsgZgSmZ22RdBZ2hTAAjrZvBa8ifr6B5A4A1agGYh0KTDod6zlmR8Pw4CZCikqe6PGcOLW+O"}
   {:name "a proposal's context",
    :table :recipe_proposals,
    :column :context,
-   :aad "recipe_proposals/context",
+   :aad "recipe/context",
    :nonce "3bZXlcG15VJ12zcM",
    :plaintext "Fixing a flaky auth test in tracker.",
    :sealed
-   "enc:v1:3bZXlcG15VJ12zcMl1M59H5WdXmbQZDwNyb5lWzPqSTAsSg6mN0Rt0hcBc0eC8ksTwXkF2d1ajiupMMbYsBhxQ=="}
+   "enc:v1:3bZXlcG15VJ12zcMl1M59H5WdXmbQZDwNyb5lWzPqSTAsSg6mN0Rt0hcBc0eC8ks6Du/K3nH2EF6PCBMtWEImQ=="}
   {:name "a Scope's description",
    :table :scopes,
    :column :description,
-   :aad "scopes/description",
+   :aad "scope/description",
    :nonce "/9NKfomB8mzKuqcO",
    :plaintext
    "Everything about coding with AI, and the friction around it.",
    :sealed
-   "enc:v1:/9NKfomB8mzKuqcOkPYW8gzHValwIxIuhoDGGEG/ZnpCKFvEnUYodjV/578z42xW4YAXeUPFeCmrqqJtl7+7MvHF5VpIGxuAFoXSJ0pjywShFxu85bukcA=="}
+   "enc:v1:/9NKfomB8mzKuqcOkPYW8gzHValwIxIuhoDGGEG/ZnpCKFvEnUYodjV/578z42xW4YAXeUPFeCmrqqJtl7+7MvHF5VpIGxuA6nTVjpUGvY25cFDNXoS7AA=="}
   {:name "one character",
    :table :recipes,
    :column :description,
-   :aad "recipes/description",
+   :aad "recipe/description",
    :nonce "SMaa/yiaRKnaiLpB",
    :plaintext ".",
-   :sealed "enc:v1:SMaa/yiaRKnaiLpB4MwNkDr8yhRtVRG+v+ySSPk="}
+   :sealed "enc:v1:SMaa/yiaRKnaiLpB4Cd6m5mm1hJ3/KqzWa2koh4="}
   {:name "a value that is only a newline",
    :table :recipes,
    :column :description,
-   :aad "recipes/description",
+   :aad "recipe/description",
    :nonce "EWIaMRSR079S5QNO",
    :plaintext "\n",
-   :sealed "enc:v1:EWIaMRSR079S5QNO1BM//uoIf0WXikq+6TuqeWA="}
+   :sealed "enc:v1:EWIaMRSR079S5QNO1PhI9UlSY0ONI/GzD3qck4c="}
   {:name "something long enough to span blocks",
    :table :recipes,
    :column :description,
-   :aad "recipes/description",
+   :aad "recipe/description",
    :nonce "kr6/RlGnySrkPC6d",
    :plaintext
    "A line of the kind a real Recipe is made of, ending here.\nA line of the kind a real Recipe is made of, ending here.\nA line of the kind a real Recipe is made of, ending here.\nA line of the kind a real Recipe is made of, ending here.\nA line of the kind a real Recipe is made of, ending here.\nA line of the kind a real Recipe is made of, ending here.\nA line of the kind a real Recipe is made of, ending here.\nA line of the kind a real Recipe is made of, ending here.\nA line of the kind a real Recipe is made of, ending here.\nA line of the kind a real Recipe is made of, ending here.\nA line of the kind a real Recipe is made of, ending here.\nA line of the kind a real Recipe is made of, ending here.\nA line of the kind a real Recipe is made of, ending here.\nA line of the kind a real Recipe is made of, ending here.\nA line of the kind a real Recipe is made of, ending here.\nA line of the kind a real Recipe is made of, ending here.\nA line of the kind a real Recipe is made of, ending here.\nA line of the kind a real Recipe is made of, ending here.\nA line of the kind a real Recipe is made of, ending here.\nA line of the kind a real Recipe is made of, ending here.\nA line of the kind a real Recipe is made of, ending here.\nA line of the kind a real Recipe is made of, ending here.\nA line of the kind a real Recipe is made of, ending here.\nA line of the kind a real Recipe is made of, ending here.\nA line of the kind a real Recipe is made of, ending here.\nA line of the kind a real Recipe is made of, ending here.\nA line of the kind a real Recipe is made of, ending here.\nA line of the kind a real Recipe is made of, ending here.\nA line of the kind a real Recipe is made of, ending here.\nA line of the kind a real Recipe is made of, ending here.\nA line of the kind a real Recipe is made of, ending here.\nA line of the kind a real Recipe is made of, ending here.\nA line of the kind a real Recipe is made of, ending here.\nA line of the kind a real Recipe is made of, ending here.\nA line of the kind a real Recipe is made of, ending here.\nA line of the kind a real Recipe is made of, ending here.\nA line of the kind a real Recipe is made of, ending here.\nA line of the kind a real Recipe is made of, ending here.\nA line of the kind a real Recipe is made of, ending here.\nA line of the kind a real Recipe is made of, ending here.",
    :sealed
-   "enc:v1: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"}],
- :generated "2026-09-05",
+   "enc:v1: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"}],
  :other-key-base64 "MDLNqWBIt/yjT7fGX7OudkT+NFUkh3aECgisQAF+nAI=",
+ :binding
+ {:recipes "recipe",
+  :recipe_history "recipe",
+  :recipe_proposals "recipe",
+  :scopes "scope"},
  :passthrough
  ["a description nobody has sealed yet"
   "enc:v0:d2hhdGV2ZXI="
@@ -230,38 +252,42 @@
  ["" "x" "a sentence" "two\nlines" "🦫" "  leading and trailing  "],
  :tamper
  [{:name "a flipped bit in the nonce",
-   :aad "recipes/description",
+   :aad "recipe/description",
    :key-base64 "Zszlv8TcuDBPlL11JP5ae4xqUtG151uNHQf2C+bbso0=",
    :sealed
-   "enc:v1:aNvSGDmKNcEADotwIvpt72HZ0iLDure4zYp1E40hm/GyH2ub/k2gEa2iimqU3PAqksJVBAT76U+uI46617y5cL13N9yNDGkJAB9l2w=="}
+   "enc:v1:aNvSGDmKNcEADotwIvpt72HZ0iLDure4zYp1E40hm/GyH2ub/k2gEa2iimqU3PAqksJVBAT76U+uI466Aevg2gPo3ucQrv5Hw8HgiA=="}
   {:name "a flipped bit in the ciphertext",
-   :aad "recipes/description",
+   :aad "recipe/description",
    :key-base64 "Zszlv8TcuDBPlL11JP5ae4xqUtG151uNHQf2C+bbso0=",
    :sealed
-   "enc:v1:advSGDmKNcEADotwIvtt72HZ0iLDure4zYp1E40hm/GyH2ub/k2gEa2iimqU3PAqksJVBAT76U+uI46617y5cL13N9yNDGkJAB9l2w=="}
+   "enc:v1:advSGDmKNcEADotwIvtt72HZ0iLDure4zYp1E40hm/GyH2ub/k2gEa2iimqU3PAqksJVBAT76U+uI466Aevg2gPo3ucQrv5Hw8HgiA=="}
   {:name "a flipped bit in the tag",
-   :aad "recipes/description",
+   :aad "recipe/description",
    :key-base64 "Zszlv8TcuDBPlL11JP5ae4xqUtG151uNHQf2C+bbso0=",
    :sealed
-   "enc:v1:advSGDmKNcEADotwIvpt72HZ0iLDure4zYp1E40hm/GyH2ub/k2gEa2iimqU3PAqksJVBAT76U+uI46617y5cL13N9yNDGkJAB9l2g=="}
+   "enc:v1:advSGDmKNcEADotwIvpt72HZ0iLDure4zYp1E40hm/GyH2ub/k2gEa2iimqU3PAqksJVBAT76U+uI466Aevg2gPo3ucQrv5Hw8HgiQ=="}
   {:name "a truncated envelope",
-   :aad "recipes/description",
+   :aad "recipe/description",
    :key-base64 "Zszlv8TcuDBPlL11JP5ae4xqUtG151uNHQf2C+bbso0=",
    :sealed
-   "enc:v1:advSGDmKNcEADotwIvpt72HZ0iLDure4zYp1E40hm/GyH2ub/k2gEa2iimqU3PAqksJVBAT76U+uI46617y5cL13N9yNDGkJAB9l"}
-  {:name "the same ciphertext, moved to another column",
-   :aad "recipe_history/description",
+   "enc:v1:advSGDmKNcEADotwIvpt72HZ0iLDure4zYp1E40hm/GyH2ub/k2gEa2iimqU3PAqksJVBAT76U+uI466Aevg2gPo3ucQrv5Hw8Hg"}
+  {:name "a Recipe's body read as its useful-when",
+   :aad "recipe/useful_when",
    :key-base64 "Zszlv8TcuDBPlL11JP5ae4xqUtG151uNHQf2C+bbso0=",
    :sealed
-   "enc:v1:advSGDmKNcEADotwIvpt72HZ0iLDure4zYp1E40hm/GyH2ub/k2gEa2iimqU3PAqksJVBAT76U+uI46617y5cL13N9yNDGkJAB9l2w=="}
-  {:name
-   "the same ciphertext, moved to another table's column of the same name",
-   :aad "scopes/description",
+   "enc:v1:advSGDmKNcEADotwIvpt72HZ0iLDure4zYp1E40hm/GyH2ub/k2gEa2iimqU3PAqksJVBAT76U+uI466Aevg2gPo3ucQrv5Hw8HgiA=="}
+  {:name "a Recipe's body read as the reason for the version",
+   :aad "recipe/reason",
    :key-base64 "Zszlv8TcuDBPlL11JP5ae4xqUtG151uNHQf2C+bbso0=",
    :sealed
-   "enc:v1:advSGDmKNcEADotwIvpt72HZ0iLDure4zYp1E40hm/GyH2ub/k2gEa2iimqU3PAqksJVBAT76U+uI46617y5cL13N9yNDGkJAB9l2w=="}
+   "enc:v1:advSGDmKNcEADotwIvpt72HZ0iLDure4zYp1E40hm/GyH2ub/k2gEa2iimqU3PAqksJVBAT76U+uI466Aevg2gPo3ucQrv5Hw8HgiA=="}
+  {:name "a Recipe's body read as a Scope's description",
+   :aad "scope/description",
+   :key-base64 "Zszlv8TcuDBPlL11JP5ae4xqUtG151uNHQf2C+bbso0=",
+   :sealed
+   "enc:v1:advSGDmKNcEADotwIvpt72HZ0iLDure4zYp1E40hm/GyH2ub/k2gEa2iimqU3PAqksJVBAT76U+uI466Aevg2gPo3ucQrv5Hw8HgiA=="}
   {:name "the right ciphertext under the wrong key",
-   :aad "recipes/description",
+   :aad "recipe/description",
    :key-base64 "MDLNqWBIt/yjT7fGX7OudkT+NFUkh3aECgisQAF+nAI=",
    :sealed
-   "enc:v1:advSGDmKNcEADotwIvpt72HZ0iLDure4zYp1E40hm/GyH2ub/k2gEa2iimqU3PAqksJVBAT76U+uI46617y5cL13N9yNDGkJAB9l2w=="}]}
+   "enc:v1:advSGDmKNcEADotwIvpt72HZ0iLDure4zYp1E40hm/GyH2ub/k2gEa2iimqU3PAqksJVBAT76U+uI466Aevg2gPo3ucQrv5Hw8HgiA=="}]}
