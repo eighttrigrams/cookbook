@@ -821,6 +821,35 @@ html.dark-mode .pending-badge { background: rgba(245, 158, 11, 0.18); }
 .settings-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .settings-row input { flex: 1 1 220px; max-width: 320px; }
 
+/* The encryption key block, under the machine user's on the same page.
+
+   Two credentials, deliberately made to look like one kind of thing: the
+   password says who may *write* here, the key says who may *read the prose*.
+   What is new is the fingerprint chip and the warning — the key is the one
+   setting in this app with no reset behind it, so the block that takes it says
+   so in a colour rather than only in a sentence. */
+
+.key-fingerprint {
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: var(--surface-subtle);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.95em;
+  letter-spacing: 0.04em;
+}
+.settings-problem {
+  margin: 10px 0 0;
+  font-size: 0.88em;
+  color: #ff3b30;
+}
+.settings-warning { margin: 12px 0 0; }
+.seal-key-forget {
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  color: var(--text-secondary);
+}
+.seal-key-forget:hover { background: var(--glass-bg-elevated); }
+
 /* --------------------------------------------------------------------------
    the Scopes page
 

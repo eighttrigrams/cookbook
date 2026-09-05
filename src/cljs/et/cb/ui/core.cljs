@@ -11,7 +11,8 @@
             [et.cb.ui.views.recipe-modals :as recipe-modals]
             [et.cb.ui.views.recipes :as recipes]
             [et.cb.ui.views.scopes :as scopes]
-            [et.cb.ui.views.settings :as settings]))
+            [et.cb.ui.views.settings :as settings]
+            [et.cb.ui.key-store :as key-store]))
 
 (defn login-form []
   (let [username (r/atom "")
@@ -570,7 +571,7 @@
   [logged-in? page]
   (case (if (and (not logged-in?) (owner-only-pages page)) :shelf page)
     :scopes [scopes/scopes-page]
-    :settings [settings/machine-user-block]
+    :settings [settings/settings-page]
     :inbox [inbox/inbox-page]
     :deleted [deleted/deleted-page]
     :recipe [recipe/recipe-page]
@@ -627,5 +628,15 @@
   ;; `sync-from-url!` for the *first* reading, and it does so from inside its own
   ;; callback, where who is calling is finally known.
   (.addEventListener js/window "popstate" (fn [_] (state/sync-from-url!)))
-  (state/fetch-auth-required)
+  ;; **The key first, and the first fetch only after it.** Unsealing happens in
+  ;; `et.cb.ui.api` off whatever key the store is holding when a response lands,
+  ;; so a listing that raced the read out of IndexedDB would hand its handler
+  ;; `enc:v1:…` and cache that as the Recipe. It is the same race, of the same
+  ;; shape, that `fetch-auth-required` explains for the token in localStorage —
+  ;; and it gets the same answer: do not start the round trip until the thing it
+  ;; depends on is in hand.
+  ;;
+  ;; `load!` never rejects — a browser with no key is a legitimate state, and it
+  ;; reads everything that is not prose — so this cannot leave the app unstarted.
+  (.then (key-store/load!) (fn [_] (state/fetch-auth-required)))
   (rdomc/render root [app]))

@@ -1,4 +1,8 @@
-{:source-paths ["src/cljs" "src/cljc"]
+;; `test/cljs` is a source path rather than a per-build one because shadow-cljs
+;; has only the top-level list — and it costs the app build nothing: a browser
+;; build compiles what its `:init-fn` reaches, and nothing in the app requires a
+;; test.
+{:source-paths ["src/cljs" "src/cljc" "test/cljs"]
  :dependencies [[reagent "2.0.1"]
                 [cljs-ajax "0.8.4"]]
  :http {:port #shadow/env ["SHADOW_PORT" :as :int :default 9807]}
@@ -6,4 +10,13 @@
                 :output-dir "resources/public/cookbook/js"
                 :asset-path "/js"
                 :modules {:main {:init-fn et.cb.ui.core/init}}
-                :devtools {:repl-pprint true}}}}
+                :devtools {:repl-pprint true}}
+          ;; `make test-cljs`. It exists for one reason: the seal envelope is
+          ;; implemented twice — here on WebCrypto, and in plurama-cli on
+          ;; javax.crypto — and the only honest guard against two spellings of one
+          ;; control drifting apart is a fixture both suites read. Node has
+          ;; WebCrypto natively, so the envelope needs no browser to be pinned;
+          ;; the key store does, and is checked in the browser instead.
+          :test {:target :node-test
+                 :output-to "target/node-tests.js"
+                 :ns-regexp "-test$"}}}

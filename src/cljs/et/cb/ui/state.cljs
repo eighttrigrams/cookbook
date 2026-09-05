@@ -1,7 +1,9 @@
 (ns et.cb.ui.state
   (:require [reagent.core :as r]
             [clojure.string :as str]
+            [et.cb.seal :as seal]
             [et.cb.ui.api :as api]
+            [et.cb.ui.key-store :as key-store]
             [et.cb.ui.save-flash :as save-flash]
             [et.cb.ui.url :as url]))
 
@@ -459,6 +461,12 @@
   []
   (clear-token!)
   (url/replace-state! "/")
+  ;; And the ciphertexts the reads left behind. They are not text — the key
+  ;; is untouched and stays in this browser, because forgetting it is the ⚙
+  ;; panel's own gesture and not a side effect of signing out — but they are
+  ;; still a map of the owner's Recipes, held for a write that a signed-out
+  ;; client cannot make.
+  (api/forget-stored!)
   (swap! *app-state assoc
          :logged-in? false :token nil :current-user nil
          :recipes [] :details {} :open #{} :publishing nil :deleting nil
@@ -682,23 +690,29 @@
     (fn [scopes] (swap! *app-state assoc :scopes (vec scopes)))))
 
 (defn add-scope [{:keys [title description tags]} on-success]
-  (api/post-json "/api/scopes" {:title title
-                                :description (or description "")
-                                :tags (or tags "")}
-                 (auth-headers)
-    (fn [_]
-      (fetch-scopes)
-      (when on-success (on-success)))
-    (err-handler "Could not add that Scope")))
+  (-> (seal/seal-scope-write (key-store/current-key)
+                             {:title title
+                              :description (or description "")
+                              :tags (or tags "")})
+      (.then
+       (fn [params]
+         (api/post-json "/api/scopes" params (auth-headers)
+           (fn [_]
+             (fetch-scopes)
+             (when on-success (on-success)))
+           (err-handler "Could not add that Scope"))))))
 
 (defn save-scope [id fields on-success]
-  (api/put-json (str "/api/scopes/" id) fields (auth-headers)
-    (fn [_]
-      (fetch-scopes)
-      ;; the cards carry the title, so a rename has to reach them
-      (fetch-recipes)
-      (when on-success (on-success)))
-    (err-handler "Could not save that Scope")))
+  (-> (seal/seal-scope-write (key-store/current-key) fields (api/stored-row :scopes id))
+      (.then
+       (fn [params]
+         (api/put-json (str "/api/scopes/" id) params (auth-headers)
+           (fn [_]
+             (fetch-scopes)
+             ;; the cards carry the title, so a rename has to reach them
+             (fetch-recipes)
+             (when on-success (on-success)))
+           (err-handler "Could not save that Scope"))))))
 
 (defn delete-scope
   "Takes the Scope and every association to it. The Recipes survive untouched —
@@ -1252,6 +1266,26 @@
   (swap! *app-state assoc :included-scopes #{})
   (fetch-recipes))
 
+(defn- sealing-recipe-write
+  "Seal a Recipe write's prose, then hand the body to `send`.
+
+  **The seal is here and the unseal is in `et.cb.ui.api`**, and the asymmetry is
+  the point. A read has nothing to decide. A write has to know what the column
+  holds *now*, so that a value the owner did not touch goes back as the very
+  ciphertext already stored — otherwise the server's comparison sees a change
+  where there is none, and a save that moved one word bumps a version, writes a
+  history row and stales the provenance split for the whole body. `stored` is
+  `nil` for a create, where there is nothing to echo.
+
+  Only the prose is touched: `title`, `tags`, `scope_ids` and `modified_at` go
+  as they are. So a filing-only PUT — a Scope chip — carries no prose, seals
+  nothing, and behaves exactly as it did.
+
+  With no key in this browser `seal-row` resolves to the body it was given, which
+  is cookbook before any of this existed."
+  [stored body send]
+  (.then (seal/seal-recipe-write (key-store/current-key) body stored) send))
+
 (defn add-recipe
   "Create a Recipe. **`on-success` is handed the created row**, which it was not
   before: the one caller used to be the shelf's compose form, which had nothing to do
@@ -1260,26 +1294,28 @@
   answers with the row it wrote, so this passes on what it was given rather than
   re-reading it."
   [{:keys [title useful_when description tags scope_ids]} on-success]
-  (api/post-json "/api/recipes"
-                 {:title title :useful_when (or useful_when "") :description (or description "")
-                  :tags (or tags "")
-                  ;; a vector, always: the endpoint refuses anything that is not an
-                  ;; array of ids, and an empty one is the honest 'filed under
-                  ;; nothing' for a Recipe that did not exist a moment ago
-                  :scope_ids (vec (or scope_ids []))}
-                 (auth-headers)
-    (fn [recipe]
-      (fetch-recipes)
-      ;; the counts on the Scopes page moved
-      (fetch-scopes)
-      ;; And the inbox, after this and after every other write below. **Not
-      ;; because his own write made an entry** — it cannot, that is the rule the
-      ;; queue is built on — but because his agents' writes land while he is
-      ;; sitting on the shelf, and this is the moment the client is talking to the
-      ;; server anyway. Without it the count on the top bar is as old as the page.
-      (fetch-inbox)
-      (when on-success (on-success recipe)))
-    (err-handler "Could not add that recipe")))
+  (sealing-recipe-write
+   nil
+   {:title title :useful_when (or useful_when "") :description (or description "")
+    :tags (or tags "")
+    ;; a vector, always: the endpoint refuses anything that is not an
+    ;; array of ids, and an empty one is the honest 'filed under
+    ;; nothing' for a Recipe that did not exist a moment ago
+    :scope_ids (vec (or scope_ids []))}
+   (fn [params]
+     (api/post-json "/api/recipes" params (auth-headers)
+       (fn [recipe]
+         (fetch-recipes)
+         ;; the counts on the Scopes page moved
+         (fetch-scopes)
+         ;; And the inbox, after this and after every other write below. **Not
+         ;; because his own write made an entry** — it cannot, that is the rule the
+         ;; queue is built on — but because his agents' writes land while he is
+         ;; sitting on the shelf, and this is the moment the client is talking to the
+         ;; server anyway. Without it the count on the top bar is as old as the page.
+         (fetch-inbox)
+         (when on-success (on-success recipe)))
+       (err-handler "Could not add that recipe")))))
 
 (defn update-recipe
   "Sends `modified_at` from the row we last read, so a save that raced somebody
@@ -1288,18 +1324,20 @@
   precisely so this one field still speaks for everything the form sends."
   [id fields on-success]
   (let [known (get-in @*app-state [:details id])]
-    (api/put-json (str "/api/recipes/" id)
-                  (assoc fields :modified_at (:modified_at known))
-                  (auth-headers)
-      (fn [recipe]
-        (cache-detail! recipe)
-        (forget-versions! id)
-        (fetch-recipes)
-        ;; a save may have refiled the Recipe, so the per-Scope counts moved
-        (fetch-scopes)
-        (fetch-inbox)
-        (when on-success (on-success)))
-      (err-handler "Could not save"))))
+    (sealing-recipe-write
+     (api/stored-row :recipes id)
+     (assoc fields :modified_at (:modified_at known))
+     (fn [params]
+       (api/put-json (str "/api/recipes/" id) params (auth-headers)
+         (fn [recipe]
+           (cache-detail! recipe)
+           (forget-versions! id)
+           (fetch-recipes)
+           ;; a save may have refiled the Recipe, so the per-Scope counts moved
+           (fetch-scopes)
+           (fetch-inbox)
+           (when on-success (on-success)))
+         (err-handler "Could not save"))))))
 
 ;; ---------------------------------------------------------------------------
 ;; the editor's draft

@@ -1,4 +1,4 @@
-.PHONY: start stop build test lint clean
+.PHONY: start stop build test test-cljs lint clean
 
 start:
 	@if [ -f .env ]; then set -a && . ./.env && set +a; fi && ./scripts/start.sh
@@ -17,6 +17,15 @@ ifdef NS
 else
 	DEV=true clj -X:test
 endif
+
+# The ClojureScript suite, which exists for one reason: the seal envelope is
+# implemented twice — here on WebCrypto and in plurama-cli on javax.crypto — and
+# the only honest guard against two spellings of one control drifting is a
+# fixture both suites read. Separate from `test` rather than folded into it
+# because it needs node_modules, which the Clojure suite does not.
+test-cljs:
+	npx shadow-cljs compile test
+	node target/node-tests.js
 
 lint:
 	clj-kondo --lint src/clj
