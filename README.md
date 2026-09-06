@@ -687,6 +687,23 @@ all arrive there by the same road, and any of them refuses the publish.
 a published Recipe's Scopes stay the owner's — *to logged in users only, no matter
 what* — so a Scope's prose never reaches the audience publishing creates.
 
+### And a published Recipe may not gain an envelope back
+
+Which is the same rule from the other end, and it is what makes the first one
+last longer than one save. Publishing unseals; the clients seal every prose
+write; so without this, the owner's next edit of a published Recipe put
+`enc:v1:…` back on a public page — one way, in the wrong direction, with no
+unpublish. It is what the first live run of the unseal did.
+
+So **a write is refused (400, nothing written) if it would put ciphertext into a
+published Recipe's prose** — all four columns, not the two a visitor is served,
+because *published means the whole trail is plaintext* is the invariant the
+publish guard establishes. Three doors, because prose reaches a published Recipe
+three ways: the owner's save, the proposal that would become one (refused as it
+is filed, so an agent's work does not dead-end at an approval nobody can give),
+and the approval that copies one in. The clients do not seal a published Recipe
+at all, so an honest write never meets any of it.
+
 ### Not done yet
 
 - **The migration** that seals what is already on the shelf is not written. Until
