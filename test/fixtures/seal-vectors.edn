@@ -52,6 +52,18 @@
 ;;
 ;;   :binding           table → the name its values are bound under. Both suites
 ;;                      assert their own inventory against this.
+;;   :sealed-columns    table → the columns of it that hold prose. The inventory
+;;                      itself, and it is here for the reason :published-surface
+;;                      is: it is written down in more than one place. Both
+;;                      clients carry it because they seal and unseal — and since
+;;                      publish became a one-way unseal, the *server* carries the
+;;                      twelve of it that are a Recipe's. Not to seal anything,
+;;                      which it has no key for: to walk them looking for the
+;;                      prefix when a publish claims the Recipe has been
+;;                      unsealed. A server whose list was narrower than a
+;;                      client's would let a sealed column ride out onto a public
+;;                      page through the column it did not know to look at.
+;;                      Three suites assert their own list against this one.
 ;;   :published-surface the columns a visitor is served, and therefore the ones
 ;;                      whose being sealed makes publishing wrong. It is here
 ;;                      rather than in one client because the publish interlock
@@ -299,6 +311,11 @@
   :recipe_history "recipe",
   :recipe_proposals "recipe",
   :scopes "scope"},
+ :sealed-columns
+ {:recipes ["description" "useful_when" "reason" "context"],
+  :recipe_history ["description" "useful_when" "reason" "context"],
+  :recipe_proposals ["description" "useful_when" "reason" "context"],
+  :scopes ["description"]},
  :passthrough
  ["a description nobody has sealed yet"
   "enc:v0:d2hhdGV2ZXI="

@@ -281,6 +281,7 @@
                ["GET" "/api/recipes/:id"] ["PUT" "/api/recipes/:id"]
                ["DELETE" "/api/recipes/:id"]
                ["POST" "/api/recipes/:id/publish"] ["GET" "/api/recipes/:id/versions"]
+               ["GET" "/api/recipes/:id/sealed"]
                ["GET" "/api/scopes"] ["POST" "/api/scopes"]
                ["PUT" "/api/scopes/:id"] ["DELETE" "/api/scopes/:id"]
                ["GET" "/api/inbox"] ["POST" "/api/inbox/:id/seen"]

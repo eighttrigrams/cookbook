@@ -136,6 +136,7 @@
             [honey.sql :as sql]
             [taoensso.telemere :as tel]
             [et.cb.db :as db]
+            [et.cb.envelope :as envelope]
             [et.cb.db.event :as db.event]
             [et.cb.db.proposal :as db.proposal]
             [et.cb.db.scope :as db.scope]))
@@ -1254,6 +1255,258 @@
                   "Recipe proposal approved")
         (db.scope/attach-one tx user-id result)))))
 
+;; ---------------------------------------------------------------------------
+;; The trail, and unsealing it on the way out.
+;;
+;; Publishing a sealed Recipe is a one-way unseal: the owner's browser opens
+;; every envelope in the Recipe's trail and hands the plaintext back with the
+;; publish, and the latch closes only if nothing behind it is still sealed. The
+;; server holds no key — see `et.cb.envelope` — so all it can do is read the
+;; prefix, and all it can do is enough: it enumerates what is sealed, writes
+;; back what it is given, and refuses the latch if an envelope survives.
+;;
+;; Three tables, because a Recipe's prose lives in three places: the row is the
+;; current version, `recipe_history` the superseded ones, `recipe_proposals` the
+;; machine writes that have not become versions. Publish a Recipe with a sealed
+;; history and the ladder behind the public page is unreadable to the owner's
+;; own server — which is what `caution` reads, and what decision 2 of the
+;; security model settled by unsealing everything rather than the two columns a
+;; visitor is served.
+
+(defn- history-trail
+  "The prose of every superseded version, newest first, with the version number
+  that identifies it. `recipe_history` has no id of its own — its key is
+  (recipe_id, version) — so `version` is what a replacement names."
+  [ds id]
+  (jdbc/execute! (db/get-conn ds)
+    (sql/format {:select (into [:version] (:recipe_history envelope/prose-columns))
+                 :from [:recipe_history]
+                 :where [:= :recipe_id id]
+                 :order-by [[:version :desc]]})
+    db/jdbc-opts))
+
+(defn- proposal-trail
+  "The prose of every proposal ever filed against this Recipe, **resolved ones
+  included**. A dismissed proposal is kept on purpose — it is the record of what
+  an agent tried and the owner declined (see migration 011) — and a kept row with
+  an envelope in it is a kept row the server cannot read. Approving one copies its
+  text into the Recipe verbatim, so a proposal is not a side channel: it is the
+  same prose, one table along."
+  [ds id]
+  (jdbc/execute! (db/get-conn ds)
+    (sql/format {:select (into [:id] (:recipe_proposals envelope/prose-columns))
+                 :from [:recipe_proposals]
+                 :where [:= :recipe_id id]
+                 :order-by [[:id :asc]]})
+    db/jdbc-opts))
+
+(defn- sealed-only
+  "One row narrowed to the prose columns that are still envelopes, `keep`'s
+  identifying keys carried through. Absent rather than null for a column that is
+  in the clear: what this shape says is *these are the values that must be
+  opened*, and a key holding nil would be a fourth thing to explain."
+  [table row keep]
+  (into (select-keys row keep)
+        (for [column (envelope/sealed-in table row)]
+          [column (get row column)])))
+
+(defn sealed-trail
+  "**What publishing this Recipe would have to unseal**: every value in its trail
+  that is still an envelope, in the shape the publish takes them back in.
+
+      {:sealed {:recipe    {:description \"enc:v1:…\"}
+                :versions  [{:version 2 :reason \"enc:v1:…\"}]
+                :proposals [{:id 7 :description \"enc:v1:…\"}]}
+       :total 3}
+
+  The read is the mirror of the write — `publish-recipe`'s `unsealed` argument is
+  this map with every value opened — and that is the whole design: **the server
+  enumerates the trail, not the client.** A client that walked the tables itself
+  could walk fewer of them than the guard checks, and would then meet a refusal it
+  could not act on; asking here means the answer and the requirement come from one
+  list, `et.cb.envelope/prose-columns`.
+
+  Ciphertext only, and that is a narrowing rather than a courtesy: the plaintext
+  of a Recipe is on every other read, and there is no reason for this one to carry
+  it. `:total 0` for a Recipe with nothing sealed anywhere — an unmigrated shelf,
+  or one already published — and that answer is what lets a client publish it with
+  no payload at all, byte-identical to the request it sent before any of this
+  existed.
+
+  nil when the id matches nothing the user owns, including a tombstone: a deleted
+  Recipe is not publishable, so what it would take to publish it is not a
+  question. Owner-only at the handler, for the reason the version ladder is."
+  [ds user-id id]
+  (when-let [current (get-recipe ds user-id id {:lean? false})]
+    (let [recipe (sealed-only :recipes current [])
+          versions (->> (history-trail ds id)
+                        (mapv #(sealed-only :recipe_history % [:version]))
+                        (filterv #(> (count %) 1)))
+          proposals (->> (proposal-trail ds id)
+                         (mapv #(sealed-only :recipe_proposals % [:id]))
+                         (filterv #(> (count %) 1)))]
+      {:sealed {:recipe recipe :versions versions :proposals proposals}
+       :total (+ (count recipe)
+                 (reduce + (map #(dec (count %)) versions))
+                 (reduce + (map #(dec (count %)) proposals)))})))
+
+(defn- refuse-publish!
+  "Abort the publish, in the one way that cannot leave half of it behind: an
+  exception inside the transaction, so every replacement already written rolls
+  back with the latch that was never set.
+
+  A thrown refusal rather than a returned one, deliberately. This function's
+  callers are about to make something public and irreversible, and a return value
+  saying *no* is a return value a caller can forget to read — `publish-recipe` has
+  answered a Recipe row since it existed, and every one of its call sites treats
+  a truthy answer as a published Recipe. `recipe-handler/publish-recipe-handler`
+  catches this and answers 400; anything else that ever calls it fails loudly
+  rather than quietly publishing ciphertext."
+  [message data]
+  (throw (ex-info message (assoc data :type ::refused-publish))))
+
+(defn- checked-replacements
+  "The columns of one replacement entry, checked against the row as it stands.
+  Answers the map to write, or refuses the whole publish.
+
+  Four things are refused here, and each is a different mistake:
+
+  - a **key that is not a prose column** — `title`, `version`, `published`,
+    anything. Publishing is not a write path and must not become one by accident:
+    the allowlist is `envelope/prose-columns` and it is the same list the guard
+    walks.
+  - a **value that is not a string.** SQLite would take a number into a TEXT
+    column and the guard would find no prefix on it, so this is the one shape that
+    could slip past the check downstream.
+  - a **value that is itself an envelope.** The guard catches it a moment later
+    anyway; refusing it here is what makes the message say which mistake was made.
+  - a column whose **current value is not sealed.** This is the important one. It
+    is what makes a publish-unseal *an encoding change and not a content change*,
+    which is the whole reason it writes no version, no history row and no inbox
+    entry: every value it touches was unreadable a moment ago and says the same
+    thing now. Without it, `POST /publish` would be a second write path — one with
+    no version bump, no `modified_at`, no provenance and no proposal — straight
+    onto a Recipe an agent may have written."
+  [table row entry keep]
+  (let [allowed (set (get envelope/prose-columns table))]
+    (into {}
+          (for [[column value] (apply dissoc entry keep)]
+            (do
+              (when-not (allowed column)
+                (refuse-publish! (str "Publishing can only unseal prose: `" (name column)
+                                      "` is not a sealed column of " (name table))
+                                 {:table table :column column}))
+              (when-not (string? value)
+                (refuse-publish! (str "The unsealed value for `" (name column)
+                                      "` is not text")
+                                 {:table table :column column}))
+              (when (envelope/sealed? value)
+                (refuse-publish! (str "The unsealed value for `" (name column)
+                                      "` is itself sealed — it was not opened")
+                                 {:table table :column column}))
+              (when-not (envelope/sealed? (get row column))
+                (refuse-publish! (str "`" (name column) "` is not sealed, so publishing"
+                                      " has nothing to unseal there. Publishing rewrites"
+                                      " an encoding; it does not write text")
+                                 {:table table :column column}))
+              [column value])))))
+
+(defn- apply-unsealed!
+  "Write the opened prose back over the envelopes, in place, inside the publish's
+  own transaction. No `modified_at`, no `version`, no `source`, no history row and
+  no event — for the reason `publish-recipe` writes none of those either: nothing
+  here is a content change. The bytes on the page are the bytes that were there
+  before, in an encoding the reader can see.
+
+  Every target is checked against the trail before anything is written, and a
+  target outside it — a version number this Recipe does not have, a proposal filed
+  against another Recipe — refuses the whole call. `recipe_history` and
+  `recipe_proposals` carry no user id worth trusting, so the ownership question is
+  answered once, by the `get-recipe` that found the row this is all about, and
+  then never left: every statement below is bounded by `recipe_id = id`."
+  [tx id current {:keys [recipe versions proposals] :as unsealed}]
+  ;; The shape first, and by refusing rather than by coercing: a payload that is
+  ;; not this shape is a caller that has misunderstood an irreversible act, and
+  ;; the useful answer is which part of it was not what it claimed. Everything
+  ;; below then reads a map and two sequences without asking again.
+  (when-not (map? unsealed)
+    (refuse-publish! "`unsealed` must be an object" {}))
+  (doseq [[k v ok?] [[:recipe recipe #(or (nil? %) (map? %))]
+                     [:versions versions #(or (nil? %) (sequential? %))]
+                     [:proposals proposals #(or (nil? %) (sequential? %))]]]
+    (when-not (ok? v)
+      (refuse-publish! (str "`unsealed." (name k) "` is not the shape"
+                            " GET /api/recipes/:id/sealed hands out")
+                       {:key k})))
+  (doseq [entry (concat versions proposals)]
+    (when-not (map? entry)
+      (refuse-publish! "every entry of `unsealed.versions` and `unsealed.proposals` is an object"
+                       {})))
+  (when (seq recipe)
+    (let [replacements (checked-replacements :recipes current recipe [])]
+      (jdbc/execute-one! tx (sql/format {:update :recipes :set replacements
+                                         :where [:= :id id]}))))
+  (let [by-version (into {} (map (juxt :version identity)) (history-trail tx id))]
+    (doseq [entry versions
+            :let [version (:version entry)
+                  row (get by-version version)]]
+      (when-not (and (int? version) row)
+        (refuse-publish! (str "This Recipe has no version " (pr-str version) " in its history")
+                         {:table :recipe_history :version version}))
+      (let [replacements (checked-replacements :recipe_history row entry [:version])]
+        (when (seq replacements)
+          (jdbc/execute-one! tx (sql/format {:update :recipe_history :set replacements
+                                             :where [:and [:= :recipe_id id]
+                                                     [:= :version version]]}))))))
+  (let [by-id (into {} (map (juxt :id identity)) (proposal-trail tx id))]
+    (doseq [entry proposals
+            :let [proposal-id (:id entry)
+                  row (get by-id proposal-id)]]
+      (when-not (and (int? proposal-id) row)
+        (refuse-publish! (str "Proposal " (pr-str proposal-id)
+                              " is not a proposal against this Recipe")
+                         {:table :recipe_proposals :id proposal-id}))
+      (let [replacements (checked-replacements :recipe_proposals row entry [:id])]
+        (when (seq replacements)
+          (jdbc/execute-one! tx (sql/format {:update :recipe_proposals :set replacements
+                                             :where [:and [:= :recipe_id id]
+                                                     [:= :id proposal-id]]})))))))
+
+(defn- refuse-if-still-sealed!
+  "The check the latch hangs on: **nothing anywhere in this Recipe's trail may
+  still be an envelope.** Read after the replacements are written and inside the
+  same transaction, so what it is looking at is exactly what the publish would
+  leave behind.
+
+  It is asked of the database rather than of the payload, and that is the point.
+  A payload can be complete about what it was told and silent about a row it never
+  saw — a proposal filed while the client was unsealing, a version the ladder read
+  missed. The trail is the answer to *what would a reader meet*, and the only
+  reader that can be asked is this one.
+
+  What it cannot check is that the plaintext it was handed is what the ciphertext
+  said. That needs the key, the server has none, and it never will: publishing is
+  the owner's own act, and what the guard protects him from is not himself lying
+  but a Recipe going public unreadable, with no unpublish to take it back."
+  [tx user-id id]
+  (let [current (get-recipe tx user-id id {:lean? false})
+        remaining (concat (for [column (envelope/sealed-in :recipes current)]
+                            (str "the Recipe's " (name column)))
+                          (for [row (history-trail tx id)
+                                column (envelope/sealed-in :recipe_history row)]
+                            (str "v" (:version row) "'s " (name column)))
+                          (for [row (proposal-trail tx id)
+                                column (envelope/sealed-in :recipe_proposals row)]
+                            (str "proposal " (:id row) "'s " (name column))))]
+    (when (seq remaining)
+      (refuse-publish!
+        (str "This Recipe's text is still encrypted and publishing is one way: "
+             (str/join ", " remaining)
+             ". A visitor has no key, so they would meet enc:v1:… on a public page"
+             " with nothing able to undo it. Publish from the web UI, which unseals"
+             " the Recipe as it publishes it.")
+        {:remaining (vec remaining)}))))
+
 (defn publish-recipe
   "Set the latch on a recipe the user owns: `published` on, `published_at`
   stamped. One way — there is no unpublish, because un-latching would hand a
@@ -1303,27 +1556,67 @@
   cannot publish at all (`wrap-machine-recipe-rules`), so there is no reachable
   caller here whose act the inbox is for.
 
+  **And since the seal, publishing is also a one-way unseal.** `unsealed` is the
+  plaintext of every envelope in this Recipe's trail — `sealed-trail`'s map with
+  the values opened — written back in place before the latch closes, and the latch
+  closes only if `refuse-if-still-sealed!` then finds nothing left. All of it is
+  one transaction, which is what takes the half-done state off the board: a
+  published Recipe whose history is unreadable, or an unsealed Recipe that never
+  published, are both states nothing here can end in.
+
+  **The unseal is an encoding change and not a content change**, and every claim
+  above survives it unaltered: no version, no history row, no event, no
+  `modified_at`, no `has_human_edit`, no `source`. `checked-replacements` is what
+  makes that true rather than merely intended — it refuses to touch a column that
+  is not currently sealed, so this cannot become a second write path onto text an
+  agent wrote.
+
+  With no `unsealed` — the arity every caller had before this — the behaviour is
+  what it always was **plus the guard**: a Recipe whose trail carries an envelope
+  anywhere is refused rather than published. That refusal is the honest answer for
+  a client that cannot unseal (a machine token, `curl`), and it is the reason the
+  guard is here rather than in the handler: publishing is irreversible, and the
+  last thing between a sealed Recipe and a public page should not be a caller
+  remembering to ask.
+
+  A refusal **throws** (`refuse-publish!`) and the transaction rolls back with
+  nothing written; `recipe-handler/publish-recipe-handler` turns it into a 400.
+
   nil when the id matches nothing the user owns."
-  [ds user-id id]
-  (jdbc/with-transaction [tx (db/get-conn ds)]
-    (when-let [current (get-recipe tx user-id id {:lean? false})]
-      ;; `:scopes` on the way out of both branches, not just the one that wrote:
-      ;; the client caches this response as the Recipe it holds, so a no-op
-      ;; publish that answered without the key would blank the badges on a card
-      ;; the server never unfiled.
-      (db.scope/attach-one
-        tx user-id
-        (if (published? current)
-          current
-          (let [result (jdbc/execute-one! tx
-                         (sql/format {:update :recipes
-                                      :set {:published 1
-                                            :published_at [:raw "datetime('now')"]}
-                                      :where [:= :id id]
-                                      :returning (select-columns false user-id)})
-                         db/jdbc-opts)]
-            (tel/log! {:level :info :data {:id id :user-id user-id}} "Recipe published")
-            result))))))
+  ([ds user-id id] (publish-recipe ds user-id id nil))
+  ([ds user-id id unsealed]
+   (jdbc/with-transaction [tx (db/get-conn ds)]
+     (when-let [current (get-recipe tx user-id id {:lean? false})]
+       (when (seq unsealed)
+         (apply-unsealed! tx id current unsealed))
+       ;; **After the replacements and before the latch**, so it reads the Recipe
+       ;; the publish would actually leave behind rather than the one it was
+       ;; handed. It runs on the no-payload path too — that is the whole point of
+       ;; it being here — and on the already-published no-op path, where it costs
+       ;; three cheap reads and answers a question that should never come up: a
+       ;; published Recipe with an envelope in it is a Recipe that got past this,
+       ;; and saying so is better than publishing it twice in silence.
+       (refuse-if-still-sealed! tx user-id id)
+       ;; `:scopes` on the way out of both branches, not just the one that wrote:
+       ;; the client caches this response as the Recipe it holds, so a no-op
+       ;; publish that answered without the key would blank the badges on a card
+       ;; the server never unfiled.
+       (db.scope/attach-one
+         tx user-id
+         (let [current (if (seq unsealed) (get-recipe tx user-id id {:lean? false}) current)]
+           (if (published? current)
+             current
+             (let [result (jdbc/execute-one! tx
+                            (sql/format {:update :recipes
+                                         :set {:published 1
+                                               :published_at [:raw "datetime('now')"]}
+                                         :where [:= :id id]
+                                         :returning (select-columns false user-id)})
+                            db/jdbc-opts)]
+               (tel/log! {:level :info :data {:id id :user-id user-id
+                                              :unsealed (boolean (seq unsealed))}}
+                         "Recipe published")
+               result))))))))
 
 (defn delete-recipe
   "Delete a recipe the user owns — by **stamping it** rather than by removing it.

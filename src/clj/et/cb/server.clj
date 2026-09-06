@@ -407,6 +407,10 @@
             (GET    "/"             [] recipe-handler/list-recipes-handler)
             (POST   "/"             [] recipe-handler/add-recipe-handler)
             (GET    "/:id/versions" [] recipe-handler/recipe-versions-handler)
+            ;; What publishing would have to unseal. A read, so neither guard has
+            ;; anything to say about it; owner-only in the handler, like the
+            ;; version ladder beside it.
+            (GET    "/:id/sealed"   [] recipe-handler/sealed-trail-handler)
             (POST   publish-route   [] recipe-handler/publish-recipe-handler)
             (GET    "/:id"          [] recipe-handler/get-recipe-handler)
             (PUT    "/:id"          [] recipe-handler/update-recipe-handler)

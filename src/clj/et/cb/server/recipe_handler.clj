@@ -1055,11 +1055,81 @@
   consults one. So a pending rewrite cannot ride out to the public on the back of a
   publish: what a visitor is shown is the last approved version, always. A machine may
   propose against the Recipe afterwards as well, and the same holds — see PUT
-  /api/recipes/:id."
+  /api/recipes/:id.
+
+  **Publishing is also a one-way unseal.** Cookbook's prose is end-to-end
+  encrypted and this server holds no key, so a sealed Recipe published as it
+  stands would put `enc:v1:…` in front of a stranger with no unpublish to take it
+  back. The body may therefore carry `unsealed` — the plaintext of every envelope
+  in the Recipe's trail, in the shape GET /api/recipes/:id/sealed hands them out:
+
+      {\"unsealed\": {\"recipe\":    {\"description\": \"…\", \"useful_when\": \"…\"},
+                    \"versions\":  [{\"version\": 2, \"reason\": \"…\"}],
+                    \"proposals\": [{\"id\": 7, \"description\": \"…\"}]}}
+
+  It is written back in place and the latch closes, in **one transaction**, and
+  only if no prose column anywhere in the trail is still an envelope afterwards.
+  Everything else about publishing is unchanged by it: no version, no history row,
+  no inbox entry, no `modified_at` — rewriting a column's encoding is not a content
+  change, and a replacement is refused unless the value it is replacing is
+  currently sealed, which is what keeps that true.
+
+  **400, and nothing written**, if an envelope would remain, if a replacement
+  names a row or a column outside this Recipe's trail, or if a value is not opened
+  text. With no `unsealed` at all the behaviour is exactly what it was, plus that
+  guard: a Recipe with a sealed trail is refused rather than published. Only the
+  owner's browser holds a key, so it is the only caller that can send the payload —
+  a machine token cannot publish at all (403), whatever it sends."
   [req]
   (let [user-id (common/get-user-id req)
         id (common/recipe-id req)
-        result (when id (db.recipe/publish-recipe (common/ensure-ds) user-id id))]
+        unsealed (when (map? (:body req)) (:unsealed (:body req)))]
+    (try
+      (let [result (when id (db.recipe/publish-recipe (common/ensure-ds) user-id id unsealed))]
+        (if result
+          {:status 200 :body result}
+          {:status 404 :body {:error "Recipe not found"}}))
+      (catch clojure.lang.ExceptionInfo e
+        ;; Only this app's own refusal is an answer; anything else is a bug and
+        ;; goes on being one. `::db.recipe/refused-publish` is thrown from inside
+        ;; the transaction precisely so that nothing has been written by the time
+        ;; it arrives here — see `db.recipe/refuse-publish!`.
+        (if (= :et.cb.db.recipe/refused-publish (:type (ex-data e)))
+          {:status 400 :body (merge {:error (ex-message e) :reason "sealed"}
+                                    (select-keys (ex-data e) [:remaining]))}
+          (throw e))))))
+
+(defn sealed-trail-handler
+  "GET /api/recipes/:id/sealed — what publishing this Recipe would have to unseal:
+  every value in its trail that is still `enc:v1:…`, and nothing that is not.
+
+      {\"sealed\": {\"recipe\":    {\"description\": \"enc:v1:…\"},
+                  \"versions\":  [{\"version\": 2, \"reason\": \"enc:v1:…\"}],
+                  \"proposals\": [{\"id\": 7, \"description\": \"enc:v1:…\"}]},
+       \"total\": 3}
+
+  It exists because publishing is a one-way unseal and **the server enumerates the
+  trail rather than the client**. A client walking the three tables itself could
+  walk fewer of them than the publish guard checks — the version ladder does not
+  carry proposals, and a resolved proposal is on no read at all — and would then
+  meet a refusal it had no way to act on. Asking here means the work order and the
+  requirement come from one list.
+
+  The answer is the mirror of what POST /api/recipes/:id/publish takes back: open
+  every value, keep the shape, send it as `unsealed`. `total` is how many values
+  that is, and **0 is the ordinary answer** — an unmigrated Recipe, or one already
+  published — which is what lets a client publish it with no payload at all.
+
+  The owner's, like the version ladder and for the same reason: this is the whole
+  of his prose, in the one encoding a stranger would gain nothing from. A visitor
+  gets 404 at every id, published or not, and so does a machine token — a machine
+  cannot publish, so what it would take to publish is not its question. Ciphertext
+  only either way: the plaintext is on the ordinary reads, and there is no reason
+  for this one to carry it."
+  [req]
+  (let [id (common/recipe-id req)
+        result (when (and id (common/owner-caller? req))
+                 (db.recipe/sealed-trail (common/ensure-ds) (common/get-user-id req) id))]
     (if result
       {:status 200 :body result}
       {:status 404 :body {:error "Recipe not found"}})))
