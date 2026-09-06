@@ -140,6 +140,33 @@
   []
   (bytes->b64 (random-bytes key-length)))
 
+(defn fingerprint
+  "Eight hex characters of SHA-256 over the raw key. **Not part of the envelope**
+  — nothing is bound to it and no ciphertext carries it — which is why it takes
+  raw bytes rather than a `CryptoKey`: it is computed the moment a key is pasted,
+  before the bytes are dropped and only a non-extractable handle is left.
+
+  It exists so that two things holding a key can be told they hold the *same*
+  key without either of them being able to say what it is — the job an ssh key
+  fingerprint does. Half a truncated hash of 256 bits of entropy identifies a key
+  and helps nobody find one, so it is safe on a settings panel, in a log line, and
+  in the header of a migration pass.
+
+  **That last one is why it lives here rather than beside the IndexedDB code it
+  was written for.** The migration walker in `plurama-cli` prints this before it
+  seals a database, and the ⚙ panel shows it; comparing the two by eye is the only
+  cheap check that the pass is about to seal with the key the browser can open.
+  A check like that is worthless if the two sides compute it differently, so the
+  answer for the fixture key is in `seal-vectors.edn` and both suites assert it —
+  the same treatment `bound-as` and `published-surface` get, and for the same
+  reason."
+  [raw]
+  (.then (.digest (subtle) "SHA-256" raw)
+         (fn [digest]
+           (->> (take 4 (array-seq (js/Uint8Array. digest)))
+                (map #(.padStart (.toString % 16) 2 "0"))
+                (str/join)))))
+
 (def bound-as
   "Which name a table's values are bound under — the AAD's first half.
 

@@ -66,6 +66,23 @@
     (testing "the reason/context pair is not in it — a visitor is served neither"
       (is (not-any? #{:reason :context} seal/published-surface)))))
 
+(deftest the-fingerprint-is-the-one-the-fixture-names
+  (testing "the eight characters the ⚙ panel shows and the migration walker prints.
+    They are compared by eye, across two implementations, before an irreversible
+    pass — so the answer for the fixture key is written down once and both suites
+    assert it. Nothing binds a ciphertext to it; it is a name for a key, not part
+    of the envelope."
+    (async done
+      (-> (seal/fingerprint (b64->bytes (:key-base64 @fixture)))
+          (.then (fn [fp]
+                   (is (= (:key-fingerprint @fixture) fp))
+                   (is (= 8 (count fp)) "four bytes, hex")))
+          (.then (fn [_] (seal/fingerprint (b64->bytes (:other-key-base64 @fixture)))))
+          (.then (fn [other]
+                   (is (not= (:key-fingerprint @fixture) other)
+                       "and a different key is a different name")
+                   (done)))))))
+
 (deftest a-value-travels-between-the-three-recipe-tables
   (testing "archive! and approve-proposal! copy verbatim and hold no key"
     (async done

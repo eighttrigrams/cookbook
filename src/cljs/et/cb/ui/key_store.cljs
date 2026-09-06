@@ -85,21 +85,6 @@
                 (set! (.-onsuccess req) (fn [_] (resolve (.-result req))))
                 (set! (.-onerror req) (fn [_] (reject (.-error req))))))))))
 
-(defn- fingerprint
-  "Eight hex characters of SHA-256 over the raw key, computed **before** the key is
-  imported and the raw bytes are dropped.
-
-  It is here so two devices can be told they hold the same key without either of
-  them being able to say what it is — the same job an ssh key fingerprint does.
-  Half a truncated hash of 256 bits of entropy identifies a key and does not help
-  anyone find one."
-  [raw]
-  (.then (.digest (.-subtle js/crypto) "SHA-256" raw)
-         (fn [digest]
-           (->> (take 4 (array-seq (js/Uint8Array. digest)))
-                (map #(.padStart (.toString % 16) 2 "0"))
-                (str/join)))))
-
 (defn load!
   "Read the key back out of IndexedDB into `state`. Called once, before the app's
   first request goes out — a fetch that raced this would hand its handler
@@ -134,7 +119,7 @@
                                 (js/Error. (str "A Cookbook key is 32 bytes; that one is "
                                                 (.-length raw) ".")))
       :else
-      (-> (js/Promise.all #js [(seal/import-key raw) (fingerprint raw)])
+      (-> (js/Promise.all #js [(seal/import-key raw) (seal/fingerprint raw)])
           (.then (fn [[k fp]]
                    (.then (tx-request "readwrite"
                                       #(.put % #js {:key k :fingerprint fp} record-key))

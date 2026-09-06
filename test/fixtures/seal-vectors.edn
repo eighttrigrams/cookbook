@@ -77,6 +77,14 @@
 ;;                      Not reason/context and not the history: a visitor is
 ;;                      served none of them at any ?detail, so their being
 ;;                      sealed is not what makes publishing wrong.
+;;   :key-fingerprint   the eight hex characters both clients show for :key-base64 —
+;;                      four bytes of SHA-256 over the raw key, and nothing to do
+;;                      with the envelope. It is here because it is compared *by
+;;                      eye*: the ⚙ panel shows one and the migration walker prints
+;;                      one, and sealing a database with a key the browser cannot
+;;                      open is the one mistake here that has no recovery. Two
+;;                      sides computing it differently would make that comparison
+;;                      a lie that reads as a check.
 ;;   :key-base64        the key every :vectors entry was sealed under
 ;;   :other-key-base64  a second key, used only by the wrong-key tamper case
 ;;   :vectors           nonce + plaintext + the exact ciphertext it must produce.
@@ -145,6 +153,7 @@
   :layout "enc:v1: ++ base64(nonce || ciphertext || tag)",
   :aad "utf-8 bytes of \"<binding>/<column>\", see :binding"},
  :published-surface ["description" "useful_when"],
+ :key-fingerprint "d53515b0",
  :unopenable
  ["enc:v1:"
   "enc:v1:a Recipe about the envelope!"
