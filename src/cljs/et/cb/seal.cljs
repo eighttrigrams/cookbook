@@ -583,3 +583,40 @@
   [index table id row]
   (merge (select-keys row (get sealed-columns table))
          (stored-row index table id)))
+
+;; ---------------------------------------------------------------------------
+;; What a client can tell about a row it is holding.
+;;
+;; Pure, and here rather than in the UI, for the reason the inventory is here:
+;; two surfaces ask these questions — the publish interlock and the provenance
+;; withholding — and a rule written down twice is a rule that will drift. It
+;; also puts them where the test build can reach them, which the UI namespaces
+;; are not: cljs-ajax wants an npm xmlhttprequest at load time.
+
+(def published-surface
+  "The columns a visitor is served, and therefore the ones whose being sealed
+  makes publishing wrong. Not the reason/context pair and not the history: those
+  are the owner's at every `?detail`, so a stranger never meets them."
+  [:description :useful_when])
+
+(defn arrived-sealed?
+  "Whether that column of that row **arrived sealed**, from the two things a client
+  is holding after a read.
+
+  `stored` is the ciphertext-only view — `stored-row` — which answers for a client
+  that has the key and has already unsealed the value out of `row`. `row` is the
+  row itself, which answers for a client that has no key and is looking at the
+  ciphertext. Either alone is half the question.
+
+  **It fails open**: a column in neither — a row this client has not read, or has
+  read only leanly — answers `false`. That is the safe direction for what asks it
+  today, since both callers guard something the server will refuse anyway, but it
+  is a fail-open and a new caller should know it is holding one."
+  [stored row column]
+  (or (contains? stored column)
+      (sealed? (get row column))))
+
+(defn any-arrived-sealed?
+  "`arrived-sealed?` over several columns — see `published-surface`."
+  [stored row columns]
+  (boolean (some #(arrived-sealed? stored row %) columns)))

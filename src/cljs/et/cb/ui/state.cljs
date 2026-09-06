@@ -1760,14 +1760,16 @@
 (defn sealed-column?
   "Whether this client is holding a Recipe whose `column` arrived sealed.
 
-  Two questions, because there are two ways to be holding one. `api/stored-row`
-  knows what the column held on the wire, which is the answer for a client that
-  has the key and unsealed it; the cached row itself is the answer for a client
-  that has no key and is looking at the ciphertext."
+  The question itself is `seal/arrived-sealed?`, which is pure and is where the
+  two halves of it are explained — and where its **fail-open** is written down: a
+  column this client has not read answers `false`. Unreachable for both callers
+  today, since each one guards something the server would refuse anyway and the
+  Recipe page has fetched its detail by the time either runs, but a third caller
+  should know what it is holding."
   [id column]
-  (let [stored (api/stored-row :recipes id)]
-    (or (contains? stored column)
-        (seal/sealed? (get-in @*app-state [:details id column])))))
+  (seal/arrived-sealed? (api/stored-row :recipes id)
+                        (get-in @*app-state [:details id])
+                        column))
 
 (defn sealed-body?
   "Whether the description arrived sealed — which is the question `caution` has to
@@ -1781,6 +1783,14 @@
   edited at line 5 therefore colours **his own first line** as an agent's — which
   is the one direction this app exists to get right.
 
+  **The question is really about the ladder, and the current description stands in
+  for it**, because the ladder is not something this client holds. The two part
+  company in one case: a Recipe sealed under a key later removed from this
+  browser and then edited, whose new version goes out in the clear — sealing is
+  off with no key — while `recipe_history` still holds envelopes. This answers no
+  and the split is drawn over a ladder the server could read only half of. Narrow,
+  and step 5 deletes the predicate rather than fixing it.
+
   So the split is withheld rather than shown wrong. When the computation moves
   into the browser — where the plaintext ladder already is — this predicate is
   what that change deletes."
@@ -1789,14 +1799,24 @@
 
 (defn sealed-recipe?
   "Whether this client is holding a Recipe whose **published surface** is sealed —
-  its description or its useful-when. Both are asked, because a visitor is served
-  exactly those two and would meet `enc:v1:…` on a public page for either.
+  its description or its useful-when, which is `seal/published-surface` and is
+  named there rather than here so the two clients cannot answer it differently.
 
-  Neither `reason`/`context` nor the history is asked about, and that is not an
-  oversight: a visitor is served none of them, so their being sealed is not what
-  makes publishing wrong. It is the two fields on the page a stranger opens."
+  A visitor is served exactly those two and would meet `enc:v1:…` on a public page
+  for either. Neither `reason`/`context` nor the history is asked about, and that
+  is not an oversight: a visitor is served none of them, so their being sealed is
+  not what makes publishing wrong.
+
+  Fail-open, per `seal/arrived-sealed?`: with neither an index entry nor a cached
+  row this answers `false` and the publish proceeds. Unreachable from the one
+  caller there is — `recipe-modals` opens over a Recipe page that has fetched its
+  detail — and the same fail-open `plurama-cli`'s equivalent documents, for the
+  same reason: a caller who cannot read the Recipe is a caller whose publish the
+  server is about to refuse anyway."
   [id]
-  (boolean (some #(sealed-column? id %) [:description :useful_when])))
+  (seal/any-arrived-sealed? (api/stored-row :recipes id)
+                            (get-in @*app-state [:details id])
+                            seal/published-surface))
 
 (defn publish-recipe
   "One way: there is no unpublish call to pair with this one, on the server or

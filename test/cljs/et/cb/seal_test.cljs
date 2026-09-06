@@ -556,6 +556,36 @@
                                   "a Recipe this client has not read the body of echoes nothing"))))))
         (.then done))))
 
+(deftest what-a-client-can-tell-about-a-row-it-is-holding
+  (testing "the question behind the publish interlock and the provenance withholding"
+    (async done
+      (-> (test-key)
+          (.then (fn [k] (seal/seal k :recipes :description "sealed body")))
+          (.then
+           (fn [sealed]
+             (testing "a client with the key: the ciphertext survives only in the index"
+               (let [stored {:description sealed}
+                     cached {:id 7 :description "sealed body" :useful_when "in the clear"}]
+                 (is (true? (seal/arrived-sealed? stored cached :description)))
+                 (is (false? (seal/arrived-sealed? stored cached :useful_when)))
+                 (is (true? (seal/any-arrived-sealed? stored cached seal/published-surface)))))
+             (testing "a client with no key: the row itself is the evidence"
+               (let [cached {:id 7 :description sealed :useful_when "in the clear"}]
+                 (is (true? (seal/arrived-sealed? {} cached :description)))
+                 (is (true? (seal/any-arrived-sealed? {} cached seal/published-surface)))))
+             (testing "a sealed useful-when alone is still a published surface"
+               (is (true? (seal/any-arrived-sealed? {:useful_when sealed} {} seal/published-surface)))
+               (is (false? (seal/arrived-sealed? {:useful_when sealed} {} :description))))
+             (testing "an unmigrated row is not sealed, however it is held"
+               (let [cached {:id 7 :description "plain" :useful_when "plain"}]
+                 (is (false? (seal/any-arrived-sealed? {} cached seal/published-surface)))))
+             (testing "reason and context are not the published surface"
+               (is (= [:description :useful_when] seal/published-surface)))
+             (testing "and it fails open on a row nothing has been read for"
+               (is (false? (seal/arrived-sealed? {} nil :description)))
+               (is (false? (seal/any-arrived-sealed? {} nil seal/published-surface))))))
+          (.then done)))))
+
 (deftest the-write-path-reaches-the-echo-rule-on-an-unmigrated-row
   (testing "sealed-index -> stored-for-write -> seal-recipe-write, which is the wiring
     et.cb.ui.api and et.cb.ui.state stand on. `seal` echoing correctly is not the
