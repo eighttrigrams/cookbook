@@ -627,3 +627,63 @@
   "`arrived-sealed?` over several columns — see `published-surface`."
   [stored row columns]
   (boolean (some #(arrived-sealed? stored row %) columns)))
+
+(defn ladder-arrived-sealed?
+  "Whether a version ladder — `(:versions …)` of `GET /api/recipes/:id/versions`,
+  after `unseal-versions` has been over it — still holds an envelope in any
+  version's body.
+
+  **Which is the same as asking whether this client can read the ladder at all**,
+  because unsealing has already happened by the time anybody sees one. A value
+  that comes through still wearing `enc:v1:` is a value `unseal` declined to
+  open: no key, the wrong key, or a row that will not decrypt. So this is the
+  question the local `caution` has to be asked before it is computed, and the
+  answer `true` means *withhold*, not *compute differently* — an assessment over
+  base64 is not a rough answer, it is a confident wrong one, since base64 carries
+  no newlines and the whole ladder collapses to a single line.
+
+  Only the body is asked about. `reason` and `context` are sealed too and are not
+  input to the split — the split is drawn over `description` and nothing else, per
+  `et.cb.caution/ranges` — so a ladder whose reasons will not open is still a
+  ladder whose provenance can be read."
+  [versions]
+  (boolean (some #(sealed? (:description %)) versions)))
+
+(defn caution-over-ciphertext?
+  "Whether the `caution` a response is carrying was computed over text the server
+  could not read.
+
+  The server assesses `recipe_history` on every `?detail=full` and on every PUT
+  that made a version, and it holds no key. On a sealed Recipe what it produces
+  is **wrong rather than incomplete**: the ladder reads as one line, and the
+  single range that comes back carries the last writer's label onto line 1 of the
+  plaintext — colouring the owner's own opening line as an agent's, which is the
+  one direction this app exists to get right.
+
+  So the value is dropped at the boundary, in `et.cb.ui.api`, and never enters
+  the client's state at all. Dropping beats guarding at the two render sites,
+  which is what this used to be: a guard has to be remembered by everyone who
+  ever draws a split, and a dropped key is simply not there — the same argument
+  `unseal-body` makes about doing the work once, at the door.
+
+  **The current row's body stands in for the ladder**, as it must: the ladder is
+  not in this response. It is exact for every Recipe whose history was written by
+  a client holding the key, which is all of them. The one shape it misses is a
+  Recipe sealed, then edited by a client with **no** key: a plaintext body over a
+  sealed history, which the server assessed and read half of.
+
+  `et.cb.ui.state/fetch-versions` closes **half** of that shape from the other end
+  — a ladder that will not open retires whatever split is being held — and the
+  half it closes is the one that is actually reachable, since the client that made
+  such a Recipe is a client with no key and it is that client that goes on reading
+  it. What stays open is the same Recipe read by a client that *does* hold the
+  key: the ladder opens, nothing notices, and the server's half-blind answer
+  stands. Closing that too would mean knowing whether a version *arrived* sealed,
+  which is gone by the time anybody holds the list — so it would take either a
+  marker key on the response or recomputing on every ladder this client fetches,
+  plaintext Recipes included. Neither was worth it for a state only a
+  misconfiguration produces."
+  [body]
+  (boolean (and (map? body)
+                (contains? body :caution)
+                (sealed? (:description body)))))

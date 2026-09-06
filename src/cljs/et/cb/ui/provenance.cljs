@@ -11,10 +11,22 @@
   differently: the badge counts *versions*, `caution` attributes *the lines of the
   text as it stands*. A Recipe he wrote once and an agent has since edited nineteen
   times wears `1(ui)/19(machine)` and still has his opening paragraph at `1.00`. The
-  arithmetic behind that number is `us-vs-them`'s and the API's — nothing here
-  computes it — so what this namespace adds is the one translation the view needs:
-  ranges into lines. See `et.cb.caution` (clj) for the question, and
-  `recipe-handler/get-recipe-handler`'s docstring for the shape it arrives in.
+  arithmetic behind that number is `us-vs-them`'s — see `et.cb.caution` for the
+  question, and `recipe-handler/get-recipe-handler`'s docstring for the shape it
+  arrives in from the server.
+
+  **It used to say 'and the API's — nothing here computes it', and since the
+  caution port that is only half true.** A sealed Recipe's split cannot be
+  computed by the server, which holds no key and would be assessing base64; so for
+  those Recipes it is computed here, over the version ladder this client has
+  already unsealed, by the *same* `et.cb.caution` the server calls — that
+  namespace is `.cljc` for exactly this reason, and `local-split` below is the
+  whole of what is new. A published or unmigrated Recipe still gets the server's
+  answer, unchanged. Two hosts, one adapter, one arithmetic.
+
+  So this namespace now adds two things rather than one: the translation the view
+  needs, ranges into lines, and — for the Recipes the server cannot answer about
+  — where the ranges come from at all.
 
   **It was three until migration 010.** `source` was nullable and nil was a
   category of its own: nothing had recorded where that version came from, which was
@@ -23,7 +35,9 @@
   was asked what those versions were and said they were his, 010 wrote that down
   and made the column `NOT NULL CHECK (source IN ('ui','machine'))`, and so there is
   no third bucket left to name: every version now says which of the two it is."
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [et.cb.caution :as caution]
+            [et.cb.seal :as seal]))
 
 (def ui-label "ui")
 
@@ -76,6 +90,32 @@
                         {}
                         ranges)]
     (mapv #(get by-line (inc %)) (range line-count))))
+
+(defn local-split
+  "The `caution` value for a Recipe this client had to compute for itself —
+  `{:legend :ranges}`, the same map the API sends — or **nil when the ladder
+  cannot be read**, which is the honest answer and not a degraded one.
+
+  `versions` is `(:versions …)` of `GET /api/recipes/:id/versions` as this client
+  holds it: newest first, already unsealed. That is exactly the shape
+  `et.cb.caution/ranges` documents, and it is the same list the server reads off
+  `list-versions` — so the two hosts are not two readings of a history, they are
+  one function over the same list, and the reversal, the choice of `description`
+  and the `:ours` set are stated once, in `et.cb.caution`, for both of them.
+
+  **Nil rather than an empty vector**, because `views.recipe` keys the *Show
+  provenance* button off `(seq ranges)` and a Recipe whose split is unknown must
+  not offer to draw one. An empty vector would be a claim that the body has no
+  lines.
+
+  Two things make it nil, and they are the same thing said twice: no key
+  configured, and a ladder holding an envelope the key would not open. Both come
+  back from `seal/ladder-arrived-sealed?`, since with no key `unseal` returns
+  what it was given."
+  [versions]
+  (when-not (seal/ladder-arrived-sealed? versions)
+    {:legend caution/legend
+     :ranges (caution/ranges versions)}))
 
 ;; ---------------------------------------------------------------------------
 ;; Aligning a draft against the body the ranges are about

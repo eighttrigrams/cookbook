@@ -765,3 +765,58 @@
                                 (is (= line (:useful_when out)))
                                 (is (= "T" (:title out))))))))
           (.then done)))))
+
+(deftest what-a-client-can-tell-about-a-ladder
+  (testing "the two questions the caution port put in front of the provenance split"
+    (async done
+      (-> (test-key)
+          (.then (fn [k] (seal/seal k :recipes :description "a sealed body")))
+          (.then
+           (fn [sealed]
+             (testing "a ladder is unreadable when any version's body is still an envelope"
+               ;; Which is the same as saying: this client has no key, or the wrong
+               ;; one. `unseal-versions` has already been over the list by the time
+               ;; anybody sees it, so a value still wearing the prefix is one
+               ;; `unseal` declined to open.
+               (is (true? (seal/ladder-arrived-sealed?
+                           [{:version 2 :description "plain" :source "ui" :current true}
+                            {:version 1 :description sealed :source "machine"}])))
+               (is (true? (seal/ladder-arrived-sealed?
+                           [{:version 1 :description sealed :source "ui" :current true}]))))
+             (testing "and readable when every one of them opened"
+               (is (false? (seal/ladder-arrived-sealed?
+                            [{:version 2 :description "plain" :source "ui" :current true}
+                             {:version 1 :description "also plain" :source "machine"}]))))
+             (testing "an empty or absent ladder is not evidence of an envelope"
+               ;; Nothing to withhold *because of*; `local-split` over it answers a
+               ;; single range and the view's own blank check takes it from there.
+               (is (false? (seal/ladder-arrived-sealed? [])))
+               (is (false? (seal/ladder-arrived-sealed? nil))))
+             (testing "only the body is asked about, not the reason or the context"
+               ;; The split is drawn over `description` and nothing else, so a
+               ;; ladder whose reasons will not open is still one whose provenance
+               ;; can be read.
+               (is (false? (seal/ladder-arrived-sealed?
+                            [{:version 1 :description "plain" :reason sealed :context sealed}]))))
+
+             (testing "a response's caution was computed over ciphertext when its body was"
+               (is (true? (seal/caution-over-ciphertext?
+                           {:id 7 :version 3 :description sealed
+                            :caution {:legend "…" :ranges [{:from 1 :to 1 :caution 0.0}]}}))))
+             (testing "and was not, when the body came in the clear"
+               ;; A published Recipe and an unmigrated one are the same case here,
+               ;; and both keep the server's answer untouched.
+               (is (false? (seal/caution-over-ciphertext?
+                            {:id 7 :version 3 :description "plain"
+                             :caution {:legend "…" :ranges []}}))))
+             (testing "a body with no caution on it is left alone either way"
+               ;; A lean read, a visitor's read, a filing PUT, a publish: none of
+               ;; them carries a split, and none of them should acquire an opinion
+               ;; about one here.
+               (is (false? (seal/caution-over-ciphertext? {:id 7 :version 3 :description sealed})))
+               (is (false? (seal/caution-over-ciphertext? {:id 7 :version 3}))))
+             (testing "and neither is a listing, a nil, or anything that is not a map"
+               (is (false? (seal/caution-over-ciphertext? nil)))
+               (is (false? (seal/caution-over-ciphertext? [{:caution {} :description sealed}])))
+               (is (false? (seal/caution-over-ciphertext? "enc:v1:not-a-body"))))))
+          (.then done)))))

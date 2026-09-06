@@ -88,11 +88,25 @@
 
   A failure to unseal never reaches here: `seal/unseal` hands back a value it
   cannot open rather than rejecting, so a wrong key shows as `enc:v1:…` on the
-  page instead of taking it down."
+  page instead of taking it down.
+
+  **And one key is taken away rather than opened.** `caution` — the line-level
+  provenance split — is computed on the server over `recipe_history`, and the
+  server holds no key, so on a sealed Recipe the split it hands back is not a
+  reading of the body this client is about to unseal. It is dropped here, at the
+  door, for the same reason the unsealing is here: a rule applied once on the way
+  in cannot be forgotten by a render site later, and there is no moment at which
+  any part of this client is holding a split that describes a text nobody has.
+  The client computes its own instead — `et.cb.ui.state/refresh-local-caution!`
+  — over the ladder, which it *can* read.
+
+  Asked **before** unsealing, necessarily: the question is whether the body
+  arrived sealed, and one microtask later there is nothing left to ask it of."
   [handler]
   (fn [body]
     (swap! stored-ciphertexts merge (seal/sealed-index body))
-    (.then (seal/unseal-body (key-store/current-key) body) handler)))
+    (let [body (cond-> body (seal/caution-over-ciphertext? body) (dissoc :caution))]
+      (.then (seal/unseal-body (key-store/current-key) body) handler))))
 
 (defn fetch-json
   "A GET, with the same optional `error-handler` the three writes below have and

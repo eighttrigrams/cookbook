@@ -511,12 +511,15 @@
   (let [{:keys [legend ranges]} (:caution recipe)
         body (:description recipe)
         blank? (str/blank? body)
-        ;; **Withheld on a Recipe whose body arrived sealed**, because the split
-        ;; is computed on the server over a history the server can no longer
-        ;; read, and what comes back is not incomplete but wrong — see
-        ;; `state/sealed-body?`, which is also what deletes this line when the
-        ;; computation moves in here.
-        offered? (and (seq ranges) (not blank?) (not (state/sealed-body? (:id recipe))))
+        ;; **No sealed-body guard here any more, and its absence is the change.** It
+        ;; used to read `(not (state/sealed-body? (:id recipe)))`, because the split
+        ;; arrived from a server that could not read a sealed history and what came
+        ;; back was wrong rather than incomplete. Now nothing wrong ever gets this
+        ;; far: `ui.api` drops such a split at the door, and `state`
+        ;; recomputes it here over the unsealed ladder. So the question this asks is
+        ;; the one it always meant to ask — is there a split for this body — and a
+        ;; Recipe whose ladder will not open simply has none.
+        offered? (and (seq ranges) (not blank?))
         showing? (and offered? showing-provenance?)]
     [:<>
      [header recipe logged-in? (when offered? [provenance-toggle showing?])]
@@ -598,9 +601,8 @@
   [recipe logged-in?]
   (let [{:keys [description] :as fields} (state/recipe-edit-fields)
         {:keys [legend ranges]} (:caution recipe)
-        ;; Withheld on a sealed body, for the reason the reading mode gives.
-        offered? (and (seq ranges) (not (str/blank? description))
-                      (not (state/sealed-body? (:id recipe))))
+        ;; No sealed-body guard, for the reason the reading mode gives at length.
+        offered? (and (seq ranges) (not (str/blank? description)))
         showing? (and offered? (:showing-provenance? @state/*app-state))]
     [:<>
      ;; ⌘9 saves without leaving, from anywhere on the page — mounted here so the

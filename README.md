@@ -651,23 +651,17 @@ is this app's behaviour before any of it existed.
 
 ### Not done yet
 
-- **`caution`** — the per-line provenance split — is computed on the server from
-  the version history, and the server cannot read a sealed history. On a sealed
-  Recipe what it produces is **wrong, not incomplete**: base64 carries no
-  newlines, so the whole ladder reads as one line, and the single range that
-  comes back carries the *last writer's* label and lands on line 1 of the
-  plaintext. A Recipe the owner wrote and an agent later edited at line 5 would
-  colour **his own opening line** as an agent's — the one direction this app
-  exists to get right. So **the browser withholds the split entirely** when the
-  body arrived sealed: no toggle, no legend, no number. The real fix is to move
-  `et.uvt.caution` to `.cljc` and compute it in the browser, over the plaintext
-  ladder that is already there; that is what deletes the withholding.
 - **Publishing** a sealed Recipe would hand a visitor `enc:v1:…`, and there is no
   unpublish. **All three clients refuse it** for now, with a message saying why —
   an interlock, not the feature. Publish has to become a client-driven one-way
   unseal before anything sealed can be published.
 - **The migration** that seals what is already on the shelf is not written. Until
   it runs, sealing applies to what the clients write and nothing else.
+- **`plurama-cli` does not compute `caution` for a sealed Recipe.** It drops the
+  server's rather than passing on a wrong one, so nothing lies — but an agent
+  reading a sealed Recipe through it is told nothing about which lines are his,
+  where the browser is told everything. The library runs under babashka, so this
+  is a wiring job and not a design one; `plurama-cli`'s README names the cost.
 
 ## Hosting
 
@@ -689,7 +683,7 @@ The defaults are declared in `config.edn` / `config.edn.template` and
 make start      # shadow-cljs watch + the clojure server
 make stop
 make test       # the clojure suite
-make test-cljs  # the seal's test vectors, under node
+make test-cljs  # the seal's test vectors and both caution suites, under node
 make test-all   # both — the one to run before believing a seal change
 make lint
 ```
@@ -904,10 +898,13 @@ else here, in the owner's audience. It is the one number in this API written for
 agent to act on.
 
 **It is an estimate.** Nobody recorded who typed which line. It is computed by
-[us-vs-them](../us-vs-them) — a sibling library, wired in by `:local/root`, whose
-`caution_test.clj` is the specification of what the numbers mean — by diffing the
-Recipe's versions against each other and attributing from that, looking for islands
-of his writing in a sea of generated text.
+[us-vs-them](../us-vs-them) — a sibling library whose `caution_test.cljc` is the
+specification of what the numbers mean — by diffing the Recipe's versions against
+each other and attributing from that, looking for islands of his writing in a sea of
+generated text. The library is `.cljc`, and it is wired in twice: `:local/root` in
+`deps.edn` for the server, and `../us-vs-them/src` on `shadow-cljs.edn`'s
+`:source-paths` for the browser. See *Which lines are his, when they are sealed*
+below for why there are two.
 
 A number between the ends is what dilution looks like, and it is a property of the
 stretch rather than of any one line: an agent's line landing *inside* a stretch of
@@ -947,6 +944,63 @@ and on a save that made a version, which is nothing at the size of a Recipe and 
 first thing to look at if that route ever gets slow. It is the reason the writes that
 make no version are left out rather than served it for symmetry.
 
+### Which lines are his, when they are sealed
+
+Everything above describes the server computing the split. **The server holds no
+key**, so on a Recipe whose prose is sealed it would be assessing base64 — and
+base64 carries no newlines, so the whole ladder reads as one line and the single
+range that comes back carries the last writer's label onto line 1 of the
+plaintext. A Recipe the owner wrote and an agent later edited at line 5 would
+colour **his own opening line** as an agent's. Wrong, not incomplete, and in the
+one direction this app exists to get right.
+
+So for a sealed Recipe the split is computed **in the browser**, which is where
+the plaintext is:
+
+| the Recipe | where the split comes from |
+| --- | --- |
+| prose in the clear — unmigrated, or published | the server, exactly as before |
+| sealed, and this client can open the ladder | the browser, from `GET /api/recipes/:id/versions` |
+| sealed, and it cannot — no key, or the wrong one | nowhere; the toggle is not offered |
+
+There is one state the table does not cover and it is worth naming: a Recipe
+sealed and then edited by a client with **no** key has a plaintext body over a
+sealed history, and the server's split for it was drawn over a ladder it could
+read only half of. A reader who also has no key never sees that split — the
+moment anything fetches the ladder, it will not open and the split is retired.
+A reader who *has* the key does see it, because the ladder opens for him and
+nothing notices. It takes a misconfiguration to produce and it is written down
+in `seal/caution-over-ciphertext?` rather than guarded.
+
+Three things make that work and each is worth knowing:
+
+- **One adapter, two hosts.** `et.cb.caution` is `.cljc`. What cookbook means by
+  the question — the ladder is replayed oldest first, the text is the
+  `description`, `ui` is us, and the `legend` is the wording that travels with
+  the numbers — is stated once and read by both. Every one of those is silently
+  wrong-able, and a second adapter in ClojureScript would have been a second
+  chance to get one of them backwards with no test next door.
+- **The server's answer is dropped at the door**, in `et.cb.ui.api`, for any
+  response whose body arrived sealed. Not guarded at the render sites, which is
+  what it used to be: a guard has to be remembered by everyone who ever draws a
+  split, and a key that is not there cannot be drawn by anybody.
+- **The API does not change.** A sealed Recipe's `?detail=full` still carries a
+  `caution` and a version-making `PUT` still answers with one; the browser
+  ignores both and recomputes. That is deliberate — `plurama-cli` and any other
+  reader go on seeing the shape they always saw — and it is why *this* section is
+  under the client rather than under the endpoint.
+
+The client pays one extra `GET …/versions` per sealed Recipe page, and per save
+of one. That read counts no consumption (see the note on `?detail=full` above),
+so it moves nothing on the shelf; it also leaves the version viewer's cache warm.
+
+**`plurama-cli` does not compute one** — and since this change it does not pass
+the server's on either: it drops the key for a sealed Recipe, the way the browser
+does, rather than handing an agent a number that lies about which lines are his.
+Computing it there is possible, since the library runs under babashka by design,
+and was left undone deliberately; that repo's README says what it would cost.
+What no client does any more is hand out a split it cannot stand behind.
+
 ### Rate limiting
 
 A single global window, outermost in the middleware chain: 180 requests/minute in
@@ -962,7 +1016,12 @@ nothing about unsupervised writes argues for removing it.
 - `src/cljs/et/cb/ui` — reagent SPA.
 - `src/cljs/et/cb/seal.cljs` — the encryption envelope and the inventory of
   sealed columns; `ui/key_store.cljs` holds the key in IndexedDB.
-- `test/cljs` — the ClojureScript suite (`make test-cljs`), which today is the
-  seal's half of the shared test vectors in `test/fixtures/seal-vectors.edn`.
+- `src/cljc/et/cb/caution.cljc` — the adapter onto `us-vs-them`, read by the
+  server and by the browser; `src/cljs/et/cb/ui/provenance.cljs` is where the
+  browser asks it.
+- `test/cljs` — the ClojureScript suite (`make test-cljs`): the seal's half of the
+  shared test vectors in `test/fixtures/seal-vectors.edn`, the caution adapter on
+  this host, and — over `shadow-cljs.edn`'s `../us-vs-them/test` — the library's
+  own suite, which is the specification of what the numbers mean.
 - `resources/public/cookbook` — `index.html`, `styles.css`, `css/` (amber theme
   in `base.css`, app layout in `cookbook.css`, phone rules last in `mobile.css`).

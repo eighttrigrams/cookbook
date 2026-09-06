@@ -4,6 +4,7 @@
             [et.cb.seal :as seal]
             [et.cb.ui.api :as api]
             [et.cb.ui.key-store :as key-store]
+            [et.cb.ui.provenance :as provenance]
             [et.cb.ui.save-flash :as save-flash]
             [et.cb.ui.url :as url]))
 
@@ -913,6 +914,9 @@
   [id]
   (api/fetch-json (str "/api/recipes/" id) (auth-headers) cache-detail!))
 
+;; Defined with the version history below, because the ladder is what it reads.
+(declare refresh-local-caution!)
+
 (defn fetch-recipe-page!
   "The one Recipe a `/recipe/<id>` page is about, into `:details` and a status
   beside it.
@@ -941,6 +945,10 @@
     (fn [recipe]
       (when (= id (:recipe-page-id @*app-state))
         (cache-detail! recipe)
+        ;; **Inside the same guard**, so a Recipe the reader has navigated away from
+        ;; does not go on to fetch a ladder and write a split into a row nothing is
+        ;; showing. A no-op unless the body arrived sealed — see its docstring.
+        (refresh-local-caution! id)
         (swap! *app-state assoc :recipe-page-status :found)))
     (fn [_]
       (when (= id (:recipe-page-id @*app-state))
@@ -974,6 +982,22 @@
 ;; card's provenance badge is fed by counts the listing endpoint aggregates,
 ;; precisely so a collapsed card never has to come here.
 
+;; `sealed-body?` and its `sealed-column?` live at the far end of this file, with
+;; the publish interlock that asks the same kind of question of the same index. It
+;; is declared rather than moved: the two belong beside each other, and this
+;; section is the version history's.
+(declare sealed-body?)
+
+(defn- install-caution!
+  "One Recipe's split, or its absence. `dissoc` and not `assoc … nil`, because the
+  absence is the shape the API already uses for a caller who is not to be served
+  one — `tags` and `scopes` go missing the same way — and because `cache-detail!`
+  merges: a key that is not there is a key a later lean read cannot resurrect,
+  while a nil would sit in the row looking like an answer."
+  [id split]
+  (swap! *app-state update-in [:details id]
+         (fn [row] (if split (assoc row :caution split) (dissoc row :caution)))))
+
 (defn fetch-versions
   "Every version of one recipe, into `[:versions id]`.
 
@@ -1006,7 +1030,57 @@
              ;; A separate map keyed by id, not a key on `:versions`, because that
              ;; value is a vector every reader walks.
              (swap! *app-state assoc-in [:versions-deleted-at id] deleted_at)
+             ;; **A ladder this client cannot open retires whatever split it is
+             ;; holding for that Recipe.** `api` drops the server's answer when the
+             ;; *current* body arrives sealed, which is exact for every Recipe whose
+             ;; history was written by a client with the key — but not for the one
+             ;; state a single row cannot show: a Recipe sealed, then edited by a
+             ;; client with no key, whose body is plaintext over a sealed history.
+             ;; The server assessed that ladder and read half of it, and the answer
+             ;; looks entirely plausible.
+             ;;
+             ;; Here there is a ladder to know it by, and one predicate on a
+             ;; response that has already arrived is the whole cost. It closes the
+             ;; reachable half — the keyless client that made such a Recipe is the
+             ;; one that goes on reading it. A client *with* the key opens that same
+             ;; ladder, so nothing here fires and the server's half-blind split
+             ;; stands; see `seal/caution-over-ciphertext?` for why that is left.
+             (when (seal/ladder-arrived-sealed? versions)
+               (install-caution! id nil))
              (when on-landed (on-landed versions)))))))))
+
+(defn refresh-local-caution!
+  "Compute this Recipe's provenance split **here**, over the version ladder, and
+  install it — for a Recipe whose body arrived sealed and whose split the server
+  therefore could not compute.
+
+  `et.cb.ui.api` has already dropped the server's answer for such a Recipe
+  (`seal/caution-over-ciphertext?`), so what this fills is a hole rather than
+  overwriting a lie; and it fills it with nil when the ladder will not open,
+  which leaves the *Show provenance* button off the page. Withholding is still in
+  here, in other words — it is just no longer the whole answer. It is what is
+  left when the answer cannot be had.
+
+  **The ladder is fetched rather than taken from the cache**, always. A cached
+  history is exactly one version out of date after a save, which is the moment
+  this runs; and `fetch-versions`' request numbering is what makes the fetch safe
+  to fire from two places. The consumption argument is settled the other way for
+  once: `/versions` counts no view — `fetch-filing!`'s docstring is where that is
+  written down — so this costs a round trip and moves nothing on the shelf.
+
+  It leaves `[:versions id]` warm as a side effect, which is the cache
+  `forget-versions!` has just dropped. That is a happy accident and not a reason:
+  the viewer would have refetched it, and now it does not.
+
+  **It answers `sealed-body?` itself rather than making its callers ask**, so the
+  rule lives in one place with one docstring: a Recipe whose body arrived in the
+  clear keeps the server's split, which is correct and is already in the row, and
+  this does nothing and costs nothing. Two call sites asking the question
+  themselves is how a third one comes to ask it differently."
+  [id]
+  (when (sealed-body? id)
+    (fetch-versions id (fn [versions]
+                         (install-caution! id (provenance/local-split versions))))))
 
 (defn- forget-versions!
   "The cached version history for one Recipe, dropped because a new version makes it
@@ -1355,6 +1429,17 @@
          (fn [recipe]
            (cache-detail! recipe)
            (forget-versions! id)
+           ;; **After `forget-versions!`, necessarily**, and for the reason the
+           ;; server's own `caution-body` is called after the write: the ladder this
+           ;; reads has to be the one with the new version in it. It refetches
+           ;; unconditionally, so the line above cannot leave it reading a cache.
+           ;;
+           ;; This is the second of `caution-body`'s two call sites, seen from the
+           ;; client: a version-making PUT answers with a fresh split, and for a
+           ;; sealed Recipe that split is one `api` has just dropped. So the reader
+           ;; gets the same thing he always did — a button that still works after a
+           ;; save — by a different road.
+           (refresh-local-caution! id)
            (fetch-recipes)
            ;; a save may have refiled the Recipe, so the per-Scope counts moved
            (fetch-scopes)
@@ -1777,10 +1862,17 @@
 
   The question itself is `seal/arrived-sealed?`, which is pure and is where the
   two halves of it are explained — and where its **fail-open** is written down: a
-  column this client has not read answers `false`. Unreachable for both callers
-  today, since each one guards something the server would refuse anyway and the
-  Recipe page has fetched its detail by the time either runs, but a third caller
-  should know what it is holding."
+  column this client has not read answers `false`.
+
+  Unreachable for both callers today. `sealed-recipe?` guards a publish the server
+  would refuse anyway, and the Recipe page has fetched its detail by the time the
+  modal over it can open. `sealed-body?` is asked from inside the callback that
+  has just cached the row, so there is a row by construction — and its fail-open
+  is now the safe direction rather than merely an unreachable one: answering
+  `false` for a sealed Recipe means *no local recompute*, and since `ui.api` has
+  already dropped the server's split for that same Recipe, what is left is no
+  split, which is a button that is not offered rather than one that lies. A third
+  caller should still know what it is holding."
   [id column]
   (seal/arrived-sealed? (api/stored-row :recipes id)
                         (get-in @*app-state [:details id])
@@ -1788,27 +1880,40 @@
 
 (defn sealed-body?
   "Whether the description arrived sealed — which is the question `caution` has to
-  be asked before it is drawn.
+  be asked before it is *drawn from the server's answer*.
 
-  The split is computed **on the server**, over `recipe_history`, and the server
-  cannot read a sealed history. What it produces from one is not a partial answer
-  but a wrong one: base64 has no newlines, so the whole ladder is one line, and
-  the single range that comes back carries the *last writer's* label and gets
-  painted onto the plaintext's line 1. A Recipe the owner wrote and an agent later
-  edited at line 5 therefore colours **his own first line** as an agent's — which
-  is the one direction this app exists to get right.
+  The server computes the split over `recipe_history` and holds no key. What it
+  produces from a sealed history is not a partial answer but a wrong one: base64
+  has no newlines, so the whole ladder is one line, and the single range that
+  comes back carries the *last writer's* label and gets painted onto the
+  plaintext's line 1. A Recipe the owner wrote and an agent later edited at line 5
+  therefore colours **his own first line** as an agent's — which is the one
+  direction this app exists to get right.
 
-  **The question is really about the ladder, and the current description stands in
-  for it**, because the ladder is not something this client holds. The two part
-  company in one case: a Recipe sealed under a key later removed from this
-  browser and then edited, whose new version goes out in the clear — sealing is
-  off with no key — while `recipe_history` still holds envelopes. This answers no
-  and the split is drawn over a ladder the server could read only half of. Narrow,
-  and step 5 deletes the predicate rather than fixing it.
+  **The round-1 review expected the caution port to delete this. It did not, and
+  the reason is worth stating: what the port changed is the answer, not the
+  question.** The trigger is the same — this body arrived sealed, so the server's
+  number is not about it — and what follows `true` is now
+  `refresh-local-caution!`, which computes the split here over the unsealed
+  ladder, instead of a guard at two render sites that took the button away. Those
+  guards are gone; the two callers left are this and the one below it.
 
-  So the split is withheld rather than shown wrong. When the computation moves
-  into the browser — where the plaintext ladder already is — this predicate is
-  what that change deletes."
+  Two things moved out from under it, both to places that know more:
+
+  - The *dropping* of the server's wrong answer is `api`'s now
+    (`seal/caution-over-ciphertext?`), asked of the response itself rather than of
+    this client's memory of the row — so no part of this client is ever holding a
+    split it should not draw, and no render site has to remember to ask.
+  - The case this stood in for and could not see — a Recipe sealed, then edited by
+    a client with no key, plaintext body over a sealed history — is closed in
+    `fetch-versions`, which has the ladder in its hands and can ask it directly.
+    Half of it, precisely: the half where the reader has no key either, which is
+    the reachable one. `seal/caution-over-ciphertext?` says what is left and what
+    closing it would cost.
+
+  What is left here is what this was always good at: a cheap question about the
+  row in hand, answered before any ladder has been fetched, deciding whether to go
+  and fetch one."
   [id]
   (sealed-column? id :description))
 
