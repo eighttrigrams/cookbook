@@ -643,10 +643,19 @@ is this app's behaviour before any of it existed.
 
 - **`caution`** — the per-line provenance split — is computed on the server from
   the version history, and the server cannot read a sealed history. On a sealed
-  Recipe it currently reports one range over one line. The fix is to move
-  `et.uvt.caution` to `.cljc` and compute it in the browser.
-- **Publishing** a sealed Recipe would hand a visitor `enc:v1:…`. Publish has to
-  become a client-driven one-way unseal before anything sealed is published.
+  Recipe what it produces is **wrong, not incomplete**: base64 carries no
+  newlines, so the whole ladder reads as one line, and the single range that
+  comes back carries the *last writer's* label and lands on line 1 of the
+  plaintext. A Recipe the owner wrote and an agent later edited at line 5 would
+  colour **his own opening line** as an agent's — the one direction this app
+  exists to get right. So **the browser withholds the split entirely** when the
+  body arrived sealed: no toggle, no legend, no number. The real fix is to move
+  `et.uvt.caution` to `.cljc` and compute it in the browser, over the plaintext
+  ladder that is already there; that is what deletes the withholding.
+- **Publishing** a sealed Recipe would hand a visitor `enc:v1:…`, and there is no
+  unpublish. **All three clients refuse it** for now, with a message saying why —
+  an interlock, not the feature. Publish has to become a client-driven one-way
+  unseal before anything sealed can be published.
 - **The migration** that seals what is already on the shelf is not written. Until
   it runs, sealing applies to what the clients write and nothing else.
 

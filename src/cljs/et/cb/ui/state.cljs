@@ -1749,25 +1749,46 @@
       (swap! *app-state assoc :filing nil)
       ((err-handler "Could not save the filing") resp))))
 
+(defn sealed-column?
+  "Whether this client is holding a Recipe whose `column` arrived sealed.
+
+  Two questions, because there are two ways to be holding one. `api/stored-row`
+  knows what the column held on the wire, which is the answer for a client that
+  has the key and unsealed it; the cached row itself is the answer for a client
+  that has no key and is looking at the ciphertext."
+  [id column]
+  (let [stored (api/stored-row :recipes id)]
+    (or (contains? stored column)
+        (seal/sealed? (get-in @*app-state [:details id column])))))
+
+(defn sealed-body?
+  "Whether the description arrived sealed — which is the question `caution` has to
+  be asked before it is drawn.
+
+  The split is computed **on the server**, over `recipe_history`, and the server
+  cannot read a sealed history. What it produces from one is not a partial answer
+  but a wrong one: base64 has no newlines, so the whole ladder is one line, and
+  the single range that comes back carries the *last writer's* label and gets
+  painted onto the plaintext's line 1. A Recipe the owner wrote and an agent later
+  edited at line 5 therefore colours **his own first line** as an agent's — which
+  is the one direction this app exists to get right.
+
+  So the split is withheld rather than shown wrong. When the computation moves
+  into the browser — where the plaintext ladder already is — this predicate is
+  what that change deletes."
+  [id]
+  (sealed-column? id :description))
+
 (defn sealed-recipe?
   "Whether this client is holding a Recipe whose **published surface** is sealed —
   its description or its useful-when. Both are asked, because a visitor is served
   exactly those two and would meet `enc:v1:…` on a public page for either.
 
-  Two questions, because there are two ways to be holding one. `api/stored-row`
-  knows what the columns held on the wire, which is the answer for a client that
-  has the key and unsealed them; the cached row itself is the answer for a client
-  that has no key and is looking at the ciphertext.
-
   Neither `reason`/`context` nor the history is asked about, and that is not an
   oversight: a visitor is served none of them, so their being sealed is not what
   makes publishing wrong. It is the two fields on the page a stranger opens."
   [id]
-  (let [stored (api/stored-row :recipes id)
-        cached (get-in @*app-state [:details id])]
-    (boolean (some (fn [column]
-                     (or (contains? stored column) (seal/sealed? (get cached column))))
-                   [:description :useful_when]))))
+  (boolean (some #(sealed-column? id %) [:description :useful_when])))
 
 (defn publish-recipe
   "One way: there is no unpublish call to pair with this one, on the server or

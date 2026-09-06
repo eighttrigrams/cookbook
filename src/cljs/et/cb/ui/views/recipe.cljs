@@ -511,7 +511,12 @@
   (let [{:keys [legend ranges]} (:caution recipe)
         body (:description recipe)
         blank? (str/blank? body)
-        offered? (and (seq ranges) (not blank?))
+        ;; **Withheld on a Recipe whose body arrived sealed**, because the split
+        ;; is computed on the server over a history the server can no longer
+        ;; read, and what comes back is not incomplete but wrong — see
+        ;; `state/sealed-body?`, which is also what deletes this line when the
+        ;; computation moves in here.
+        offered? (and (seq ranges) (not blank?) (not (state/sealed-body? (:id recipe))))
         showing? (and offered? showing-provenance?)]
     [:<>
      [header recipe logged-in? (when offered? [provenance-toggle showing?])]
@@ -593,7 +598,9 @@
   [recipe logged-in?]
   (let [{:keys [description] :as fields} (state/recipe-edit-fields)
         {:keys [legend ranges]} (:caution recipe)
-        offered? (and (seq ranges) (not (str/blank? description)))
+        ;; Withheld on a sealed body, for the reason the reading mode gives.
+        offered? (and (seq ranges) (not (str/blank? description))
+                      (not (state/sealed-body? (:id recipe))))
         showing? (and offered? (:showing-provenance? @state/*app-state))]
     [:<>
      ;; ⌘9 saves without leaving, from anywhere on the page — mounted here so the
