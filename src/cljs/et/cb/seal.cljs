@@ -596,7 +596,14 @@
 (def published-surface
   "The columns a visitor is served, and therefore the ones whose being sealed
   makes publishing wrong. Not the reason/context pair and not the history: those
-  are the owner's at every `?detail`, so a stranger never meets them."
+  are the owner's at every `?detail`, so a stranger never meets them.
+
+  **In the fixture, and asserted by both suites against it**, because the publish
+  interlock is implemented three times — here, `cookbook-tui` and `plurama-cli` —
+  and a client that widened its idea of the published surface while another did
+  not would leave a sealed column reachable through the narrower one. Naming it
+  once in this namespace would have made the two clients *look* like they agreed;
+  the fixture is what makes them."
   [:description :useful_when])
 
 (defn arrived-sealed?

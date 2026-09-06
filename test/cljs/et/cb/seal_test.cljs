@@ -55,6 +55,17 @@
     (is (= (set (keys seal/sealed-columns)) (set (keys seal/bound-as)))
         "every sealed table has a binding, and nothing else does")))
 
+(deftest the-published-surface-is-the-one-the-fixture-names
+  (testing "three clients implement the publish interlock; one of them widening
+    while another did not is how a sealed column stays reachable through the
+    narrower one. So the pair is in the fixture, like the binding and the
+    inventory, and each client asserts its own list against it."
+    (is (= (:published-surface @fixture) (mapv name seal/published-surface)))
+    (testing "and it is a subset of what is actually sealed"
+      (is (every? (set (:recipes seal/sealed-columns)) seal/published-surface)))
+    (testing "the reason/context pair is not in it — a visitor is served neither"
+      (is (not-any? #{:reason :context} seal/published-surface)))))
+
 (deftest a-value-travels-between-the-three-recipe-tables
   (testing "archive! and approve-proposal! copy verbatim and hold no key"
     (async done

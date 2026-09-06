@@ -1814,8 +1814,13 @@
 
 (defn sealed-recipe?
   "Whether this client is holding a Recipe whose **published surface** is sealed —
-  its description or its useful-when, which is `seal/published-surface` and is
-  named there rather than here so the two clients cannot answer it differently.
+  its description or its useful-when, which is `seal/published-surface`.
+
+  That name is not what makes the three clients agree; the fixture is.
+  `:published-surface` is in `seal-vectors.edn` and both suites assert their own
+  list against it, so widening the pair here without widening `plurama-cli`'s
+  turns a suite red. Naming it once per client would only have made them look
+  like they agreed — which is the shape round 1's finding 4 had.
 
   A visitor is served exactly those two and would meet `enc:v1:…` on a public page
   for either. Neither `reason`/`context` nor the history is asked about, and that

@@ -52,6 +52,19 @@
 ;;
 ;;   :binding           table → the name its values are bound under. Both suites
 ;;                      assert their own inventory against this.
+;;   :published-surface the columns a visitor is served, and therefore the ones
+;;                      whose being sealed makes publishing wrong. It is here
+;;                      rather than in one client because the publish interlock
+;;                      is implemented three times — browser, cookbook-tui,
+;;                      plurama-cli — and a client that widened its idea of the
+;;                      published surface while another did not would leave a
+;;                      sealed column reachable through the narrower one. Both
+;;                      suites assert their own list against this, the way they
+;;                      do for :binding and the inventory.
+;;
+;;                      Not reason/context and not the history: a visitor is
+;;                      served none of them at any ?detail, so their being
+;;                      sealed is not what makes publishing wrong.
 ;;   :key-base64        the key every :vectors entry was sealed under
 ;;   :other-key-base64  a second key, used only by the wrong-key tamper case
 ;;   :vectors           nonce + plaintext + the exact ciphertext it must produce.
@@ -74,9 +87,18 @@
 ;;                      DO carry the prefix, because nothing behind it opens: no
 ;;                      payload, base64 that is not base64, a payload too short
 ;;                      to hold a nonce. Rule 3 is that a client hands back what
-;;                      it cannot read; it is not allowed to throw, and `seal`
-;;                      given one of these as its `stored` must fall through to a
-;;                      fresh envelope rather than fail the write.
+;;                      it cannot read, and it is not allowed to throw.
+;;
+;;                      Handed to `seal` as its `stored`, one of these is subject
+;;                      to rule 2 like any other stored value, and rule 2 is about
+;;                      the *value* and not its encoding: unchanged echoes, so a
+;;                      client writing back the unreadable text it was shown
+;;                      writes a no-op rather than enc_new(enc_old(…)); changed
+;;                      falls through to a fresh envelope. Both suites assert both
+;;                      halves over every value below. (This sentence used to say
+;;                      only the second half, which was the rule before the two
+;;                      clients were made to agree on the first — the file is the
+;;                      specification, so it says what its own tests assert.)
 ;;
 ;;                      This class is here because it is the one the two clients
 ;;                      actually diverged on: `js/atob` throws *synchronously*, so
@@ -110,6 +132,7 @@
   :key-bytes 32,
   :layout "enc:v1: ++ base64(nonce || ciphertext || tag)",
   :aad "utf-8 bytes of \"<binding>/<column>\", see :binding"},
+ :published-surface ["description" "useful_when"],
  :unopenable
  ["enc:v1:"
   "enc:v1:a Recipe about the envelope!"
