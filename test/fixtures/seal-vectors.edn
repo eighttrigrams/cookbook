@@ -34,9 +34,19 @@
 ;; anywhere to say why. That is not hypothetical; it is what the first end-to-end
 ;; run did, and it is why this file was regenerated.
 ;;
-;; What the binding still refuses is every move the server does not make: a
+;; What the binding refuses is cross-COLUMN moves, and nothing else: a
 ;; description read as a useful-when, a reason read as a context, a Scope's prose
-;; read as a Recipe's. Those are in :tamper, and they have to fail.
+;; read as a Recipe's. Those are in :tamper and they have to fail. It permits
+;; every cross-table move — that is the point of the grouping — and every
+;; cross-ROW move too, since ids are assigned on insert and there is nothing to
+;; bind to at sealing time.
+;;
+;; That is enough, and here is why rather than on trust: every column carrying
+;; provenance — source, version, has_human_edit — is clear and unauthenticated,
+;; so a reader holding the database file can forge a version's authorship by
+;; editing the label beside the text. The AAD was never what protected provenance
+;; from them. It protects the one move they could otherwise make without touching
+;; a label at all.
 ;;
 ;; ## What is in here
 ;;

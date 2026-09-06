@@ -601,6 +601,14 @@ because the server *moves these values between tables without a key*:
 `approve-proposal!` copies a proposal into the row. Bind to the table and a
 Recipe's own history stops opening after its first save.
 
+**What that refuses is cross-column moves and nothing else.** It permits moving
+a ciphertext between `recipes`, `recipe_history` and `recipe_proposals` — which
+is the point — and between rows, since ids are assigned on insert and there is
+nothing to bind to at sealing time. That is enough because of what is *not*
+sealed: `source`, `version` and `has_human_edit` are clear and unauthenticated,
+so anyone holding the file can forge a version's authorship by editing the label
+beside the text. The AAD was never what protected provenance from that reader.
+
 Three rules live in the seal API rather than at its call sites:
 
 1. **Never seal blank.** `nil` stays `nil`, `""` stays `""`, whitespace stays

@@ -157,8 +157,19 @@
   nothing anywhere to say why. The server cannot re-seal on the way past; it has
   no key, which is the entire point.
 
-  What it still refuses is every move the server does *not* make: a description
-  into a useful-when, a reason into a context, a Scope's prose into a Recipe's."
+  **What it refuses is cross-*column* moves, and nothing else**: a description
+  read as a useful-when, a reason read as a context, a Scope's prose read as a
+  Recipe's. It permits every cross-table move — that is the point of the grouping
+  — and every cross-*row* move too, since ids are assigned on insert and there is
+  nothing to bind to at sealing time.
+
+  That is a smaller guarantee than it first sounds, and it is worth saying why it
+  is enough. Every column that carries provenance — `source`, `version`,
+  `has_human_edit` — is clear and unauthenticated, so somebody holding the
+  database file can forge a version's authorship outright by editing the label
+  beside the text. The AAD was never what protected provenance from that reader.
+  What it protects is the one thing an attacker could otherwise do *without*
+  touching a label: silently make a Recipe's body read as its useful-when."
   {:recipes :recipe
    :recipe_history :recipe
    :recipe_proposals :recipe
