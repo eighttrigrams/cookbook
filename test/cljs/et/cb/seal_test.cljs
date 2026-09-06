@@ -661,6 +661,60 @@
                                 (is (= u (:useful_when out))))))))
           (.then done)))))
 
+(deftest a-scope-write-takes-the-other-source-on-purpose
+  (testing "the fourth wiring case, and the one that goes the other way.
+
+    `save-scope` asks `stored-row` where `update-recipe` asks `stored-for-write`,
+    and the difference is not an oversight. The echo rule exists for the server's
+    content-would-change? — the version, the history row, the proposal — and a
+    Scope has none of those. What it does have is no `modified_at` at all, so
+    nothing on either side refuses a stale write. Echoing there would let a tab
+    holding a pre-migration listing write a plaintext description straight over an
+    envelope, on a save that only meant to change the title.
+
+    So on a Scope an unchanged description gets a fresh envelope: content
+    preserved, still sealed, which is the safe direction. This pins the choice,
+    because the two shapes are one word apart and the next reader will be tempted
+    to make them match."
+    (async done
+      (-> (test-key)
+          (.then
+           (fn [k]
+             (-> (seal/seal k :scopes :description "prose the migration has reached")
+                 (.then
+                  (fn [sealed]
+                    (let [unmigrated {:id 3 :title "Scratch"
+                                      :description "prose nobody has sealed yet" :tags ""}
+                          migrated {:id 91 :title "sandboxing" :description sealed :tags ""}
+                          index (seal/sealed-index [unmigrated migrated])]
+                      (is (= {[:scopes 91 :description] sealed} index)
+                          "only the sealed one is remembered, which is what stored-row answers from")
+                      (is (= {} (seal/stored-row index :scopes 3)))
+                      (is (= {:description sealed} (seal/stored-row index :scopes 91)))
+                      (testing "and this is the value save-scope must NOT use"
+                        (is (= {:description "prose nobody has sealed yet"}
+                               (seal/stored-for-write index :scopes 3 unmigrated))
+                            "stored-for-write hands back the plaintext — right for a Recipe, and the stale-write hole for a Scope"))
+                      (js/Promise.all
+                       (into-array
+                        [;; what save-scope actually builds for the unsealed Scope
+                         (seal/seal-scope-write k {:title "Scratch"
+                                                   :description "prose nobody has sealed yet"}
+                                                (seal/stored-row index :scopes 3))
+                         ;; and for the sealed one
+                         (seal/seal-scope-write k {:title "sandboxing"
+                                                   :description "prose the migration has reached"}
+                                                (seal/stored-row index :scopes 91))
+                         (js/Promise.resolve sealed)])))))
+                 (.then (fn [[fresh echoed sealed]]
+                          (is (seal/sealed? (:description fresh))
+                              "an unchanged Scope description seals rather than echoing")
+                          (is (= "Scratch" (:title fresh))
+                              "and the title is still the search surface")
+                          (is (= sealed (:description echoed))
+                              "while a Scope this client read sealed still echoes byte-identical"))))))
+          (.then done)))))
+
 (deftest a-row-this-client-has-not-read-echoes-nothing
   (testing "the third case, which must not become an accidental no-op"
     (async done

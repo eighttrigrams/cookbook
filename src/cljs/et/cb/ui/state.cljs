@@ -702,12 +702,27 @@
              (when on-success (on-success)))
            (err-handler "Could not add that Scope"))))))
 
-(defn save-scope [id fields on-success]
-  (-> (seal/seal-scope-write (key-store/current-key) fields
-                             ;; the Scope as this client last listed it, for the
-                             ;; reason `update-recipe` gives one file over
-                             (api/stored-for-write
-                              :scopes id (first (filter #(= id (:id %)) (:scopes @*app-state)))))
+(defn save-scope
+  "**`stored-row`, deliberately, where `update-recipe` uses `stored-for-write`.**
+
+  The echo rule exists for one thing: the server's `content-would-change?`, and
+  the version, the history row and the machine-write proposal that hang off it. A
+  Scope has none of them — no `version`, no `scope_history`, no proposal path, and
+  `db/scope.clj` never compares prose — so echoing an unchanged Scope description
+  buys nothing observable, and sealing one costs nothing observable either.
+
+  What it would cost is confidentiality, because a Scope has **no
+  `modified_at`**: the column is not in the table, so neither side refuses a stale
+  write. A tab holding a listing fetched before the migration walker — or before
+  another client — sealed a Scope would echo the plaintext it is holding straight
+  over the envelope, on a save that only meant to change the title. Silently, and
+  with nothing on the page to say so.
+
+  With `stored-row` the worst case is a fresh envelope over an identical one:
+  content preserved, still sealed. That is the safe direction, and it is why this
+  one line differs from the Recipe path two files up rather than matching it."
+  [id fields on-success]
+  (-> (seal/seal-scope-write (key-store/current-key) fields (api/stored-row :scopes id))
       (.then
        (fn [params]
          (api/put-json (str "/api/scopes/" id) params (auth-headers)
