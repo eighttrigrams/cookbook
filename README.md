@@ -614,12 +614,22 @@ Three rules live in the seal API rather than at its call sites:
 1. **Never seal blank.** `nil` stays `nil`, `""` stays `""`, whitespace stays
    whitespace. `reason` and `context` are nullable because *not recorded* and
    *recorded, and nothing* mean different things, and ciphertext is neither.
-2. **Never re-seal an unchanged value** — echo the stored ciphertext byte for
-   byte. `content-would-change?` compares prose values server-side to decide
-   no-op versus version bump versus proposal, and a fresh nonce would make every
-   resend look like a change.
+2. **Never re-seal an unchanged value** — echo the stored value byte for byte,
+   **whichever of the two it is**. `content-would-change?` compares prose values
+   server-side to decide no-op versus version bump versus proposal, and a fresh
+   nonce would make every resend look like a change. So an unchanged value is a
+   no-op on a sealed row *and* on one nobody has migrated yet, which is what the
+   mixed-state window needs — the row seals on its next real edit — *and* on a
+   row this client cannot open, where sealing again would nest one envelope
+   inside another, once per cycle.
 3. **`unseal` is prefix-driven**, which is what makes 1 safe and a migration
    resumable.
+
+**A migration walker must pass `nil` as its `stored`.** That falls out of rule 2
+and it is the trap worth naming before somebody writes the pass: a walker that
+hands `seal` the plaintext it has just read is told, correctly, that nothing has
+changed, and seals nothing at all — over a whole shelf, reporting success. The
+rule is about preserving a no-op; a migration is not one.
 
 ### The fixture is the drift control
 
