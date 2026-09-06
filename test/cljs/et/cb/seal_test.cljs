@@ -252,18 +252,26 @@
                                 (is (not= stored changed) "a genuine change gets a fresh nonce"))))))
           (.then done)))))
 
-(deftest a-stored-plaintext-echoes-nothing-and-seals-cleanly
-  (testing "the half-migrated shelf: the column holds plain text, not an envelope"
+(deftest an-unchanged-value-on-an-unmigrated-row-stays-plaintext
+  (testing "the mixed-state window: clients deployed first, data sealed later"
     (async done
-      (-> (test-key)
-          (.then (fn [k]
-                   (-> (seal/seal k :recipes :description "unchanged since before the migration"
-                                  "unchanged since before the migration")
-                       (.then (fn [out]
-                                (is (seal/sealed? out) "there is no stored ciphertext to echo")
-                                (seal/unseal k :recipes :description out)))
-                       (.then (fn [out] (is (= "unchanged since before the migration" out)))))))
-          (.then done)))))
+      (let [text "unchanged since before the migration"]
+        (-> (test-key)
+            (.then (fn [k]
+                     (js/Promise.all
+                      (into-array
+                       [(seal/seal k :recipes :description text text)
+                        (seal/seal k :recipes :description "edited at last" text)
+                        ;; a migration pass hands in no stored, and does seal
+                        (seal/seal k :recipes :description text)]))))
+            (.then (fn [[no-op edited migrated]]
+                     (is (= text no-op)
+                         "a no-op stays a no-op — the server writes no version for it")
+                     (is (not (seal/sealed? no-op))
+                         "and the row is left as it was, to seal on its next real edit")
+                     (is (seal/sealed? edited))
+                     (is (seal/sealed? migrated))))
+            (.then done))))))
 
 (deftest no-key-means-no-sealing
   (testing "cookbook's behaviour before any of this existed, reachable by config"
