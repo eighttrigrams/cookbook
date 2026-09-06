@@ -122,7 +122,7 @@
   (when-let [data (envelope/refusal e)]
     {:status 400
      :body (merge {:error (ex-message e) :reason "sealed"}
-                  (select-keys data [:remaining :sealed]))}))
+                  (select-keys data [:remaining :sealed_columns]))}))
 
 (defn query-param
   "One query param's value. A repeated param (`?a=1&a=2`) reaches us from

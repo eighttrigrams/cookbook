@@ -389,8 +389,15 @@
           (is (true? (anything-sealed? id))))))))
 
 (deftest a-payload-that-is-not-the-shape-is-refused-rather-than-coerced
+  ;; **The two scalar rows are the ones this matrix did not have**, and their
+  ;; absence was a 500 rather than a 400: `seq` of a number or a boolean throws,
+  ;; and it was evaluated before the `map?` check that would have refused them.
+  ;; A string and a list were seqable and so answered correctly, which is exactly
+  ;; why the gap survived a matrix that looked exhaustive.
   (doseq [[label payload expected]
-          [["a string where the object should be" "unsealed!" #"must be an object"]
+          [["a number where the object should be" 7 #"must be an object"]
+           ["a boolean where the object should be" true #"must be an object"]
+           ["a string where the object should be" "unsealed!" #"must be an object"]
            ["a list where the object should be" ["a"] #"must be an object"]
            ["a string for the row" {:recipe "text"} #"unsealed.recipe"]
            ["an object for the versions" {:versions {:version 1}} #"unsealed.versions"]
@@ -469,7 +476,7 @@
       (testing (str "a sealed " (name column) " over a published Recipe")
         (is (= 400 (:status resp)))
         (is (= "sealed" (:reason (:body resp))))
-        (is (= [(name column)] (:sealed (:body resp))))
+        (is (= [(name column)] (:sealed_columns (:body resp))))
         (is (re-find #"(?i)published" (:error (:body resp)))))
       (testing "and nothing was written — not the text, not the version, not the stamp"
         (is (= (:description before) (:description (row id))))

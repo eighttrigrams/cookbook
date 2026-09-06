@@ -536,6 +536,14 @@
     ;; cannot collide today: a trail's versions are nested under `:sealed` and a
     ;; ladder's are at the top, so the shape that is asked about first is the one
     ;; that carries its own name.
+    ;;
+    ;; **`sealed` is this response's key and no other's**, which is a rule rather
+    ;; than an observation: the server's refusal for a sealed write to a published
+    ;; Recipe used to carry a `sealed` of its own — a vector of column names — and
+    ;; it was renamed to `sealed_columns` precisely so that this clause cannot one
+    ;; day meet a body that answers `map?` for a reason nobody here intended.
+    ;; Anything new that wants to name what is sealed should name it something
+    ;; else.
     (map? (:sealed body)) (unseal-trail k body)
 
     ;; GET /api/recipes/:id/versions

@@ -1997,6 +1997,13 @@
   no unpublish to take it back. So it refuses, and says which of those it is in
   the only terms it can be sure of: this browser could not open them.
 
+  **The message names two causes because the count cannot tell them apart.** It
+  said *import the right key* alone, which is right for two of the three roads in
+  and wrong for the third — a damaged envelope opens with no key at all, and a
+  reader told to fetch a key he already has is being sent to look in the wrong
+  place. `trail-unopened` deliberately does not distinguish them; the sentence
+  should not pretend it does.
+
   **And the row's remembered ciphertexts are dropped on success**, before the
   response is cached — this client has just changed what that row holds, and the
   index would otherwise go on saying otherwise. It is the smaller of the two
@@ -2028,7 +2035,8 @@
                                 " not open with the key this browser holds. Publishing"
                                 " is one way — a visitor has no key, so they would meet"
                                 " enc:v1:… on a public page with nothing able to undo"
-                                " it. Import the right key in ⚙ and try again.")))
+                                " it. Import the right key in ⚙, or check whether the"
+                                " value is damaged, and try again.")))
 
             ;; Nothing sealed anywhere: the request cookbook has always sent.
             (zero? (:total trail)) (publish! {})

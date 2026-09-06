@@ -1027,7 +1027,15 @@
   answers it as a value, for `recipe-handler/update-recipe-handler`, which decides
   between a save and a proposal *before* either is written and wants a 400 rather
   than an exception to unwind. This throws it, for the two db-layer writers that
-  are already inside a transaction and must roll it back. One message, built once."
+  are already inside a transaction and must roll it back. One message, built once.
+
+  **The response key is `sealed_columns` and not `sealed`**, which it was for one
+  round. `sealed` is the trail's — `{sealed: {recipe, versions, proposals}}` out
+  of GET /api/recipes/:id/sealed — and the browser's `unseal-body` *dispatches* on
+  it. The two could not collide (one is a map and the other a vector of column
+  names, and error bodies do not go through the unsealing wrapper at all), but a
+  key that means two things on one wire is a coincidence holding a rule up, and
+  the next refusal to carry a map under it would be unsealed as a trail."
   [current fields]
   (when (published? current)
     (when-let [sealed (seq (envelope/sealed-in :recipes fields))]
@@ -1037,14 +1045,14 @@
                    " and cannot be written here. Publishing unsealed this Recipe once"
                    " and there is no way back; send the text as it should be read.")
        :reason "sealed"
-       :sealed (mapv name sealed)})))
+       :sealed_columns (mapv name sealed)})))
 
 (defn refuse-sealing-a-published-recipe!
   "`published-write-sealed`, thrown — for the two writers that meet it inside a
   transaction and have to roll one back."
   [current fields]
   (when-let [{:keys [error sealed]} (published-write-sealed current fields)]
-    (envelope/refuse! error {:recipe-id (:id current) :sealed sealed})))
+    (envelope/refuse! error {:recipe-id (:id current) :sealed_columns sealed})))
 
 (defn- archive!
   "Push the outgoing state into history — with **its own** `source`, taken off the
@@ -1528,9 +1536,12 @@
 
 (defn- refuse-if-still-sealed!
   "The check the latch hangs on: **nothing anywhere in this Recipe's trail may
-  still be an envelope.** Read after the replacements are written and inside the
-  same transaction, so what it is looking at is exactly what the publish would
-  leave behind.
+  still be an envelope.** Read after the replacements *and after the latch*, and
+  inside the same transaction, so what it is looking at is exactly what the
+  publish would leave behind — and so that the transaction is already a writer
+  when it looks. `publish-recipe` says why that second thing matters: a read-only
+  transaction holds SHARED, and a concurrent writer could seal something between
+  this read and the COMMIT.
 
   It is asked of the database rather than of the payload, and that is the point.
   A payload can be complete about what it was told and silent about a row it never
@@ -1641,36 +1652,71 @@
   ([ds user-id id unsealed]
    (jdbc/with-transaction [tx (db/get-conn ds)]
      (when-let [current (get-recipe tx user-id id {:lean? false})]
-       (when (seq unsealed)
+       ;; **`some?` and not `seq`, and that is the whole of the fix for it.**
+       ;; `seq` of a JSON number or boolean throws — *"Don't know how to create
+       ;; ISeq from: java.lang.Integer"* — and it threw here, before
+       ;; `apply-unsealed!`'s own `map?` check could refuse it: out of the
+       ;; transaction, past `sealed-refusal-response`, which recognises only this
+       ;; app's refusals, and out to Jetty as a 500. Nothing was written and the
+       ;; latch stayed open, so it was a bad answer rather than a bad outcome —
+       ;; but the shape matrix's whole claim is *refused rather than coerced*, and
+       ;; a 500 is neither.
+       ;;
+       ;; So the shape question is asked in exactly one place. Everything that is
+       ;; not nil goes to `apply-unsealed!`, which knows every way a payload can
+       ;; be the wrong shape and answers all of them the same way. `null` and an
+       ;; absent key are the no-payload publish, which is a different thing and
+       ;; not a malformed one.
+       (when (some? unsealed)
          (apply-unsealed! tx id current unsealed))
-       ;; **After the replacements and before the latch**, so it reads the Recipe
+       ;; **Write, then check, then commit — the latch included.** The order here
+       ;; is the whole safety of the thing and it is not the obvious one.
+       ;;
+       ;; The guard has to run after the replacements, so that it reads the Recipe
        ;; the publish would actually leave behind rather than the one it was
-       ;; handed. It runs on the no-payload path too — that is the whole point of
-       ;; it being here — and on the already-published no-op path, where it costs
-       ;; three cheap reads and answers a question that should never come up: a
-       ;; published Recipe with an envelope in it is a Recipe that got past this,
-       ;; and saying so is better than publishing it twice in silence.
-       (refuse-if-still-sealed! tx user-id id)
-       ;; `:scopes` on the way out of both branches, not just the one that wrote:
-       ;; the client caches this response as the Recipe it holds, so a no-op
-       ;; publish that answered without the key would blank the badges on a card
-       ;; the server never unfiled.
-       (db.scope/attach-one
-         tx user-id
-         (let [current (if (seq unsealed) (get-recipe tx user-id id {:lean? false}) current)]
-           (if (published? current)
-             current
-             (let [result (jdbc/execute-one! tx
-                            (sql/format {:update :recipes
-                                         :set {:published 1
-                                               :published_at [:raw "datetime('now')"]}
-                                         :where [:= :id id]
-                                         :returning (select-columns false user-id)})
-                            db/jdbc-opts)]
-               (tel/log! {:level :info :data {:id id :user-id user-id
-                                              :unsealed (boolean (seq unsealed))}}
-                         "Recipe published")
-               result))))))))
+       ;; handed. It also has to run after the *latch*, and that is the part a
+       ;; reader will want to reorder: on the payload-less path nothing has been
+       ;; written when the guard reads, so the transaction is still only a reader,
+       ;; holding SHARED — and a concurrent writer could seal a proposal for this
+       ;; Recipe between the guard's read and the COMMIT, leaving a published
+       ;; Recipe with an envelope in it. Doing the latch UPDATE first takes the
+       ;; write lock before the guard looks, so both paths are checked against a
+       ;; database no one else can be moving. Under `journal_mode=delete` the
+       ;; window was closed anyway, by the journal mode rather than by the design;
+       ;; this way it stays closed under WAL too.
+       ;;
+       ;; Nothing is lost by writing first, because the refusal throws and the
+       ;; transaction rolls the latch back with the replacements. The log line
+       ;; moved below the guard for the same reason: a publish that is about to be
+       ;; refused has not happened.
+       (let [current (if (seq unsealed)
+                       ;; `seq` is safe from here down: anything that is not nil
+                       ;; has been through `apply-unsealed!`, which refuses
+                       ;; everything that is not a map. And it is the right
+                       ;; question rather than `some?` — an empty payload wrote
+                       ;; nothing, so there is nothing to re-read.
+                       (get-recipe tx user-id id {:lean? false})
+                       current)
+             latched? (not (published? current))
+             result (if latched?
+                      (jdbc/execute-one! tx
+                        (sql/format {:update :recipes
+                                     :set {:published 1
+                                           :published_at [:raw "datetime('now')"]}
+                                     :where [:= :id id]
+                                     :returning (select-columns false user-id)})
+                        db/jdbc-opts)
+                      current)]
+         (refuse-if-still-sealed! tx user-id id)
+         (when latched?
+           (tel/log! {:level :info :data {:id id :user-id user-id
+                                          :unsealed (boolean (seq unsealed))}}
+                     "Recipe published"))
+         ;; `:scopes` on the way out of both branches, not just the one that
+         ;; wrote: the client caches this response as the Recipe it holds, so a
+         ;; no-op publish that answered without the key would blank the badges on
+         ;; a card the server never unfiled.
+         (db.scope/attach-one tx user-id result))))))
 
 (defn delete-recipe
   "Delete a recipe the user owns — by **stamping it** rather than by removing it.

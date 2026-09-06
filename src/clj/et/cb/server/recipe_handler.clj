@@ -811,7 +811,15 @@
         ;; renaming a Recipe proposed deleting its body, and approving that wrote the
         ;; deletion. One read, in the caller's audience, handed to everything below
         ;; that asks a question about this Recipe's text.
-        current (when id (db.recipe/get-recipe ds user-id id {:lean? false}))]
+        current (when id (db.recipe/get-recipe ds user-id id {:lean? false}))
+        ;; Bound rather than asked twice in its own `cond` arm: it is the test
+        ;; *and* the answer, and two calls are two things that could come to
+        ;; disagree. (`machine-write-explanation-missing` below is asked twice and
+        ;; is left that way — it takes the request, so binding it above would
+        ;; compute it for every caller to serve the machine ones.)
+        sealed-write (when current
+                       (db.recipe/published-write-sealed
+                         current (select-keys body writable-fields)))]
     (cond
       (nil? current)
       {:status 404 :body {:error "Recipe not found"}}
@@ -848,9 +856,8 @@
       ;; `approve-proposal!` refuses the same thing one step further on. Neither
       ;; client sends this — both stop sealing once a Recipe is published — so what
       ;; this answers is a client that has not been told.
-      (db.recipe/published-write-sealed current (select-keys body writable-fields))
-      {:status 400
-       :body (db.recipe/published-write-sealed current (select-keys body writable-fields))}
+      sealed-write
+      {:status 400 :body sealed-write}
 
       ;; **The three conditions that make this a proposal instead of a save**, in this
       ;; order and all of them. A machine caller, a Recipe that is not the agents' to
@@ -918,6 +925,15 @@
                   :recipe (db.recipe/get-recipe ds user-id id {:lean? false :scopes? true})}}))
 
       :else
+      ;; **The sealed refusal is caught here as well as answered above**, and the
+      ;; gap between the two is one race: `current` was read outside any
+      ;; transaction, so a publish that latches between that read and
+      ;; `update-recipe`'s own in-transaction read makes the db-layer guard the
+      ;; one that fires. Nothing is written either way — the transaction rolls
+      ;; back — but without this the caller would meet a **500 where every other
+      ;; spelling of the same condition is a 400**, and the three doors onto a
+      ;; published Recipe's prose would not answer alike.
+      (try
       (if-let [result (db.recipe/update-recipe ds user-id id
                                                (select-keys body writable-fields)
                                                modified_at
@@ -946,7 +962,9 @@
         (let [split (when (not= (:version result) (:version current))
                       (caution-body ds req id))]
           {:status 200 :body (cond-> result split (assoc :caution split))})
-        (stale-write-response ds user-id id)))))
+        (stale-write-response ds user-id id))
+        (catch clojure.lang.ExceptionInfo e
+          (or (common/sealed-refusal-response e) (throw e)))))))
 
 (defn delete-recipe-handler
   "DELETE /api/recipes/:id — delete a recipe. 404 when the id matches nothing you
