@@ -33,8 +33,11 @@ test-cljs:
 # that repo and cannot be run from here; the README's Development block names it.
 test-all: test test-cljs
 
+# `src/cljc` came along when `et.cb.caution` moved there for the caution port:
+# the file did not stop being Clojure by gaining a second host, and dropping out
+# of the lint on the way past is how a namespace quietly stops being checked.
 lint:
-	clj-kondo --lint src/clj
+	clj-kondo --lint src/clj src/cljc
 
 clean:
 	rm -rf target node_modules .shadow-cljs resources/public/cookbook/js

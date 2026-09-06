@@ -10,8 +10,17 @@
   authorship, which is the only input `et.uvt.caution/assess` asks for — so this
   namespace is an adapter and nothing more. None of the arithmetic is here, and
   none of it should come here: the library is a sibling checkout, wired in by
-  `:local/root`, and its `caution_test.clj` is the specification of what the
+  `:local/root`, and its `caution_test.cljc` is the specification of what the
   numbers mean.
+
+  **It is `.cljc` because there are two callers now, on two hosts.** The server
+  asks it for a published Recipe, whose prose is in the clear; the browser asks it
+  for a sealed one, over a version ladder only a client can open — and the whole
+  reason this file moved rather than being spelled a second time in ClojureScript
+  is that the three statements below and the `legend` beside them are exactly the
+  wrong-able part. Two adapters would be two chances to read the ladder the wrong
+  way round, and one of them would have no test next door. `shadow-cljs.edn`
+  carries `../us-vs-them/src` so that the arithmetic comes with it.
 
   What *is* cookbook's is the three statements below, and the words it hands out
   with the answer. The three are small and each silently wrong-able — the ranges come
@@ -38,9 +47,13 @@
   classified is treated as an agent's, so the mistake is being needlessly careful
   rather than editing his work freely.
 
-  Note that it is `et.cb.ui.provenance/ui-label` spelled again rather than shared:
-  that namespace is cljs and this is clj. The value is the database's, and the
-  `CHECK` constraint is what actually holds the two ends together."
+  Note that it is `et.cb.ui.provenance/ui-label` spelled again rather than shared.
+  **That used to be because this namespace was clj and that one is cljs, and since
+  the caution port it is not** — this file is `.cljc` and the browser reads it. What
+  keeps them apart now is what should have been the reason all along: this is the
+  database's value, that one is the view's vocabulary for it, and the `CHECK`
+  constraint is what actually holds the two ends together. A `def` shared across the
+  seam would tie a rendering to a column and buy nothing the constraint does not."
   #{"ui"})
 
 (def legend
@@ -57,9 +70,12 @@
   **The wording is `et.cb.ui.provenance/explanation`'s, deliberately.** *Saved here
   by hand* and *written by an agent* are the owner's own words for these two
   authors, already on screen in the badge's tooltip, and the same fact told to the
-  same person in two vocabularies is two facts to whoever reads both. That
-  namespace is cljs and this is clj, so this is spelled again rather than shared —
-  the same seam, and for the same reason, as `ours` above.
+  same person in two vocabularies is two facts to whoever reads both. Spelled
+  again rather than shared, the same seam and for the same reason as `ours` above —
+  and note that the reason is no longer the host, which it was until this file
+  became `.cljc`. What reddens when one of the two is reworded and the other is left
+  saying it differently is `caution-test/the-legend-pairs-each-end-with-the-right-author`,
+  which asserts the tooltip's own two phrases are in here.
 
   What it adds to the tooltip's version is the middle. The badge counts versions and
   a version is one thing or the other; a line can have been worked on by both, and a

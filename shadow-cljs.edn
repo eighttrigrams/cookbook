@@ -2,7 +2,39 @@
 ;; has only the top-level list — and it costs the app build nothing: a browser
 ;; build compiles what its `:init-fn` reaches, and nothing in the app requires a
 ;; test.
-{:source-paths ["src/cljs" "src/cljc" "test/cljs"]
+;;
+;; The two `../us-vs-them` paths are here for the same reason and by the same
+;; road **music takes to corvo** (`music/shadow-cljs.edn`: `"../corvo/src/lib"`
+;; on this same list): a sibling checkout whose ClojureScript this build
+;; compiles from source. `deps.edn` already names the library
+;; `{:local/root "../us-vs-them"}` for the *server*, and this file does not read
+;; `deps.edn` — shadow-cljs has its own `:source-paths` and `:dependencies` —
+;; so without these two lines the library was simply invisible to
+;; ClojureScript, which is what it was until the caution port.
+;;
+;; Switching this build to `:deps true` instead would have made one road out of
+;; two, and was not worth it: it drags the whole server tree — jetty, sqlite,
+;; ragtime, buddy — onto the ClojureScript compile classpath to reach two
+;; namespaces, and it changes how every other build in this file resolves in
+;; order to fix one that does not.
+;;
+;; **The two paths fail differently when they are not there, and that decided
+;; the Docker story.** `../us-vs-them/src` is load-bearing: `et.cb.caution` is
+;; on the app's own require graph now, so a missing `src` is a compile error and
+;; the deploy stops. `plurama/Dockerfile` already copies it to
+;; `/opt/us-vs-them` before `cd cookbook && npx shadow-cljs release app`,
+;; because the uberjar needed it first — so the production build needs no change
+;; at all for this. `../us-vs-them/test` is *not* load-bearing and shadow-cljs
+;; ignores a source path that does not exist without a word, which was checked
+;; rather than assumed: a release build with that directory moved away completes
+;; clean. So the image does not carry the library's tests and does not need to.
+;;
+;; The cost of that silence is that `make test-cljs` would quietly shrink if the
+;; sibling's `test` went away, so cookbook does not rely on it for the thing
+;; cookbook cares about: `et.cb.caution-test` pins the adapter on this host by
+;; itself, and it is in `test/cljs`, which is not a sibling of anything.
+{:source-paths ["src/cljs" "src/cljc" "test/cljs"
+                "../us-vs-them/src" "../us-vs-them/test"]
  :dependencies [[reagent "2.0.1"]
                 [cljs-ajax "0.8.4"]]
  :http {:port #shadow/env ["SHADOW_PORT" :as :int :default 9807]}
@@ -11,12 +43,22 @@
                 :asset-path "/js"
                 :modules {:main {:init-fn et.cb.ui.core/init}}
                 :devtools {:repl-pprint true}}
-          ;; `make test-cljs`. It exists for one reason: the seal envelope is
-          ;; implemented twice — here on WebCrypto, and in plurama-cli on
-          ;; javax.crypto — and the only honest guard against two spellings of one
-          ;; control drifting apart is a fixture both suites read. Node has
-          ;; WebCrypto natively, so the envelope needs no browser to be pinned;
-          ;; the key store does, and is checked in the browser instead.
+          ;; `make test-cljs`, and two drift controls in it rather than one.
+          ;;
+          ;; The first is the seal envelope, implemented twice — here on
+          ;; WebCrypto, and in plurama-cli on javax.crypto — where the only
+          ;; honest guard against two spellings of one control drifting apart is
+          ;; a fixture both suites read. Node has WebCrypto natively, so the
+          ;; envelope needs no browser to be pinned; the key store does, and is
+          ;; checked in the browser instead.
+          ;;
+          ;; The second is `caution`. Cookbook now computes the provenance split
+          ;; in two hosts — the server for a published Recipe, the browser for a
+          ;; sealed one — off one `.cljc` source, and this is where the browser's
+          ;; half is exercised: `et.cb.caution-test` for cookbook's adapter, and
+          ;; `et.uvt.caution-test` for the arithmetic under it, which arrives
+          ;; over the sibling source path above and is the library's own
+          ;; specification rather than a second copy of it.
           :test {:target :node-test
                  :output-to "target/node-tests.js"
                  :ns-regexp "-test$"}}}
