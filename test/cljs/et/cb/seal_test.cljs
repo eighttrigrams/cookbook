@@ -165,13 +165,22 @@
                              ;; whole response with them.
                              [(seal/unseal k :recipes :description v)
                               (.then (seal/seal k :recipes :description "the new text" v)
-                                     (fn [out] (seal/unseal k :recipes :description out)))]))
-                           (.then (fn [[back written]]
+                                     (fn [out] (seal/unseal k :recipes :description out)))
+                              ;; The shape the two clients diverged on: `v` and
+                              ;; `stored` both the unopenable value. A wrong or
+                              ;; rotated key hands a client enc:v1: where prose
+                              ;; should be, and a save of "keep everything" writes
+                              ;; exactly that back. Sealing it would store
+                              ;; enc_new(enc_old(…)), nesting once per cycle.
+                              (seal/seal k :recipes :description v v)]))
+                           (.then (fn [[back written unchanged]]
                                     (testing (pr-str v)
                                       (is (= v back)
                                           "handed back, not thrown")
                                       (is (= "the new text" written)
-                                          "and it does not fail a write either"))))))))))
+                                          "and it does not fail a write either")
+                                      (is (= v unchanged)
+                                          "and writing it back unchanged is a no-op"))))))))))
           (.then done)))))
 
 (deftest a-tampered-envelope-fails-to-open
