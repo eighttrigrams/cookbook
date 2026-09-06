@@ -667,10 +667,23 @@
   `unseal-body` makes about doing the work once, at the door.
 
   **The current row's body stands in for the ladder**, as it must: the ladder is
-  not in this response. It is exact for every Recipe whose history was written by
-  a client holding the key, which is all of them. The one shape it misses is a
-  Recipe sealed, then edited by a client with **no** key: a plaintext body over a
-  sealed history, which the server assessed and read half of.
+  not in this response. Two shapes hide a sealed ladder behind a `description`
+  that does not look sealed, and this misses both:
+
+  - a Recipe sealed and then edited by a client with **no** key — a plaintext body
+    over a sealed history, which the server assessed and read half of;
+  - a Recipe whose current body is **blank**. `sealed?` of `\"\"` is false, because
+    never-seal-blank means a blank value is stored as it is, so a split over
+    `[enc, enc, \"\"]` passes straight through. Unlike the first, this is not a
+    misconfiguration: emptying a body and saving is a thing an owner does.
+
+  Neither is a live wrong number today, and the second never was: the reading
+  mode's own `blank?` check takes the toggle away from a body with nothing in it,
+  and the editor's `draft-cautions` sends lines it cannot place to `1.0`, which is
+  the careful side. What catches both in practice is that `state/sealed-prose?` —
+  which decides whether to go and fetch a ladder — asks about all four prose
+  columns and not this one, so a Recipe sealed in any of them is recomputed
+  whatever its description looks like.
 
   `et.cb.ui.state/fetch-versions` closes **half** of that shape from the other end
   — a ladder that will not open retires whatever split is being held — and the

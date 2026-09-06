@@ -959,18 +959,28 @@ the plaintext is:
 
 | the Recipe | where the split comes from |
 | --- | --- |
-| prose in the clear — unmigrated, or published | the server, exactly as before |
-| sealed, and this client can open the ladder | the browser, from `GET /api/recipes/:id/versions` |
-| sealed, and it cannot — no key, or the wrong one | nowhere; the toggle is not offered |
+| nothing about it is sealed — unmigrated, or published | the server, exactly as before |
+| sealed anywhere, and this client can open the ladder | the browser, from `GET /api/recipes/:id/versions` |
+| sealed anywhere, and it cannot — no key, or the wrong one | nowhere; the toggle is not offered |
 
-There is one state the table does not cover and it is worth naming: a Recipe
-sealed and then edited by a client with **no** key has a plaintext body over a
-sealed history, and the server's split for it was drawn over a ladder it could
-read only half of. A reader who also has no key never sees that split — the
-moment anything fetches the ladder, it will not open and the split is retired.
-A reader who *has* the key does see it, because the ladder opens for him and
-nothing notices. It takes a misconfiguration to produce and it is written down
-in `seal/caution-over-ciphertext?` rather than guarded.
+**Sealed *anywhere*, and not sealed in the body.** The question the browser asks
+before it goes and fetches a ladder is whether any of the Recipe's four prose
+columns arrived as an envelope, because the thing it needs to know is whether
+this Recipe is on the sealed shelf — and the body alone does not always say so.
+A Recipe sealed and then written by a client with **no** key has a plaintext body
+over a sealed history, and asking only about the body let the server's half-blind
+split through, on load and on every reload after it. Asking about all four
+catches it: the writer that replaced the body did not touch the useful-when.
+
+It costs the plaintext shelf nothing — a Recipe with no sealed column anywhere
+answers no, fetches no ladder, and keeps the server's split untouched.
+
+What is still not caught is a Recipe every one of whose prose columns a keyless
+writer has replaced in the clear, leaving nothing on the row to say the history
+behind it is sealed. Nothing short of fetching a ladder for every Recipe would
+see that, and that is the round trip the row above is there to avoid. It takes a
+misconfiguration to produce; it is written down in
+`seal/caution-over-ciphertext?` rather than guarded.
 
 Three things make that work and each is worth knowing:
 
@@ -983,7 +993,9 @@ Three things make that work and each is worth knowing:
 - **The server's answer is dropped at the door**, in `et.cb.ui.api`, for any
   response whose body arrived sealed. Not guarded at the render sites, which is
   what it used to be: a guard has to be remembered by everyone who ever draws a
-  split, and a key that is not there cannot be drawn by anybody.
+  split, and a key that is not there cannot be drawn by anybody. (That is the
+  body, not all four columns — this one is about the split *in this response*,
+  where the paragraph above is about whether to go and fetch a ladder.)
 - **The API does not change.** A sealed Recipe's `?detail=full` still carries a
   `caution` and a version-making `PUT` still answers with one; the browser
   ignores both and recomputes. That is deliberate — `plurama-cli` and any other
@@ -993,6 +1005,8 @@ Three things make that work and each is worth knowing:
 The client pays one extra `GET …/versions` per sealed Recipe page, and per save
 of one. That read counts no consumption (see the note on `?detail=full` above),
 so it moves nothing on the shelf; it also leaves the version viewer's cache warm.
+With **no key imported** it pays nothing at all: a ladder it could not open has
+nothing to tell it, so the split is retired without the round trip.
 
 **`plurama-cli` does not compute one** — and since this change it does not pass
 the server's on either: it drops the key for a sealed Recipe, the way the browser

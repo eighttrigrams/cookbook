@@ -66,6 +66,23 @@
       (is (nil? (provenance/local-split [(version 3 "ui" sealed)
                                          (version 2 "machine" sealed)
                                          (version 1 "ui" sealed)]))))
+    (testing "an empty ladder, which is not the same refusal and needs its own"
+      ;; `caution/ranges` answers `[]` for it — no versions, no lines, no ranges —
+      ;; and `local-split` will not dress that as a split, because a
+      ;; `{:legend … :ranges []}` is this client offering to draw one. The reason
+      ;; both guards exist rather than one is
+      ;; `et.uvt.hosts-test/a-history-with-no-text-in-it-parts-the-hosts`: the
+      ;; library throws over an empty history on the JVM and invents a `0.00`
+      ;; range in this host, and `0.00` means *written by an agent*.
+      (is (nil? (provenance/local-split [])))
+      (is (nil? (provenance/local-split nil)))
+      (is (= [] (caution/ranges []))
+          "the adapter's own answer, which is the honest one and still not a split"))
+    (testing "and a version with no text at all, which the library would fabricate over"
+      ;; `(str/split nil …)` throws on the JVM and yields `[\"\"]` here. The
+      ;; adapter coalesces to `\"\"`, which both hosts agree is one empty line.
+      (is (= [{:from 1 :to 1 :caution 1.0}]
+             (caution/ranges [{:version 1 :source "ui" :description nil}]))))
     (testing "and one unreadable version is enough to refuse the whole ladder"
       ;; Not a partial answer over the versions that did open: a fold that skips
       ;; a version attributes its lines to whoever wrote the next one, which is

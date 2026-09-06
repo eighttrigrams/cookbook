@@ -63,8 +63,8 @@
 
 (defn stored-row
   "One row's columns as this client last read them **sealed** — ciphertexts only,
-  and empty for a row that was never sealed. `sealed-column?` asks it that way on
-  purpose; a write wants `stored-for-write` instead."
+  and empty for a row that was never sealed. `state/sealed-prose?` asks it that
+  way on purpose; a write wants `stored-for-write` instead."
   [table id]
   (seal/stored-row @stored-ciphertexts table id))
 

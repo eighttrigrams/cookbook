@@ -590,6 +590,18 @@
              (testing "an unmigrated row is not sealed, however it is held"
                (let [cached {:id 7 :description "plain" :useful_when "plain"}]
                  (is (false? (seal/any-arrived-sealed? {} cached seal/published-surface)))))
+             (testing "a plaintext body over a sealed useful-when: the shape the caution
+               trigger has to catch, and the reason it asks about all four prose columns
+               rather than the description alone. A keyless writer that replaced the body
+               did not touch the rest, and the rest is what says this Recipe is on the
+               sealed shelf — see `state/sealed-prose?`."
+               (let [cached {:id 7 :description "written in the clear" :useful_when sealed}
+                     prose (:recipes seal/sealed-columns)]
+                 (is (false? (seal/arrived-sealed? {} cached :description))
+                     "the body alone says nothing, which is how the split got through")
+                 (is (true? (seal/any-arrived-sealed? {} cached prose)))
+                 (is (= [:description :useful_when :reason :context] prose)
+                     "and the set is the inventory's, not a list spelled again here")))
              (testing "reason and context are not the published surface"
                (is (= [:description :useful_when] seal/published-surface)))
              (testing "and it fails open on a row nothing has been read for"
@@ -788,8 +800,12 @@
                             [{:version 2 :description "plain" :source "ui" :current true}
                              {:version 1 :description "also plain" :source "machine"}]))))
              (testing "an empty or absent ladder is not evidence of an envelope"
-               ;; Nothing to withhold *because of*; `local-split` over it answers a
-               ;; single range and the view's own blank check takes it from there.
+               ;; Nothing to withhold *because of* — this predicate is about
+               ;; envelopes and there are none. What refuses an empty ladder is
+               ;; `provenance/local-split`, on its own grounds, and it has to:
+               ;; `et.uvt.caution/assess` over one throws on the JVM and fabricates
+               ;; a range in ClojureScript, which is pinned in
+               ;; `et.uvt.hosts-test/a-history-with-no-text-in-it-parts-the-hosts`.
                (is (false? (seal/ladder-arrived-sealed? [])))
                (is (false? (seal/ladder-arrived-sealed? nil))))
              (testing "only the body is asked about, not the reason or the context"

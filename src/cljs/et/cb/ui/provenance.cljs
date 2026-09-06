@@ -108,12 +108,25 @@
   not offer to draw one. An empty vector would be a claim that the body has no
   lines.
 
-  Two things make it nil, and they are the same thing said twice: no key
-  configured, and a ladder holding an envelope the key would not open. Both come
-  back from `seal/ladder-arrived-sealed?`, since with no key `unseal` returns
-  what it was given."
+  Three things make it nil. Two are the same thing said twice — no key
+  configured, and a ladder holding an envelope the key would not open — and both
+  come back from `seal/ladder-arrived-sealed?`, since with no key `unseal` returns
+  what it was given.
+
+  The third is **an empty ladder**, and it is here rather than left to
+  `caution/ranges` because the two answer different questions: `ranges` says *no
+  versions, so no lines, so no ranges* and hands back `[]`, which is true; this
+  says *there is no Recipe here to be careful about*, and a `{:legend … :ranges
+  []}` would be a split this client is offering to draw. It cannot arrive from the
+  server — `list-versions` always includes the current row — and it is guarded
+  because a client is not the schema.
+
+  Note that neither this nor `ranges` leans on the library to refuse a degenerate
+  history: it does not, and it does not refuse it *differently* on the two hosts —
+  see `et.uvt.hosts-test/a-history-with-no-text-in-it-parts-the-hosts`, and
+  `caution/ranges` for the guard that keeps both shapes away from it."
   [versions]
-  (when-not (seal/ladder-arrived-sealed? versions)
+  (when (and (seq versions) (not (seal/ladder-arrived-sealed? versions)))
     {:legend caution/legend
      :ranges (caution/ranges versions)}))
 

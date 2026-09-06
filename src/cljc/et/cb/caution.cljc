@@ -106,18 +106,35 @@
     with the source it was saved under and never with the source of the save that
     displaced it.
 
-  A nil description is read as the empty string. It cannot arrive from the write
-  paths — the column defaults to `''` and every write coalesces — but it *can*
-  arrive from a caller who selected the lean projection by mistake, and a lean read
-  is defined by not carrying a description. The empty string is the honest reading
-  of that: one line, attributed to whoever the version is. It is not a guard
-  against a missing column so much as a refusal to have this throw on the app's
-  hottest read.
+  **Two shapes are refused here rather than passed down, and since the port that
+  is load-bearing rather than tidy.** `et.uvt.core/lines` splits its text, and
+  splitting `nil` **throws on the JVM and answers a single empty line in
+  ClojureScript**, which coerces with `(str s)` first. The two hosts therefore
+  disagree about a malformed history — and they disagree in the worst available
+  direction: ClojureScript does not refuse, it invents one range over a line
+  nobody wrote whose source is `nil`, which `ours` does not contain, so it reads
+  `0.00` — *written by an agent* — about nothing at all. `et.uvt.hosts-test/
+  a-history-with-no-text-in-it-parts-the-hosts` pins that, both spellings, and it
+  is the reason this guard is not belt-and-braces.
 
-  There is always at least one version, so there is always an answer: a Recipe is
-  created at v1 and `list-versions` puts the current row in the list."
+  - **A nil description is read as the empty string.** It cannot arrive from the
+    write paths — the column defaults to `''` and every write coalesces — but it
+    *can* arrive from a caller who selected the lean projection by mistake, and a
+    lean read is defined by not carrying a description. The empty string is the
+    honest reading of that: one line, attributed to whoever the version is. The
+    empty string *is* a legal input to the library and comes out the same on both
+    hosts; `nil` is not.
+  - **An empty ladder answers `[]`.** There is always at least one version in
+    practice — a Recipe is created at v1 and `list-versions` puts the current row
+    in the list — so this cannot arrive from the server. It can arrive from the
+    browser, which since the port calls this over whatever
+    `GET /api/recipes/:id/versions` handed back, and a client is not the schema.
+    No versions means no text, which means no line to be careful in: the empty
+    vector says that on both hosts, where the library says two different things."
   [versions]
-  (uvt/assess (mapv (fn [{:keys [description source]}]
-                      {:text (or description "") :source source})
-                    (reverse versions))
-              {:ours ours}))
+  (if (empty? versions)
+    []
+    (uvt/assess (mapv (fn [{:keys [description source]}]
+                        {:text (or description "") :source source})
+                      (reverse versions))
+                {:ours ours})))

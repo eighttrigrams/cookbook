@@ -982,21 +982,33 @@
 ;; card's provenance badge is fed by counts the listing endpoint aggregates,
 ;; precisely so a collapsed card never has to come here.
 
-;; `sealed-body?` and its `sealed-column?` live at the far end of this file, with
-;; the publish interlock that asks the same kind of question of the same index. It
-;; is declared rather than moved: the two belong beside each other, and this
-;; section is the version history's.
-(declare sealed-body?)
+;; `sealed-prose?` lives at the far end of this file, beside the publish
+;; interlock that asks the same kind of question of the same index. It is declared
+;; rather than moved: the two belong together, and this section is the version
+;; history's.
+(declare sealed-prose?)
 
 (defn- install-caution!
   "One Recipe's split, or its absence. `dissoc` and not `assoc … nil`, because the
   absence is the shape the API already uses for a caller who is not to be served
   one — `tags` and `scopes` go missing the same way — and because `cache-detail!`
   merges: a key that is not there is a key a later lean read cannot resurrect,
-  while a nil would sit in the row looking like an answer."
+  while a nil would sit in the row looking like an answer.
+
+  **`update` and not `update-in`, so a row that has gone stays gone.** `update-in`
+  on a missing id builds `{:caution …}` out of `nil`, and this runs from a
+  `/versions` callback that can land after a delete (`delete-recipe` dissocs the
+  id) or a sign-out (`:details` is reset to `{}`) — leaving a titleless row under
+  that id, which `views.recipe/page`'s `(get details recipe-page-id)` would read
+  as *the full row is here*.
+  `fetch-versions`' request numbering guards a response being **stale**; it has
+  nothing to say about the row having gone."
   [id split]
-  (swap! *app-state update-in [:details id]
-         (fn [row] (if split (assoc row :caution split) (dissoc row :caution)))))
+  (swap! *app-state update :details
+         (fn [details]
+           (if-let [row (get details id)]
+             (assoc details id (if split (assoc row :caution split) (dissoc row :caution)))
+             details))))
 
 (defn fetch-versions
   "Every version of one recipe, into `[:versions id]`.
@@ -1072,15 +1084,26 @@
   `forget-versions!` has just dropped. That is a happy accident and not a reason:
   the viewer would have refetched it, and now it does not.
 
-  **It answers `sealed-body?` itself rather than making its callers ask**, so the
-  rule lives in one place with one docstring: a Recipe whose body arrived in the
-  clear keeps the server's split, which is correct and is already in the row, and
-  this does nothing and costs nothing. Two call sites asking the question
-  themselves is how a third one comes to ask it differently."
+  **It answers `sealed-prose?` itself rather than making its callers ask**, so
+  the rule lives in one place with one docstring: a Recipe with no sealed column
+  anywhere keeps the server's split, which is correct and is already in the row,
+  and this does nothing and costs nothing. Two call sites asking the question
+  themselves is how a third one comes to ask it differently.
+
+  **With no key there is nothing to fetch.** `local-split` could only ever answer
+  `nil` over a ladder that will not open, so the round trip would buy one thing
+  and it is a thing this can do without leaving the room: retiring the server's
+  split. Which it must — that is the case the review found live, a sealed Recipe
+  whose body a keyless writer replaced in the clear, where `ui.api` sees a
+  plaintext description and lets the server's half-blind answer through. So the
+  keyless branch is not an optimisation with a caveat; it is the same answer,
+  arrived at without asking."
   [id]
-  (when (sealed-body? id)
-    (fetch-versions id (fn [versions]
-                         (install-caution! id (provenance/local-split versions))))))
+  (when (sealed-prose? id)
+    (if (key-store/current-key)
+      (fetch-versions id (fn [versions]
+                           (install-caution! id (provenance/local-split versions))))
+      (install-caution! id nil))))
 
 (defn- forget-versions!
   "The cached version history for one Recipe, dropped because a new version makes it
@@ -1857,65 +1880,45 @@
       (swap! *app-state assoc :filing nil)
       ((err-handler "Could not save the filing") resp))))
 
-(defn sealed-column?
-  "Whether this client is holding a Recipe whose `column` arrived sealed.
+(defn sealed-prose?
+  "Whether **any** of this Recipe's prose columns arrived sealed — description,
+  useful-when, reason or context, which is `seal/sealed-columns`' `:recipes`
+  entry. Which is the same as asking: is this Recipe on the sealed shelf.
 
-  The question itself is `seal/arrived-sealed?`, which is pure and is where the
-  two halves of it are explained — and where its **fail-open** is written down: a
-  column this client has not read answers `false`.
+  **This is the round-1 predicate, and it was `sealed-body?` until the caution
+  port's review.** That one asked only about the description, because the
+  description is what the split is drawn over — and it was the right question for
+  a client deciding whether the split it is *holding* is about ciphertext. It is
+  the wrong question for a client deciding whether to go and check, and the review
+  found the gap live: a Recipe sealed and then written by a keyless agent has a
+  plaintext description over a sealed history, so `sealed-body?` said no, no
+  ladder was fetched, and the server's half-blind split was drawn — on page load,
+  and again after every reload, because the retirement in `fetch-versions` only
+  fires once something else has gone and fetched a ladder.
 
-  Unreachable for both callers today. `sealed-recipe?` guards a publish the server
-  would refuse anyway, and the Recipe page has fetched its detail by the time the
-  modal over it can open. `sealed-body?` is asked from inside the callback that
-  has just cached the row, so there is a row by construction — and its fail-open
-  is now the safe direction rather than merely an unreachable one: answering
-  `false` for a sealed Recipe means *no local recompute*, and since `ui.api` has
-  already dropped the server's split for that same Recipe, what is left is no
-  split, which is a button that is not offered rather than one that lies. A third
-  caller should still know what it is holding."
-  [id column]
-  (seal/arrived-sealed? (api/stored-row :recipes id)
-                        (get-in @*app-state [:details id])
-                        column))
+  Any prose column still wearing `enc:v1:` says the same thing the description
+  would have: this Recipe's history was written by clients holding a key, so a
+  split computed by a server that has none is not about this text. In that keyless
+  case the row's `useful_when` is still an envelope, because the writer that
+  replaced the body did not touch it — and more generally a Recipe is sealed in
+  four columns and a keyless writer only ever overwrites what it sends.
 
-(defn sealed-body?
-  "Whether the description arrived sealed — which is the question `caution` has to
-  be asked before it is *drawn from the server's answer*.
+  It costs the plaintext shelf nothing: a Recipe with no sealed column anywhere
+  answers `false` here exactly as it did before, fetches no ladder, and keeps the
+  server's split untouched.
 
-  The server computes the split over `recipe_history` and holds no key. What it
-  produces from a sealed history is not a partial answer but a wrong one: base64
-  has no newlines, so the whole ladder is one line, and the single range that
-  comes back carries the *last writer's* label and gets painted onto the
-  plaintext's line 1. A Recipe the owner wrote and an agent later edited at line 5
-  therefore colours **his own first line** as an agent's — which is the one
-  direction this app exists to get right.
-
-  **The round-1 review expected the caution port to delete this. It did not, and
-  the reason is worth stating: what the port changed is the answer, not the
-  question.** The trigger is the same — this body arrived sealed, so the server's
-  number is not about it — and what follows `true` is now
-  `refresh-local-caution!`, which computes the split here over the unsealed
-  ladder, instead of a guard at two render sites that took the button away. Those
-  guards are gone; the two callers left are this and the one below it.
-
-  Two things moved out from under it, both to places that know more:
-
-  - The *dropping* of the server's wrong answer is `api`'s now
-    (`seal/caution-over-ciphertext?`), asked of the response itself rather than of
-    this client's memory of the row — so no part of this client is ever holding a
-    split it should not draw, and no render site has to remember to ask.
-  - The case this stood in for and could not see — a Recipe sealed, then edited by
-    a client with no key, plaintext body over a sealed history — is closed in
-    `fetch-versions`, which has the ladder in its hands and can ask it directly.
-    Half of it, precisely: the half where the reader has no key either, which is
-    the reachable one. `seal/caution-over-ciphertext?` says what is left and what
-    closing it would cost.
-
-  What is left here is what this was always good at: a cheap question about the
-  row in hand, answered before any ladder has been fetched, deciding whether to go
-  and fetch one."
+  The question itself is `seal/arrived-sealed?` — pure, where the two halves of it
+  are explained, and where its **fail-open** is written down: a column this client
+  has not read answers `false`. Asked from inside the callback that has just
+  cached the row, so there is a row by construction; and the fail-open is the safe
+  direction rather than merely an unreachable one, since answering `false` for a
+  sealed Recipe means no local recompute, and `ui.api` has already dropped the
+  server's split for that same Recipe. What is left is no split, which is a button
+  that is not offered rather than one that lies."
   [id]
-  (sealed-column? id :description))
+  (seal/any-arrived-sealed? (api/stored-row :recipes id)
+                            (get-in @*app-state [:details id])
+                            (:recipes seal/sealed-columns)))
 
 (defn sealed-recipe?
   "Whether this client is holding a Recipe whose **published surface** is sealed —
