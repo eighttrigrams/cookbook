@@ -703,7 +703,11 @@
            (err-handler "Could not add that Scope"))))))
 
 (defn save-scope [id fields on-success]
-  (-> (seal/seal-scope-write (key-store/current-key) fields (api/stored-row :scopes id))
+  (-> (seal/seal-scope-write (key-store/current-key) fields
+                             ;; the Scope as this client last listed it, for the
+                             ;; reason `update-recipe` gives one file over
+                             (api/stored-for-write
+                              :scopes id (first (filter #(= id (:id %)) (:scopes @*app-state)))))
       (.then
        (fn [params]
          (api/put-json (str "/api/scopes/" id) params (auth-headers)
@@ -1325,7 +1329,11 @@
   [id fields on-success]
   (let [known (get-in @*app-state [:details id])]
     (sealing-recipe-write
-     (api/stored-row :recipes id)
+     ;; **`stored-for-write`, never `stored-row`.** The row this client is holding
+     ;; is the only place an *unsealed* column's current value survives — the index
+     ;; remembers ciphertext and nothing else — and without it every no-op Save on
+     ;; an unmigrated Recipe shipped a fresh envelope and cost a version.
+     (api/stored-for-write :recipes id known)
      (assoc fields :modified_at (:modified_at known))
      (fn [params]
        (api/put-json (str "/api/recipes/" id) params (auth-headers)

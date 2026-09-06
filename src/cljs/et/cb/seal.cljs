@@ -549,11 +549,37 @@
           [[table (:id node) column] (get node column)])))
 
 (defn stored-row
-  "One row's columns as the index last saw them sealed — the `stored` argument
-  `seal-row` wants. Empty for a Recipe this client has not read the body of,
-  which is the honest answer: nothing to echo, so everything seals fresh."
+  "One row's columns as the index last saw them **sealed** — ciphertexts only.
+  Empty for a Recipe this client has not read the body of, and empty for one that
+  was never sealed in the first place, which is why `stored-for-write` exists."
   [index table id]
   (into {} (for [column (get sealed-columns table)
                  :let [v (get index [table id column])]
                  :when v]
              [column v])))
+
+(defn stored-for-write
+  "The `stored` a write should hand `seal`: **what this client believes that row's
+  prose columns hold right now**, in whatever encoding they hold it.
+
+  Two sources, and it takes both because neither alone is the answer. The index
+  knows the ciphertext of a column that arrived sealed, which is the only place
+  that survives — unsealing is what threw it away. `row` is the row as this client
+  is holding it, which for a column that arrived *unsealed* is the value itself,
+  and there is nowhere else to learn it.
+
+  So the index wins where it has an entry, and the cached row answers everywhere
+  else.
+
+  **Without the second source the echo rule was unreachable from the browser for
+  exactly the rows it was written for.** `sealed-index` records a column only when
+  it arrived sealed, so an unmigrated row contributed nothing, `stored-row`
+  returned `{}`, and every no-op Save during the mixed-state window the rollout
+  mandates shipped a fresh envelope — a version, a history row, and a staled
+  provenance split, on the owner's own shelf, in the client he uses.
+
+  A column this client has never read is in neither source and is absent from the
+  answer, which is the honest shape: nothing to echo, so it seals."
+  [index table id row]
+  (merge (select-keys row (get sealed-columns table))
+         (stored-row index table id)))

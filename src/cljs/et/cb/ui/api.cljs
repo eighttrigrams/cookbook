@@ -62,9 +62,19 @@
   (atom {}))
 
 (defn stored-row
-  "One row's sealed columns as this client last read them, for `seal-row`."
+  "One row's columns as this client last read them **sealed** — ciphertexts only,
+  and empty for a row that was never sealed. `sealed-column?` asks it that way on
+  purpose; a write wants `stored-for-write` instead."
   [table id]
   (seal/stored-row @stored-ciphertexts table id))
+
+(defn stored-for-write
+  "What this client believes that row's prose columns hold right now, in whatever
+  encoding — the ciphertexts remembered here, over the values the caller is
+  holding for the columns that arrived unsealed. See `seal/stored-for-write`,
+  which is where the reason lives and why a write must not use `stored-row`."
+  [table id row]
+  (seal/stored-for-write @stored-ciphertexts table id row))
 
 (defn forget-stored!
   "Drop the lot. Called on sign-out with the rest of what was fetched — these are

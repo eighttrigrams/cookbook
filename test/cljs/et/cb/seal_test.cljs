@@ -556,6 +556,92 @@
                                   "a Recipe this client has not read the body of echoes nothing"))))))
         (.then done))))
 
+(deftest the-write-path-reaches-the-echo-rule-on-an-unmigrated-row
+  (testing "sealed-index -> stored-for-write -> seal-recipe-write, which is the wiring
+    et.cb.ui.api and et.cb.ui.state stand on. `seal` echoing correctly is not the
+    same claim as the browser reaching it: for a whole round it did not, because
+    sealed-index remembers a column only when it arrived sealed, so on exactly the
+    unmigrated rows the rule was written for there was nothing to echo and every
+    no-op Save shipped a fresh envelope."
+    (async done
+      (let [;; what GET /api/recipes/:id?detail=full answers for a row nobody has
+            ;; migrated: prose in the clear
+            response {:id 7 :version 2 :title "T" :pending 0
+                      :description "the body, unmigrated"
+                      :useful_when "the line, unmigrated"}
+            index (seal/sealed-index response)]
+        (is (= {} index) "nothing sealed arrived, so nothing is remembered")
+        (-> (test-key)
+            (.then (fn [k]
+                     (-> (seal/unseal-recipe k response)
+                         (.then (fn [cached]
+                                  (let [stored (seal/stored-for-write index :recipes 7 cached)]
+                                    (is (= {:description "the body, unmigrated"
+                                            :useful_when "the line, unmigrated"}
+                                           stored)
+                                        "the cached row is what answers for an unsealed column")
+                                    (js/Promise.all
+                                     (into-array
+                                      [;; the Save that changed nothing
+                                       (seal/seal-recipe-write
+                                        k {:title "T"
+                                           :description "the body, unmigrated"
+                                           :useful_when "the line, unmigrated"}
+                                        stored)
+                                       ;; and one that changed the body
+                                       (seal/seal-recipe-write
+                                        k {:title "T"
+                                           :description "edited at last"
+                                           :useful_when "the line, unmigrated"}
+                                        stored)])))))
+                         (.then (fn [[no-op edited]]
+                                  (is (= "the body, unmigrated" (:description no-op))
+                                      "a no-op Save writes the same value the server already has")
+                                  (is (= "the line, unmigrated" (:useful_when no-op)))
+                                  (is (not (seal/sealed? (:description no-op))))
+                                  (is (seal/sealed? (:description edited))
+                                      "and a real edit is what seals the row")
+                                  (is (= "the line, unmigrated" (:useful_when edited))
+                                      "while the field it did not touch stays a no-op"))))))
+            (.then done))))))
+
+(deftest the-write-path-still-echoes-ciphertext-on-a-sealed-row
+  (testing "the same wiring on the other side of the migration"
+    (async done
+      (-> (test-key)
+          (.then (fn [k]
+                   (-> (js/Promise.all
+                        (into-array [(seal/seal k :recipes :description "the body")
+                                     (seal/seal k :recipes :useful_when "the line")]))
+                       (.then (fn [[d u]]
+                                (let [response {:id 7 :version 2 :title "T" :description d :useful_when u}
+                                      index (seal/sealed-index response)]
+                                  (is (= 2 (count index)))
+                                  (.then (seal/unseal-recipe k response)
+                                         (fn [cached]
+                                           (let [stored (seal/stored-for-write index :recipes 7 cached)]
+                                             (is (= {:description d :useful_when u} stored)
+                                                 "the index wins wherever it has an entry")
+                                             (.then (seal/seal-recipe-write
+                                                     k {:title "T" :description "the body" :useful_when "the line"}
+                                                     stored)
+                                                    (fn [out] [d u out]))))))))
+                       (.then (fn [[d u out]]
+                                (is (= d (:description out)) "byte-identical echo")
+                                (is (= u (:useful_when out))))))))
+          (.then done)))))
+
+(deftest a-row-this-client-has-not-read-echoes-nothing
+  (testing "the third case, which must not become an accidental no-op"
+    (async done
+      (-> (test-key)
+          (.then (fn [k]
+                   (let [stored (seal/stored-for-write {} :recipes 7 nil)]
+                     (is (= {} stored))
+                     (seal/seal-recipe-write k {:title "T" :description "a body"} stored))))
+          (.then (fn [out] (is (seal/sealed? (:description out)))))
+          (.then done)))))
+
 (deftest an-unchanged-save-through-the-index-echoes
   (testing "the whole point, end to end: read a Recipe, save it untouched, send back the same bytes"
     (async done
