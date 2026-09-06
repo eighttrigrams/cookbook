@@ -51,6 +51,14 @@
   ;; Stale entries are harmless. A value another client has since changed unseals
   ;; to something that is not what is being written, so it does not match and the
   ;; write seals fresh; and the `modified_at` guard answers that race first anyway.
+  ;;
+  ;; **It only grows.** Nothing evicts, and `forget-stored!` on sign-out is the one
+  ;; thing that empties it — which in dev is never, since logins are skipped and
+  ;; the Sign out button is disabled. That is a bounded leak rather than an
+  ;; unbounded one: at most four short strings per Recipe and one per Scope this
+  ;; client has read the body of, on a shelf whose whole point is that a person
+  ;; curates it. An eviction policy would be more machinery than the thing it
+  ;; bounded, so this is a note and not a TODO.
   (atom {}))
 
 (defn stored-row

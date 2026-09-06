@@ -680,6 +680,7 @@ make start      # shadow-cljs watch + the clojure server
 make stop
 make test       # the clojure suite
 make test-cljs  # the seal's test vectors, under node
+make test-all   # both — the one to run before believing a seal change
 make lint
 ```
 

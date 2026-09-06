@@ -364,6 +364,35 @@
                               (is (= "A title, in the clear" (:recipe_title out))))))))
         (.then done))))
 
+(deftest unseal-proposal-means-the-same-thing-in-both-clients
+  (testing "the agent's own text and, where a shape carries them, the current_ aliases"
+    (async done
+      (-> (test-key)
+          (.then (fn [k]
+                   (-> (js/Promise.all
+                        (into-array [(seal/seal k :recipe_proposals :description "proposed")
+                                     (seal/seal k :recipe_proposals :reason "why")
+                                     (seal/seal k :recipes :description "as it reads now")
+                                     (seal/seal k :recipes :useful_when "when you need it")]))
+                       (.then (fn [[proposed why now when-s]]
+                                (js/Promise.all
+                                 (into-array
+                                  [(seal/unseal-proposal k {:base_version 2
+                                                            :description proposed
+                                                            :reason why
+                                                            :current_description now
+                                                            :current_useful_when when-s})
+                                   ;; and a shape without them is untouched by that half
+                                   (seal/unseal-proposal k {:base_version 2 :description proposed})]))))
+                       (.then (fn [[full bare]]
+                                (is (= "proposed" (:description full)))
+                                (is (= "why" (:reason full)))
+                                (is (= "as it reads now" (:current_description full)))
+                                (is (= "when you need it" (:current_useful_when full)))
+                                (is (= "proposed" (:description bare)))
+                                (is (not (contains? bare :current_description))))))))
+          (.then done)))))
+
 (deftest unseal-body-recognises-the-shapes-the-api-answers-with
   (async done
     (-> (test-key)

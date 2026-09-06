@@ -1,4 +1,4 @@
-.PHONY: start stop build test test-cljs lint clean
+.PHONY: start stop build test test-cljs test-all lint clean
 
 start:
 	@if [ -f .env ]; then set -a && . ./.env && set +a; fi && ./scripts/start.sh
@@ -26,6 +26,12 @@ endif
 test-cljs:
 	npx shadow-cljs compile test
 	node target/node-tests.js
+
+# Both suites, because `make test` alone is 409 green tests that say nothing
+# about the envelope: somebody could edit src/cljs/et/cb/seal.cljs, run it, and
+# ship a client that no longer agrees with plurama-cli's. The third suite is in
+# that repo and cannot be run from here; the README's Development block names it.
+test-all: test test-cljs
 
 lint:
 	clj-kondo --lint src/clj
