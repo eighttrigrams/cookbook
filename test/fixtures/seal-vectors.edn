@@ -60,6 +60,24 @@
 ;;                      not carry the prefix. Mixed state is legal forever, so a
 ;;                      near miss — enc:v0:, ENC:V1:, a leading space — is a
 ;;                      plaintext and not an error.
+;;   :unopenable        values `unseal` must hand back untouched even though they
+;;                      DO carry the prefix, because nothing behind it opens: no
+;;                      payload, base64 that is not base64, a payload too short
+;;                      to hold a nonce. Rule 3 is that a client hands back what
+;;                      it cannot read; it is not allowed to throw, and `seal`
+;;                      given one of these as its `stored` must fall through to a
+;;                      fresh envelope rather than fail the write.
+;;
+;;                      This class is here because it is the one the two clients
+;;                      actually diverged on: `js/atob` throws *synchronously*, so
+;;                      the browser's promise chain never installed its catch and
+;;                      one such value dropped a whole response, while `bb` handed
+;;                      it straight back. Every other section is well-formed
+;;                      base64, so the drift control could not see it. Note the
+;;                      two decoders disagree about which of these are even
+;;                      decodable — "AAA" throws in Java and decodes in JS — which
+;;                      is the point: what both must agree on is the answer, not
+;;                      the route to it.
 ;;   :tamper            envelopes that must fail. Each carries the key and the
 ;;                      AAD to try it under.
 ;;   :round-trip        plaintexts to seal with a fresh nonce and read back.
@@ -82,6 +100,15 @@
   :key-bytes 32,
   :layout "enc:v1: ++ base64(nonce || ciphertext || tag)",
   :aad "utf-8 bytes of \"<binding>/<column>\", see :binding"},
+ :unopenable
+ ["enc:v1:"
+  "enc:v1:a Recipe about the envelope!"
+  "enc:v1:====="
+  "enc:v1:AAAA"
+  "enc:v1:AAA"
+  "enc:v1:AAAAAAAAAAAAAAAA"
+  "enc:v1:!!!"
+  "enc:v1:%"],
  :key-base64 "Zszlv8TcuDBPlL11JP5ae4xqUtG151uNHQf2C+bbso0=",
  :vectors
  [{:name "a plain one-line description",
@@ -281,6 +308,11 @@
    :key-base64 "Zszlv8TcuDBPlL11JP5ae4xqUtG151uNHQf2C+bbso0=",
    :sealed
    "enc:v1:advSGDmKNcEADotwIvpt72HZ0iLDure4zYp1E40hm/GyH2ub/k2gEa2iimqU3PAqksJVBAT76U+uI466Aevg2gPo3ucQrv5Hw8HgiA=="}
+  {:name "a reason read as the context of the same version",
+   :aad "recipe/context",
+   :key-base64 "Zszlv8TcuDBPlL11JP5ae4xqUtG151uNHQf2C+bbso0=",
+   :sealed
+   "enc:v1:N3NxEXqIaiTyLPnza6WsAUnTcVYfJHFTrnuWjQLJwKY9pTBaRUHkg+cFVWCqkSRAO1/FAoVytTuHWJz2oG+NkL5g4bG0YYGmqcGbkdKJYBgD4NCLlZ6qn+IvnFx18W/2dc9w75sS"}
   {:name "a Recipe's body read as a Scope's description",
    :aad "scope/description",
    :key-base64 "Zszlv8TcuDBPlL11JP5ae4xqUtG151uNHQf2C+bbso0=",

@@ -188,29 +188,59 @@
 (defn- gcm-params [nonce aad-str]
   #js {:name "AES-GCM" :iv nonce :additionalData (utf8 aad-str) :tagLength tag-bits})
 
+(defn seal-text-with-nonce
+  "**The fixture's arity, and nothing else's** — which is why it has a name you
+  have to type rather than an overload you can fall into.
+
+  A nonce supplied by a caller is a nonce that can be supplied twice, and in GCM
+  two values sealed under one key and one nonce is not a weakening, it is a total
+  break: the keystream cancels between them and the authentication key itself
+  falls out. Nothing in this application has any reason to choose one. The test
+  vectors do, because pinning an exact ciphertext is the whole point of them.
+
+  Every other caller wants `seal-text`, which takes one from the CSPRNG."
+  [k aad-str plaintext nonce]
+  (.then (.encrypt (subtle) (gcm-params nonce aad-str) k (utf8 plaintext))
+         (fn [ct]
+           (let [ct (js/Uint8Array. ct)
+                 out (js/Uint8Array. (+ (.-length nonce) (.-length ct)))]
+             (.set out nonce 0)
+             (.set out ct (.-length nonce))
+             (str envelope-prefix (bytes->b64 out))))))
+
 (defn seal-text
   "The envelope itself: plaintext in, a promise of `enc:v1:…` out. No rules, no
   inventory, no opinion about blanks — `seal` below is what call sites use.
-  Separate so the fixture can pin an exact ciphertext by handing in the nonce."
-  ([k aad-str plaintext] (seal-text k aad-str plaintext (random-bytes nonce-length)))
-  ([k aad-str plaintext nonce]
-   (.then (.encrypt (subtle) (gcm-params nonce aad-str) k (utf8 plaintext))
-          (fn [ct]
-            (let [ct (js/Uint8Array. ct)
-                  out (js/Uint8Array. (+ (.-length nonce) (.-length ct)))]
-              (.set out nonce 0)
-              (.set out ct (.-length nonce))
-              (str envelope-prefix (bytes->b64 out)))))))
+
+  A fresh 96-bit nonce per value, from the CSPRNG, every time."
+  [k aad-str plaintext]
+  (seal-text-with-nonce k aad-str plaintext (random-bytes nonce-length)))
 
 (defn unseal-text
-  "The inverse, for a value known to carry the prefix. The promise **rejects**
-  when the tag does not check out — a tampered ciphertext, one moved to another
-  column, or the wrong key."
+  "The inverse, for a value known to carry the prefix. **Always a promise**, and
+  it rejects rather than throws for everything: a tampered ciphertext, one moved
+  to another column, the wrong key — and a value that carries the prefix and is
+  not base64 at all.
+
+  That last one is why the `try` is here. `js/atob` throws *synchronously*,
+  before any promise exists, so without this the `.catch` that `unseal` installs
+  is never reached and the throw escapes the whole chain into the ajax handler:
+  one such value drops an entire response, with no error banner and nothing on
+  screen to say why. And a Recipe whose description begins with `enc:v1:` is not
+  a contrived input — it is a Recipe about this envelope, which the README now
+  invites somebody to write.
+
+  The Clojure half caught this from the start, which made the two clients
+  disagree about one class of input that the fixture could not see, because every
+  vector in it is well-formed base64. `:unopenable` in the fixture is that class,
+  and both suites read it now."
   [k aad-str value]
-  (let [raw (b64->bytes (subs value (count envelope-prefix)))
-        nonce (.slice raw 0 nonce-length)
-        body (.slice raw nonce-length)]
-    (.then (.decrypt (subtle) (gcm-params nonce aad-str) k body) from-utf8)))
+  (try
+    (let [raw (b64->bytes (subs value (count envelope-prefix)))
+          nonce (.slice raw 0 nonce-length)
+          body (.slice raw nonce-length)]
+      (.then (.decrypt (subtle) (gcm-params nonce aad-str) k body) from-utf8))
+    (catch :default e (js/Promise.reject e))))
 
 ;; ---------------------------------------------------------------------------
 ;; Promise plumbing, kept in one place so the shapes below read like the clj half.

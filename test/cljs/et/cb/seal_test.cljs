@@ -86,7 +86,7 @@
                  (js/Promise.all
                   (into-array
                    (for [{:keys [name aad nonce plaintext sealed]} (:vectors @fixture)]
-                     (.then (seal/seal-text k aad plaintext (b64->bytes nonce))
+                     (.then (seal/seal-text-with-nonce k aad plaintext (b64->bytes nonce))
                             (fn [out]
                               (testing name
                                 (is (= sealed out)
@@ -149,6 +149,30 @@
                                       (is (= v out))
                                       (is (false? (seal/sealed? v)))))))))))) 
         (.then done))))
+
+(deftest a-prefixed-value-that-will-not-open-is-handed-back-not-thrown
+  (testing "rule 3 is about the prefix, and the prefix is not a promise that it opens"
+    (async done
+      (-> (test-key)
+          (.then (fn [k]
+                   (js/Promise.all
+                    (into-array
+                     (for [v (:unopenable @fixture)]
+                       (-> (js/Promise.all
+                            (into-array
+                             ;; Both of these threw synchronously before the fix,
+                             ;; escaping every catch in the chain and taking the
+                             ;; whole response with them.
+                             [(seal/unseal k :recipes :description v)
+                              (.then (seal/seal k :recipes :description "the new text" v)
+                                     (fn [out] (seal/unseal k :recipes :description out)))]))
+                           (.then (fn [[back written]]
+                                    (testing (pr-str v)
+                                      (is (= v back)
+                                          "handed back, not thrown")
+                                      (is (= "the new text" written)
+                                          "and it does not fail a write either"))))))))))
+          (.then done)))))
 
 (deftest a-tampered-envelope-fails-to-open
   (async done
