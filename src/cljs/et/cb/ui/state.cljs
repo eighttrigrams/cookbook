@@ -1749,24 +1749,61 @@
       (swap! *app-state assoc :filing nil)
       ((err-handler "Could not save the filing") resp))))
 
+(defn sealed-recipe?
+  "Whether this client is holding a Recipe whose **published surface** is sealed —
+  its description or its useful-when. Both are asked, because a visitor is served
+  exactly those two and would meet `enc:v1:…` on a public page for either.
+
+  Two questions, because there are two ways to be holding one. `api/stored-row`
+  knows what the columns held on the wire, which is the answer for a client that
+  has the key and unsealed them; the cached row itself is the answer for a client
+  that has no key and is looking at the ciphertext.
+
+  Neither `reason`/`context` nor the history is asked about, and that is not an
+  oversight: a visitor is served none of them, so their being sealed is not what
+  makes publishing wrong. It is the two fields on the page a stranger opens."
+  [id]
+  (let [stored (api/stored-row :recipes id)
+        cached (get-in @*app-state [:details id])]
+    (boolean (some (fn [column]
+                     (or (contains? stored column) (seal/sealed? (get cached column))))
+                   [:description :useful_when]))))
+
 (defn publish-recipe
   "One way: there is no unpublish call to pair with this one, on the server or
   here. The response is the full row, so an open card keeps a fresh body.
 
   `on-done` runs on failure too, because it is what closes the confirmation:
   the error banner renders under the modal's fixed overlay, so leaving the
-  dialog open would put the banner's dismiss button out of reach."
+  dialog open would put the banner's dismiss button out of reach.
+
+  **A sealed Recipe is refused here, before the request.** Publishing is what
+  hands prose to somebody who has no key and must never have one, so a sealed
+  body on a published page is `enc:v1:…` in front of a stranger — and there is no
+  unpublish to take it back. Recovery would mean writing the prose out in the
+  clear by hand.
+
+  This is an interlock and not the feature: publishing a sealed Recipe should
+  *unseal* it, one way and deliberately, and that is its own piece of work. Until
+  it lands, the irreversible mistake is simply off the board. When it lands, this
+  refusal is what it replaces."
   [id on-done]
   (let [done #(when on-done (on-done))]
-    (api/post-json (str "/api/recipes/" id "/publish") {} (auth-headers)
-      (fn [recipe]
-        (cache-detail! recipe)
-        (fetch-recipes)
-        (fetch-inbox)
-        (done))
-      (fn [resp]
-        (done)
-        ((err-handler "Could not publish") resp)))))
+    (if (sealed-recipe? id)
+      (do (done)
+          (set-error (str "This Recipe's text is encrypted, and publishing is one way — "
+                          "a visitor has no key, so they would meet enc:v1:… on a public "
+                          "page with no way to undo it. Publishing will unseal it once "
+                          "that is built.")))
+      (api/post-json (str "/api/recipes/" id "/publish") {} (auth-headers)
+        (fn [recipe]
+          (cache-detail! recipe)
+          (fetch-recipes)
+          (fetch-inbox)
+          (done))
+        (fn [resp]
+          (done)
+          ((err-handler "Could not publish") resp))))))
 
 (defn delete-recipe
   "Takes the Recipe off the shelf. Since 012 that is a **tombstone** server-side —
