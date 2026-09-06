@@ -265,13 +265,23 @@
 
   409 when the proposal has already been approved, dismissed, or closed by a delete;
   404 when the entry names no proposal of yours; 403 for a machine token or an
-  anonymous caller."
+  anonymous caller.
+
+  **400 when the proposal's text is sealed and the Recipe is published**, because
+  approving is what would put `enc:v1:…` on a public page. Unreachable today from
+  both ends — publishing unseals every proposal in the trail, and one filed against
+  an already-published Recipe is refused as it is filed — so this is the guarantee
+  standing behind those two rather than a case the queue can produce. See
+  `db.recipe/published-write-sealed`."
   [req]
   (resolving req
     (fn [proposal]
-      {:status 200
-       :body (db.recipe/approve-proposal! (common/ensure-ds)
-                                          (common/get-user-id req) proposal)})))
+      (try
+        {:status 200
+         :body (db.recipe/approve-proposal! (common/ensure-ds)
+                                            (common/get-user-id req) proposal)}
+        (catch clojure.lang.ExceptionInfo e
+          (or (common/sealed-refusal-response e) (throw e)))))))
 
 (defn dismiss-proposal-handler
   "POST /api/inbox/:id/dismiss — decline an agent's proposed rewrite, by the **event**

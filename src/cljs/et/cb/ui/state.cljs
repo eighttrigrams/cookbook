@@ -982,10 +982,13 @@
 ;; card's provenance badge is fed by counts the listing endpoint aggregates,
 ;; precisely so a collapsed card never has to come here.
 
-;; `sealed-prose?` lives at the far end of this file, beside the publish
-;; interlock that asks the same kind of question of the same index. It is declared
-;; rather than moved: the two belong together, and this section is the version
-;; history's.
+;; `sealed-prose?` lives at the far end of this file, beside `publish-recipe`.
+;; They used to ask the same kind of question of the same index — is this Recipe
+;; on the sealed shelf — and only one of them still does: publishing now asks the
+;; *server* what is sealed rather than this client's memory of it, because the
+;; answer has to cover a history and a proposal table no page here ever reads.
+;; The declaration stays, because this section is the version history's and the
+;; predicate is about a whole Recipe.
 (declare sealed-prose?)
 
 (defn- install-caution!
@@ -1383,7 +1386,12 @@
   (fetch-recipes))
 
 (defn- sealing-recipe-write
-  "Seal a Recipe write's prose, then hand the body to `send`.
+  "Seal a Recipe write's prose under `k`, then hand the body to `send`.
+
+  **`k` is passed rather than read here**, which it was not before: `update-recipe`
+  withholds it for a published Recipe, and the create below never can — a Recipe
+  that did not exist a moment ago is private, because publishing is its own
+  deliberate act.
 
   **The seal is here and the unseal is in `et.cb.ui.api`**, and the asymmetry is
   the point. A read has nothing to decide. A write has to know what the column
@@ -1398,9 +1406,35 @@
   nothing, and behaves exactly as it did.
 
   With no key in this browser `seal-row` resolves to the body it was given, which
-  is cookbook before any of this existed."
-  [stored body send]
-  (.then (seal/seal-recipe-write (key-store/current-key) body stored) send))
+  is cookbook before any of this existed.
+
+  **And a published Recipe is written in the clear, by handing `seal-row` no key
+  at all.** Publishing unseals the whole Recipe, one way, because a visitor has
+  none and there is no unpublish — and the first live run of that showed what
+  comes next if nothing says otherwise: the very next Save sealed it again and the
+  public page went back to `enc:v1:…`. A no-op Save did not, because the echo rule
+  holds an unchanged value still; it was an *edit* that did it, which is the save a
+  published Recipe most obviously invites.
+
+  `nil` for the key rather than a branch around the call, because `seal` already
+  means *no key, no sealing* for the browser that has not been given one, and this
+  is the same sentence about one Recipe: from here on, its text is public and is
+  written the way it is read. The server refuses the write too — it can see a
+  prefix without a key — so this is the honest path and not the guarantee."
+  [k stored body send]
+  (.then (seal/seal-recipe-write k body stored) send))
+
+(defn- writing-key
+  "The key a save of this Recipe should seal under: **none, once it is published.**
+  See `sealing-recipe-write`.
+
+  It reads the row this client is holding, so a Recipe whose detail has not been
+  fetched answers `false` and seals — which is the fail-open direction, and it is
+  unreachable from the one caller: `update-recipe` is a save, and a save happens on
+  a page that has read the Recipe. The server refuses what this would get wrong."
+  [id]
+  (when-not (= 1 (:published (get-in @*app-state [:details id])))
+    (key-store/current-key)))
 
 (defn add-recipe
   "Create a Recipe. **`on-success` is handed the created row**, which it was not
@@ -1411,6 +1445,7 @@
   re-reading it."
   [{:keys [title useful_when description tags scope_ids]} on-success]
   (sealing-recipe-write
+   (key-store/current-key)
    nil
    {:title title :useful_when (or useful_when "") :description (or description "")
     :tags (or tags "")
@@ -1441,6 +1476,10 @@
   [id fields on-success]
   (let [known (get-in @*app-state [:details id])]
     (sealing-recipe-write
+     ;; **No key once the Recipe is published**, so the save goes out in the clear:
+     ;; publishing unsealed it one way, and a save that sealed it again would put
+     ;; base64 back on a public page. `writing-key` is where that is argued.
+     (writing-key id)
      ;; **`stored-for-write`, never `stored-row`.** The row this client is holding
      ;; is the only place an *unsealed* column's current value survives — the index
      ;; remembers ciphertext and nothing else — and without it every no-op Save on
@@ -1920,32 +1959,6 @@
                             (get-in @*app-state [:details id])
                             (:recipes seal/sealed-columns)))
 
-(defn sealed-recipe?
-  "Whether this client is holding a Recipe whose **published surface** is sealed —
-  its description or its useful-when, which is `seal/published-surface`.
-
-  That name is not what makes the three clients agree; the fixture is.
-  `:published-surface` is in `seal-vectors.edn` and both suites assert their own
-  list against it, so widening the pair here without widening `plurama-cli`'s
-  turns a suite red. Naming it once per client would only have made them look
-  like they agreed — which is the shape round 1's finding 4 had.
-
-  A visitor is served exactly those two and would meet `enc:v1:…` on a public page
-  for either. Neither `reason`/`context` nor the history is asked about, and that
-  is not an oversight: a visitor is served none of them, so their being sealed is
-  not what makes publishing wrong.
-
-  Fail-open, per `seal/arrived-sealed?`: with neither an index entry nor a cached
-  row this answers `false` and the publish proceeds. Unreachable from the one
-  caller there is — `recipe-modals` opens over a Recipe page that has fetched its
-  detail — and the same fail-open `plurama-cli`'s equivalent documents, for the
-  same reason: a caller who cannot read the Recipe is a caller whose publish the
-  server is about to refuse anyway."
-  [id]
-  (seal/any-arrived-sealed? (api/stored-row :recipes id)
-                            (get-in @*app-state [:details id])
-                            seal/published-surface))
-
 (defn publish-recipe
   "One way: there is no unpublish call to pair with this one, on the server or
   here. The response is the full row, so an open card keeps a fresh body.
@@ -1954,33 +1967,76 @@
   the error banner renders under the modal's fixed overlay, so leaving the
   dialog open would put the banner's dismiss button out of reach.
 
-  **A sealed Recipe is refused here, before the request.** Publishing is what
-  hands prose to somebody who has no key and must never have one, so a sealed
-  body on a published page is `enc:v1:…` in front of a stranger — and there is no
-  unpublish to take it back. Recovery would mean writing the prose out in the
-  clear by hand.
+  **Publishing a sealed Recipe unseals it, and this is the surface that does
+  it** — the only one, because only the browser holds a key and the server
+  refuses a machine publish outright. Two requests:
 
-  This is an interlock and not the feature: publishing a sealed Recipe should
-  *unseal* it, one way and deliberately, and that is its own piece of work. Until
-  it lands, the irreversible mistake is simply off the board. When it lands, this
-  refusal is what it replaces."
+  1. `GET /api/recipes/:id/sealed` — what publishing would have to unseal: every
+     value in the Recipe's trail still wearing `enc:v1:`, across the row, the
+     history and the proposals. `et.cb.ui.api` unseals it at the door like
+     everything else, so what lands here is the plaintext.
+  2. `POST …/publish` carrying it back as `unsealed`. The server writes it in
+     place and latches, in one transaction, refusing the lot if an envelope would
+     remain.
+
+  **Always the trail read, even for a plaintext Recipe** — and that is a
+  deliberate round trip rather than an oversight. What is sealed is not a fact
+  this client can be sure of: `sealed-prose?` asks about the row it is holding,
+  and a Recipe with a plaintext row can have a sealed history behind it (a keyless
+  agent's save over a sealed Recipe) or a sealed proposal beside it, neither of
+  which is on any read this page makes. Guessing wrong means meeting a refusal
+  with nothing to do about it, on the one act in this app that cannot be undone.
+  So the server enumerates and this asks — once, behind a confirmation dialog,
+  on the rarest write there is. A Recipe with nothing sealed answers `total 0` and
+  the publish that follows is byte-identical to the one this function sent before
+  any of this existed.
+
+  **What is left of the interlock is `trail-unopened`.** If any value came back
+  still wearing the prefix, this client cannot read it — no key, the wrong key, a
+  damaged value — and publishing it would put base64 in front of a stranger with
+  no unpublish to take it back. So it refuses, and says which of those it is in
+  the only terms it can be sure of: this browser could not open them.
+
+  **And the row's remembered ciphertexts are dropped on success**, before the
+  response is cached — this client has just changed what that row holds, and the
+  index would otherwise go on saying otherwise. It is the smaller of the two
+  things keeping an envelope off a published page: `writing-key` withholding the
+  key is the rule, and the server's refusal is the guarantee. See
+  `seal/without-row`."
   [id on-done]
-  (let [done #(when on-done (on-done))]
-    (if (sealed-recipe? id)
-      (do (done)
-          (set-error (str "This Recipe's text is encrypted, and publishing is one way — "
-                          "a visitor has no key, so they would meet enc:v1:… on a public "
-                          "page with no way to undo it. Publishing will unseal it once "
-                          "that is built.")))
-      (api/post-json (str "/api/recipes/" id "/publish") {} (auth-headers)
-        (fn [recipe]
-          (cache-detail! recipe)
-          (fetch-recipes)
-          (fetch-inbox)
-          (done))
-        (fn [resp]
-          (done)
-          ((err-handler "Could not publish") resp))))))
+  (let [done #(when on-done (on-done))
+        publish! (fn [params]
+                   (api/post-json (str "/api/recipes/" id "/publish") params (auth-headers)
+                     (fn [recipe]
+                       (api/forget-stored-row! :recipes id)
+                       (cache-detail! recipe)
+                       (fetch-recipes)
+                       (fetch-inbox)
+                       (done))
+                     (fn [resp]
+                       (done)
+                       ((err-handler "Could not publish") resp))))]
+    (api/fetch-json (str "/api/recipes/" id "/sealed") (auth-headers)
+      (fn [trail]
+        (let [unopened (seal/trail-unopened trail)]
+          (cond
+            (pos? unopened)
+            (do (done)
+                (set-error (str "Publishing would unseal this Recipe, and "
+                                unopened
+                                (if (= 1 unopened) " value of it does" " values of it do")
+                                " not open with the key this browser holds. Publishing"
+                                " is one way — a visitor has no key, so they would meet"
+                                " enc:v1:… on a public page with nothing able to undo"
+                                " it. Import the right key in ⚙ and try again.")))
+
+            ;; Nothing sealed anywhere: the request cookbook has always sent.
+            (zero? (:total trail)) (publish! {})
+
+            :else (publish! {:unsealed (:sealed trail)}))))
+      (fn [resp]
+        (done)
+        ((err-handler "Could not read what publishing would unseal") resp)))))
 
 (defn delete-recipe
   "Takes the Recipe off the shelf. Since 012 that is a **tombstone** server-side —

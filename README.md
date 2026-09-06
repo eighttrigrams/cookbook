@@ -649,14 +649,51 @@ not prose, and prose reads as `enc:v1:…`, which is what an unreadable value
 honestly looks like. On the client side, absent key means sealing is off — which
 is this app's behaviour before any of it existed.
 
+### Publishing is a one-way unseal
+
+A visitor has no key and must never have one, so publishing a sealed Recipe as it
+stands would put `enc:v1:…` in front of a stranger — and there is no unpublish.
+So publishing **decrypts**, permanently, and it decrypts *everything*: all four
+prose columns across `recipes`, `recipe_history` and `recipe_proposals`. Not the
+two columns a visitor is served. The owner's own decision, and its compensation
+is that server-side `caution` starts working again for a published Recipe,
+because the ladder it folds is readable.
+
+    GET  /api/recipes/:id/sealed   what publishing would have to unseal
+    POST /api/recipes/:id/publish  {"unsealed": …} — that, opened
+
+**The server enumerates the trail; the client opens it.** The server holds no key
+and never will, but it can read a prefix, so it can say exactly which values are
+envelopes and refuse to latch while any of them still is. A client walking the
+three tables itself could walk fewer of them than the guard checks — the version
+ladder carries no proposals, and a *resolved* proposal is on no read at all — and
+would meet a refusal it had no way to act on.
+
+Write and latch are **one transaction**, so there is no state in which a Recipe
+is published with an unreadable history, or unsealed and never published. And it
+is an *encoding* change, not a content change: no version, no history row, no
+inbox entry, no `modified_at`. What keeps that honest is that a replacement is
+refused unless the value it replaces is currently sealed — otherwise `/publish`
+would be a second write path with no provenance, onto text an agent wrote.
+
+**The owner's browser is the only surface that publishes.** A machine token gets
+a 403 on any publish, sealed or not, so `plurama-cli` and `cookbook-tui` keep
+their refusals as defence in depth and point at the web UI. What is left of the
+old interlock in the browser is one question, asked of the answer rather than of
+the request: *did all of it open?* No key, the wrong key and one damaged value
+all arrive there by the same road, and any of them refuses the publish.
+
+`scopes.description` is sealed and is deliberately **not** unsealed by a publish:
+a published Recipe's Scopes stay the owner's — *to logged in users only, no matter
+what* — so a Scope's prose never reaches the audience publishing creates.
+
 ### Not done yet
 
-- **Publishing** a sealed Recipe would hand a visitor `enc:v1:…`, and there is no
-  unpublish. **All three clients refuse it** for now, with a message saying why —
-  an interlock, not the feature. Publish has to become a client-driven one-way
-  unseal before anything sealed can be published.
 - **The migration** that seals what is already on the shelf is not written. Until
-  it runs, sealing applies to what the clients write and nothing else.
+  it runs, sealing applies to what the clients write and nothing else. It skips
+  published Recipes, and after this that is consistent rather than a special
+  case: **published now means the whole trail is plaintext**, because nothing can
+  be published until it is.
 - **`plurama-cli` does not compute `caution` for a sealed Recipe.** It drops the
   server's rather than passing on a wrong one, so nothing lies — but an agent
   reading a sealed Recipe through it is told nothing about which lines are his,
@@ -797,11 +834,19 @@ are the interface, not decoration.
   every version the owner wrote, has neither, so the version page shows those two
   lines where there is something to show and nothing where there is not. Absent is
   the ordinary case and not a gap to be filled in later.
+- `GET /api/recipes/:id/sealed` — what publishing would have to unseal: every
+  value in the Recipe's trail still wearing `enc:v1:`, as
+  `{sealed: {recipe, versions, proposals}, total}`. Ciphertext only, `total: 0`
+  for a Recipe with nothing sealed, owner-only. See *Publishing is a one-way
+  unseal*.
 - `POST /api/recipes/:id/publish` — set the latch. **Idempotent**: publishing
   something already published is a 200 no-op and does not move `published_at`,
   because the first publish is the fact being recorded. Not a content change —
   no version bump, no history row, and `modified_at` stays where it was. There
-  is no unpublish route, deliberately.
+  is no unpublish route, deliberately. Optionally carries `unsealed`, the trail
+  above with every value opened; the write and the latch are one transaction, and
+  a publish that would leave an envelope anywhere in the trail is a **400 with
+  nothing written**, payload or no payload.
 
 ### The inbox
 

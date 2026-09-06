@@ -83,6 +83,15 @@
   []
   (reset! stored-ciphertexts {}))
 
+(defn forget-stored-row!
+  "One row's remembered ciphertexts, dropped because they are **no longer what
+  that row holds**: `state/publish-recipe` calls it, because publishing rewrites
+  a Recipe's prose in place. `seal/without-row` is where the reason lives, and why
+  it is the smaller of the two things standing between a published Recipe and a
+  fresh envelope rather than the one that matters."
+  [table id]
+  (swap! stored-ciphertexts seal/without-row table id))
+
 (defn- unsealing
   "Wrap a response handler so it is handed plaintext.
 

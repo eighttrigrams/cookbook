@@ -836,3 +836,162 @@
                (is (false? (seal/caution-over-ciphertext? [{:caution {} :description sealed}])))
                (is (false? (seal/caution-over-ciphertext? "enc:v1:not-a-body"))))))
           (.then done)))))
+
+;; ---------------------------------------------------------------------------
+;; The trail, which is what publishing unseals.
+
+(deftest the-inventory-is-the-one-the-fixture-names
+  (testing "the fixture carries the inventory itself, not only the binding, because
+    three implementations now walk it: the two clients seal by it and the server
+    — which holds no key — reads the twelve Recipe columns of it looking for the
+    prefix before it will let a publish latch. A server whose list was narrower
+    than this one would let a sealed value ride out onto a public page through
+    the column it did not know to look at."
+    (is (= (:sealed-columns @fixture)
+           (into {} (for [[table columns] seal/sealed-columns]
+                      [table (mapv name columns)]))))))
+
+(deftest a-trail-opens-in-all-three-of-its-sections
+  (testing "GET /api/recipes/:id/sealed is the one response that is all ciphertext
+    by design, and the three tables share a binding — so one key opens the row,
+    the history and the proposals, which is the same fact that makes a version
+    ladder climbable."
+    (async done
+      (-> (test-key)
+          (.then (fn [k]
+                   (.then (js/Promise.all
+                           (into-array [(seal/seal k :recipes :description "the current body")
+                                        (seal/seal k :recipes :context "the current context")
+                                        (seal/seal k :recipe_history :description "v1's body")
+                                        (seal/seal k :recipe_proposals :reason "the agent's why")]))
+                          (fn [[body context v1 why]]
+                            [k {:sealed {:recipe {:description body :context context}
+                                         :versions [{:version 1 :description v1}]
+                                         :proposals [{:id 7 :reason why}]}
+                                :total 4}]))))
+          (.then (fn [[k trail]]
+                   (testing "before it is opened, every value is an envelope"
+                     (is (= 4 (count (seal/trail-values trail))))
+                     (is (= 4 (seal/trail-unopened trail))))
+                   (.then (seal/unseal-body k trail) (fn [opened] [trail opened]))))
+          (.then (fn [[trail opened]]
+                   (testing "unseal-body dispatches on the shape and opens all three"
+                     (is (= {:recipe {:description "the current body"
+                                      :context "the current context"}
+                             :versions [{:version 1 :description "v1's body"}]
+                             :proposals [{:id 7 :reason "the agent's why"}]}
+                            (:sealed opened))))
+                   (testing "the identifying keys are carried through untouched —
+                     recipe_history has no id, so `version` is what names a row"
+                     (is (= 1 (:version (first (:versions (:sealed opened))))))
+                     (is (= 7 (:id (first (:proposals (:sealed opened)))))))
+                   (testing "and `total` and the rest of the body are left alone"
+                     (is (= 4 (:total opened))))
+                   (testing "**nothing is left unopened, which is the only state a
+                     publish may proceed on**"
+                     (is (= 0 (seal/trail-unopened opened)))
+                     (is (= 4 (count (seal/trail-values opened))))
+                     (is (= 4 (seal/trail-unopened trail))
+                         "and the sealed one it came from still counts four"))))
+          (.then done)))))
+
+(deftest a-trail-this-client-cannot-open-is-counted-and-not-published
+  (testing "what is left of the publish interlock. It used to be a question about
+    the Recipe — is its published surface sealed, refuse if so. Now that
+    publishing unseals, it is a question about this client: can I open all of it?
+    No key, the wrong key and one damaged value all arrive here by the same road,
+    because rule 3 hands back what it cannot read."
+    (async done
+      (-> (js/Promise.all
+           (into-array [(.then (test-key) (fn [k] (seal/seal k :recipes :description "readable")))
+                        (.then (other-key) (fn [k] (seal/seal k :recipes :useful_when "not with this key")))]))
+          (.then (fn [[ours theirs]]
+                   (let [trail {:sealed {:recipe {:description ours :useful_when theirs}
+                                         :versions [] :proposals []}
+                                :total 2}]
+                     (.then (test-key)
+                            (fn [k] (.then (seal/unseal-body k trail)
+                                           (fn [opened] [opened theirs])))))))
+          (.then (fn [[opened theirs]]
+                   (is (= "readable" (:description (:recipe (:sealed opened)))))
+                   (is (= theirs (:useful_when (:recipe (:sealed opened))))
+                       "a value sealed under another key comes back as it is")
+                   (is (= 1 (seal/trail-unopened opened)))))
+          (.then done)))))
+
+(deftest with-no-key-nothing-in-a-trail-opens
+  (testing "which is the same refusal by a different road, and the reason the count
+    is taken of the answer rather than of the request"
+    (async done
+      (let [trail {:sealed {:recipe {:description "enc:v1:AAAAAAAAAAAAAAAAAAAA"}
+                            :versions [{:version 1 :description "enc:v1:BBBBBBBBBBBBBBBBBBBB"}]
+                            :proposals []}
+                   :total 2}]
+        (-> (seal/unseal-body nil trail)
+            (.then (fn [opened]
+                     (is (= trail opened) "no key is a no-op, per unseal-body")
+                     (is (= 2 (seal/trail-unopened opened)))))
+            (.then done))))))
+
+(deftest an-empty-trail-is-the-ordinary-answer
+  (testing "an unmigrated Recipe, or one already published: nothing to open, and the
+    publish that follows carries no payload at all"
+    (async done
+      (-> (test-key)
+          (.then (fn [k] (seal/unseal-body k {:sealed {:recipe {} :versions [] :proposals []}
+                                              :total 0})))
+          (.then (fn [opened]
+                   (is (= 0 (:total opened)))
+                   (is (= [] (seal/trail-values opened)))
+                   (is (= 0 (seal/trail-unopened opened)))))
+          (.then done)))))
+
+(deftest a-trail-is-not-mistaken-for-a-version-ladder
+  (testing "both carry versions and only one of them is a list of them. The ladder's
+    are at the top of the body; a trail's are nested under `:sealed`, which is the
+    key `unseal-body` dispatches on — so the shape that carries its own name is the
+    one asked about first."
+    (async done
+      (-> (test-key)
+          (.then (fn [k] (.then (seal/seal k :recipe_history :description "v1's body")
+                                (fn [v1] [k v1]))))
+          (.then (fn [[k v1]]
+                   (js/Promise.all
+                    (into-array [(seal/unseal-body k {:versions [{:version 1 :description v1}]
+                                                      :total 1})
+                                 (seal/unseal-body k {:sealed {:recipe {}
+                                                               :versions [{:version 1 :description v1}]
+                                                               :proposals []}
+                                                      :total 1})]))))
+          (.then (fn [[ladder trail]]
+                   (is (= "v1's body" (:description (first (:versions ladder)))))
+                   (is (= "v1's body" (:description (first (:versions (:sealed trail))))))
+                   (is (false? (contains? trail :versions))
+                       "and the trail's top level did not grow one")))
+          (.then done)))))
+
+(deftest publishing-drops-what-the-index-remembered-about-that-row
+  (testing "the index survives every kind of staleness but one. A value another
+    client changed no longer unseals to what is being written, so the echo rule
+    does not fire — but publishing rewrites a column to the very plaintext the
+    remembered ciphertext opens to, so the match would be exactly right and the
+    envelope would go back over a published Recipe's prose."
+    (async done
+      (-> (test-key)
+          (.then (fn [k] (seal/seal k :recipes :description "a body about to be published")))
+          (.then
+           (fn [sealed]
+             (let [index (seal/sealed-index
+                          [{:id 7 :version 2 :description sealed :useful_when sealed}
+                           {:id 8 :version 1 :description sealed}])]
+               (is (= {:description sealed :useful_when sealed} (seal/stored-row index :recipes 7)))
+               (let [after (seal/without-row index :recipes 7)]
+                 (is (= {} (seal/stored-row after :recipes 7)))
+                 (testing "and only that row: a shelf is not forgotten to publish one Recipe"
+                   (is (= {:description sealed} (seal/stored-row after :recipes 8))))
+                 (testing "with the row gone, a write of the published plaintext has
+                   nothing to echo — which is the state it should be in"
+                   (is (= {} (seal/stored-for-write after :recipes 7 {})))))
+               (testing "forgetting a row nothing was remembered about is a no-op"
+                 (is (= index (seal/without-row index :recipes 999)))))))
+          (.then done)))))

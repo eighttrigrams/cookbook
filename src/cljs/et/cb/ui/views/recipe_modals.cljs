@@ -49,6 +49,20 @@
   "The latch is one-way: nothing in the API takes it back off, so this asks
   before it fires rather than offering an undo afterwards.
 
+  **And on a sealed Recipe it says the second irreversible thing too.** Publishing
+  unseals: the whole trail — this text, every superseded version, every proposal —
+  is written back in the clear, and nothing seals it again. That is a bigger
+  decision than the latch and the reader is entitled to meet it before the click
+  rather than after, so the note is here and not only in a report.
+
+  The line is drawn on `state/sealed-prose?`, which asks about the four prose
+  columns of the row this client is holding. It can be too quiet and never too
+  loud: a Recipe whose *row* is in the clear over a sealed history — the shape a
+  keyless agent's save makes — gets the ordinary note, and the unseal still
+  happens. Saying so exactly would take the trail read that `publish-recipe` makes
+  after this dialog is answered, and a modal that fetched before it could draw
+  itself would be paying a round trip to soften a sentence.
+
   The confirm button goes dead on the first click. Only the response callback
   closes this dialog — that is deliberate, so a failed publish can put its error
   banner somewhere reachable — which leaves the button live for the whole round
@@ -66,6 +80,11 @@
         [:p.modal-note
          "It becomes readable by anyone who opens Cookbook, and you have put your
           name to it. There is no unpublish."]
+        (when (state/sealed-prose? id)
+          [:p.modal-note
+           "This Recipe is encrypted. Publishing decrypts it — this text, every
+            earlier version and any proposal — and stores it in the clear.
+            Nothing encrypts it again."])
         [:div.modal-actions
          [:button.publish-confirm
           {:disabled @sending?

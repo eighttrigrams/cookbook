@@ -1,5 +1,6 @@
 (ns et.cb.server.common
   (:require [et.cb.db :as db]
+            [et.cb.envelope :as envelope]
             [et.cb.db.user :as db.user]
             [et.cb.auth :as auth]
             [clojure.java.io :as io]
@@ -103,6 +104,25 @@
 
 (defn is-admin? [req]
   (:is-admin (get-user-from-request req)))
+
+(defn sealed-refusal-response
+  "The 400 for a refusal about the seal, or **nil for any other exception** — so a
+  handler answers ours and rethrows the rest, which is what keeps a bug a bug.
+
+  Three handlers meet these and they are one answer, so it is written once: the
+  publish that would leave an envelope behind, the save that would put one into a
+  published Recipe, and the approval that would copy one onto its page. Each is a
+  refusal thrown from *inside* a transaction (`et.cb.envelope/refuse!`), so by the
+  time it arrives here nothing has been written.
+
+  `:reason \"sealed\"` beside the message, the way `stale-write-response` and the
+  proposal 409 carry a `:reason`: a caller that has to tell two 400s apart by
+  reading English is a caller that will get it wrong."
+  [e]
+  (when-let [data (envelope/refusal e)]
+    {:status 400
+     :body (merge {:error (ex-message e) :reason "sealed"}
+                  (select-keys data [:remaining :sealed]))}))
 
 (defn query-param
   "One query param's value. A repeated param (`?a=1&a=2`) reaches us from

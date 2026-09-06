@@ -995,6 +995,57 @@
   [current fields]
   (not= (merge-content current fields) (content-of current)))
 
+(defn published-write-sealed
+  "**A published Recipe's prose is stored in the clear, and nothing may put an
+  envelope back into it.** The refusal for a write to a published `current` whose
+  `fields` carry ciphertext in any of the four prose columns — as a response body,
+  ready to be a 400 — and nil for every other write, which is nearly all of them.
+
+  This is the other half of publish-as-a-one-way-unseal, and without it the first
+  half is not true for longer than one save. Publishing opens every envelope in a
+  Recipe's trail because a visitor has no key and there is no unpublish — and then
+  the owner's next edit went through a client that seals every prose write, and
+  the public page turned back into `enc:v1:…`. One way, in the wrong direction, on
+  a page a stranger was reading. That is not a hypothetical: it is what the live
+  check did, on the first Recipe ever published through the new path.
+
+  **All four columns and not the two a visitor is served.** `reason` and `context`
+  never reach a visitor, so sealing those leaks nothing — but *published means the
+  whole trail is plaintext* is the invariant the publish guard establishes and the
+  migration walker relies on when it skips published Recipes. An invariant that
+  holds only for the columns somebody happens to look at is not one.
+
+  **The server can enforce this without a key**, which is why it is here and not
+  only in the clients: `enc:v1:` is a prefix. The clients do not seal a published
+  Recipe either — that is what keeps this from ever firing on an honest write —
+  but a client is a place a rule can be forgotten, and this is not.
+
+  Callers: the direct write path, the proposal that would become one, and the
+  approval that copies one in. See each for which of them can actually reach it.
+
+  **Two spellings of one refusal**, and they are not two rules. `published-write-sealed`
+  answers it as a value, for `recipe-handler/update-recipe-handler`, which decides
+  between a save and a proposal *before* either is written and wants a 400 rather
+  than an exception to unwind. This throws it, for the two db-layer writers that
+  are already inside a transaction and must roll it back. One message, built once."
+  [current fields]
+  (when (published? current)
+    (when-let [sealed (seq (envelope/sealed-in :recipes fields))]
+      {:error (str "This Recipe is published, so its text is public and is stored in the"
+                   " clear: " (str/join ", " (map name sealed))
+                   (if (= 1 (count sealed)) " is sealed" " are sealed")
+                   " and cannot be written here. Publishing unsealed this Recipe once"
+                   " and there is no way back; send the text as it should be read.")
+       :reason "sealed"
+       :sealed (mapv name sealed)})))
+
+(defn refuse-sealing-a-published-recipe!
+  "`published-write-sealed`, thrown — for the two writers that meet it inside a
+  transaction and have to roll one back."
+  [current fields]
+  (when-let [{:keys [error sealed]} (published-write-sealed current fields)]
+    (envelope/refuse! error {:recipe-id (:id current) :sealed sealed})))
+
 (defn- archive!
   "Push the outgoing state into history — with **its own** `source`, taken off the
   row alongside its own text and its own version number, and never the source of
@@ -1109,6 +1160,12 @@
      ;; tombstoned Recipe is now a row that exists and is not writable. Found by the
      ;; test that asserts a deleted Recipe cannot be saved.
      (when-let [current (get-recipe tx user-id id {:lean? false})]
+       ;; Before the stale-write guard and before anything is written: a published
+       ;; Recipe's text is public, and public text is stored in the clear.
+       ;; Reachable only from the owner's own save — a machine writing a published
+       ;; Recipe directly is a 403 two layers out — and it does not fire on an
+       ;; honest one, because the browser stops sealing once a Recipe is published.
+       (refuse-sealing-a-published-recipe! current fields)
        (let [incoming (merge-content current fields)
              incoming-tags (merge-tags current fields)
              content-changed? (not= incoming (content-of current))
@@ -1215,6 +1272,14 @@
     in words that the Recipe is published before he clicks. Nothing here refuses it,
     for the same reason nothing here reads `base_version`: this function applies a
     decision, it does not second-guess one.
+    **One exception, and it is not about the decision:** a proposal whose prose is
+    still sealed cannot be copied onto a *published* Recipe, because that would put
+    `enc:v1:…` on a public page — see `refuse-sealing-a-published-recipe!`. It is
+    unreachable today from both ends, which is worth saying rather than trusting:
+    publishing unseals every proposal in the trail, and a proposal filed against an
+    already-published Recipe is refused as it is filed. So this is the guarantee
+    behind those two rather than a check either of them needs, and it is here
+    because this is the statement that makes a proposal's text public.
   - **`archive!` is called before the write**, like every other save here, so the
     outgoing version goes into history with its *own* source rather than with
     `machine`. Approving must not relabel what he wrote — the
@@ -1234,6 +1299,10 @@
         (throw (ex-info "An unresolved proposal names a Recipe that is gone"
                         {:proposal-id (:id proposal)
                          :recipe-id (:recipe_id proposal)})))
+      ;; Before `archive!`, so a refusal leaves no history row behind. The
+      ;; proposal *is* the fields here — approving is copying its four prose
+      ;; columns onto the row verbatim.
+      (refuse-sealing-a-published-recipe! current proposal)
       (archive! tx current)
       (let [result (jdbc/execute-one! tx
                      (sql/format {:update :recipes
@@ -1350,21 +1419,6 @@
                  (reduce + (map #(dec (count %)) versions))
                  (reduce + (map #(dec (count %)) proposals)))})))
 
-(defn- refuse-publish!
-  "Abort the publish, in the one way that cannot leave half of it behind: an
-  exception inside the transaction, so every replacement already written rolls
-  back with the latch that was never set.
-
-  A thrown refusal rather than a returned one, deliberately. This function's
-  callers are about to make something public and irreversible, and a return value
-  saying *no* is a return value a caller can forget to read — `publish-recipe` has
-  answered a Recipe row since it existed, and every one of its call sites treats
-  a truthy answer as a published Recipe. `recipe-handler/publish-recipe-handler`
-  catches this and answers 400; anything else that ever calls it fails loudly
-  rather than quietly publishing ciphertext."
-  [message data]
-  (throw (ex-info message (assoc data :type ::refused-publish))))
-
 (defn- checked-replacements
   "The columns of one replacement entry, checked against the row as it stands.
   Answers the map to write, or refuses the whole publish.
@@ -1393,19 +1447,19 @@
           (for [[column value] (apply dissoc entry keep)]
             (do
               (when-not (allowed column)
-                (refuse-publish! (str "Publishing can only unseal prose: `" (name column)
+                (envelope/refuse! (str "Publishing can only unseal prose: `" (name column)
                                       "` is not a sealed column of " (name table))
                                  {:table table :column column}))
               (when-not (string? value)
-                (refuse-publish! (str "The unsealed value for `" (name column)
+                (envelope/refuse! (str "The unsealed value for `" (name column)
                                       "` is not text")
                                  {:table table :column column}))
               (when (envelope/sealed? value)
-                (refuse-publish! (str "The unsealed value for `" (name column)
+                (envelope/refuse! (str "The unsealed value for `" (name column)
                                       "` is itself sealed — it was not opened")
                                  {:table table :column column}))
               (when-not (envelope/sealed? (get row column))
-                (refuse-publish! (str "`" (name column) "` is not sealed, so publishing"
+                (envelope/refuse! (str "`" (name column) "` is not sealed, so publishing"
                                       " has nothing to unseal there. Publishing rewrites"
                                       " an encoding; it does not write text")
                                  {:table table :column column}))
@@ -1430,17 +1484,17 @@
   ;; the useful answer is which part of it was not what it claimed. Everything
   ;; below then reads a map and two sequences without asking again.
   (when-not (map? unsealed)
-    (refuse-publish! "`unsealed` must be an object" {}))
+    (envelope/refuse! "`unsealed` must be an object" {}))
   (doseq [[k v ok?] [[:recipe recipe #(or (nil? %) (map? %))]
                      [:versions versions #(or (nil? %) (sequential? %))]
                      [:proposals proposals #(or (nil? %) (sequential? %))]]]
     (when-not (ok? v)
-      (refuse-publish! (str "`unsealed." (name k) "` is not the shape"
+      (envelope/refuse! (str "`unsealed." (name k) "` is not the shape"
                             " GET /api/recipes/:id/sealed hands out")
                        {:key k})))
   (doseq [entry (concat versions proposals)]
     (when-not (map? entry)
-      (refuse-publish! "every entry of `unsealed.versions` and `unsealed.proposals` is an object"
+      (envelope/refuse! "every entry of `unsealed.versions` and `unsealed.proposals` is an object"
                        {})))
   (when (seq recipe)
     (let [replacements (checked-replacements :recipes current recipe [])]
@@ -1451,7 +1505,7 @@
             :let [version (:version entry)
                   row (get by-version version)]]
       (when-not (and (int? version) row)
-        (refuse-publish! (str "This Recipe has no version " (pr-str version) " in its history")
+        (envelope/refuse! (str "This Recipe has no version " (pr-str version) " in its history")
                          {:table :recipe_history :version version}))
       (let [replacements (checked-replacements :recipe_history row entry [:version])]
         (when (seq replacements)
@@ -1463,7 +1517,7 @@
             :let [proposal-id (:id entry)
                   row (get by-id proposal-id)]]
       (when-not (and (int? proposal-id) row)
-        (refuse-publish! (str "Proposal " (pr-str proposal-id)
+        (envelope/refuse! (str "Proposal " (pr-str proposal-id)
                               " is not a proposal against this Recipe")
                          {:table :recipe_proposals :id proposal-id}))
       (let [replacements (checked-replacements :recipe_proposals row entry [:id])]
@@ -1499,7 +1553,7 @@
                                 column (envelope/sealed-in :recipe_proposals row)]
                             (str "proposal " (:id row) "'s " (name column))))]
     (when (seq remaining)
-      (refuse-publish!
+      (envelope/refuse!
         (str "This Recipe's text is still encrypted and publishing is one way: "
              (str/join ", " remaining)
              ". A visitor has no key, so they would meet enc:v1:… on a public page"
@@ -1579,7 +1633,7 @@
   last thing between a sealed Recipe and a public page should not be a caller
   remembering to ask.
 
-  A refusal **throws** (`refuse-publish!`) and the transaction rolls back with
+  A refusal **throws** (`envelope/refuse!`) and the transaction rolls back with
   nothing written; `recipe-handler/publish-recipe-handler` turns it into a 400.
 
   nil when the id matches nothing the user owns."
@@ -1809,6 +1863,18 @@
                                :current true)]
                        history)
        :total (inc (count history))
+       ;; **And it says whether the Recipe is public**, for the reason the stamp
+       ;; below is here: this is the read a *write path* makes. `plurama-cli` reads
+       ;; this ladder before a prose write, to get the ciphertext an unchanged value
+       ;; has to be echoed as — and since publishing became a one-way unseal it
+       ;; needs a second thing out of that same read, because a published Recipe's
+       ;; prose is written in the clear and sealing it again would put `enc:v1:…`
+       ;; on a public page. The alternative was a second round trip on every write
+       ;; to learn one integer that is already on the row this query starts from.
+       ;; Owner-only like everything else here, and `published` is clear in the
+       ;; schema and public in every listing, so it is a shape change and not an
+       ;; audience one.
+       :published (:published current)
        ;; **The one read that sees a tombstone says that it is one**, and that is why
        ;; the key is here rather than being asked for separately. Nothing else can
        ;; tell a client: `GET /api/recipes/:id` answers 404 for a deleted Recipe, so

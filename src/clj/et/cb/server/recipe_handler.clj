@@ -838,6 +838,20 @@
       (machine-write-explanation-missing req body)
       (explanation-missing-response (machine-write-explanation-missing req body))
 
+      ;; **Above the save-or-proposal branch, for the reason the check above it is:
+      ;; one rule covering both landings.** A published Recipe's text is public and
+      ;; is stored in the clear — publishing unsealed it once and there is no way
+      ;; back — so a write carrying an envelope is refused whether it would land as
+      ;; a save or wait as a proposal. Refusing the proposal *here* is what keeps
+      ;; the agent's work from dead-ending later: filed sealed, it would sit in the
+      ;; owner's queue as something he could never approve, because
+      ;; `approve-proposal!` refuses the same thing one step further on. Neither
+      ;; client sends this — both stop sealing once a Recipe is published — so what
+      ;; this answers is a client that has not been told.
+      (db.recipe/published-write-sealed current (select-keys body writable-fields))
+      {:status 400
+       :body (db.recipe/published-write-sealed current (select-keys body writable-fields))}
+
       ;; **The three conditions that make this a proposal instead of a save**, in this
       ;; order and all of them. A machine caller, a Recipe that is not the agents' to
       ;; write, and content that would actually change — the last one is what keeps a
@@ -1091,13 +1105,9 @@
           {:status 404 :body {:error "Recipe not found"}}))
       (catch clojure.lang.ExceptionInfo e
         ;; Only this app's own refusal is an answer; anything else is a bug and
-        ;; goes on being one. `::db.recipe/refused-publish` is thrown from inside
-        ;; the transaction precisely so that nothing has been written by the time
-        ;; it arrives here — see `db.recipe/refuse-publish!`.
-        (if (= :et.cb.db.recipe/refused-publish (:type (ex-data e)))
-          {:status 400 :body (merge {:error (ex-message e) :reason "sealed"}
-                                    (select-keys (ex-data e) [:remaining]))}
-          (throw e))))))
+        ;; goes on being one. It is thrown from inside the transaction precisely
+        ;; so that nothing has been written by the time it arrives here.
+        (or (common/sealed-refusal-response e) (throw e))))))
 
 (defn sealed-trail-handler
   "GET /api/recipes/:id/sealed — what publishing this Recipe would have to unseal:
@@ -1155,7 +1165,16 @@
 
   The history is the owner's: an anonymous visitor gets a 404 for every id,
   published or not. Publishing puts today's text in public, not every draft
-  behind it."
+  behind it.
+
+  **Beside the list, `published` and `deleted_at`** — two facts about the Recipe
+  rather than about any version of it, and both here because this is the read that
+  needs them and there is nowhere cheaper to learn them. `deleted_at` is what tells
+  the surface that opened a tombstone what it is reading. `published` is what tells
+  a *write path* that this Recipe's prose is public and must go back in the clear:
+  `plurama-cli` already reads this ladder before a prose write, to echo an
+  unchanged value's ciphertext, and asking a second endpoint for one integer that
+  is on the row this query starts from would be a round trip for nothing."
   [req]
   (let [id (common/recipe-id req)
         result (when (and id (common/authenticated? req))

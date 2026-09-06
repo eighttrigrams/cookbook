@@ -421,6 +421,79 @@
              (.then (p-map #(unseal k :recipes (current-aliases %) (get p %)) present)
                     (fn [values] (into p (map vector present values))))))))
 
+(def ^:private trail-sections
+  "The three sections of a trail and which table each row of them came out of.
+  `GET /api/recipes/:id/sealed` answers in these three because a Recipe's prose
+  lives in three places — the row is the current version, `recipe_history` the
+  superseded ones, `recipe_proposals` the machine writes that have not become
+  versions — and publishing has to open all of them."
+  {:recipe :recipes :versions :recipe_history :proposals :recipe_proposals})
+
+(defn- trail-rows
+  "`[table row]` for every row of a trail, whichever section it is in. One walk,
+  used by the unseal and by the two questions asked afterwards, so a section
+  added to the endpoint is added here and nowhere else."
+  [sealed]
+  (concat (when (map? (:recipe sealed)) [[:recipes (:recipe sealed)]])
+          (for [row (:versions sealed) :when (map? row)] [:recipe_history row])
+          (for [row (:proposals sealed) :when (map? row)] [:recipe_proposals row])))
+
+(defn unseal-trail
+  "`GET /api/recipes/:id/sealed` — what publishing this Recipe would have to
+  unseal, which is the one response in this app that is **all** ciphertext by
+  design. Everything in it carries the prefix on the way in; what matters is how
+  much of it still does on the way out.
+
+  Unsealed here like every other body, at `et.cb.ui.api`'s door, so the publish
+  path never holds a key or a promise of its own: it reads a trail, and what came
+  back opened is what it posts. The three tables share a binding — see
+  `bound-as` — so one key opens all three sections, which is the same fact that
+  makes a version ladder climbable.
+
+  A value that will not open comes back wearing the prefix, per rule 3, and
+  `trail-unopened` is what counts those. That count is the whole of what is left
+  of the publish interlock: publishing text this client cannot read would put
+  `enc:v1:…` in front of a stranger, and there is no unpublish."
+  [k body]
+  (let [sealed (:sealed body)]
+    (if (map? sealed)
+      (.then (p-all [(unseal-row k :recipes (:recipe sealed))
+                     (p-map #(unseal-row k :recipe_history %) (vec (:versions sealed)))
+                     (p-map #(unseal-row k :recipe_proposals %) (vec (:proposals sealed)))])
+             (fn [[recipe versions proposals]]
+               (assoc body :sealed {:recipe recipe
+                                    :versions versions
+                                    :proposals proposals})))
+      (resolved body))))
+
+(defn trail-values
+  "Every prose value a trail carries — what publishing would have to open, or
+  what it opened. The identifying keys (`version`, `id`) are not values and are
+  not in it."
+  [body]
+  (vec (for [[table row] (trail-rows (:sealed body))
+             column (get sealed-columns table)
+             :when (contains? row column)]
+         (get row column))))
+
+(defn trail-unopened
+  "How many of a trail's values are **still envelopes after it has been through
+  `unseal-trail`** — which is to say, how many this client cannot read.
+
+  Zero is the only number a publish may proceed on, and that is the interlock in
+  its final form. It used to be a question about the Recipe: *is its published
+  surface sealed, and if so refuse.* Now that publishing unseals, the question is
+  about this client instead — *can I open all of it?* — and it is asked of the
+  answer rather than of the request, so no key, the wrong key and one damaged
+  value all reach it by the same road.
+
+  Note it asks about **every** prose column and not `published-surface`'s two. A
+  visitor is still served only those two, but the server refuses a publish that
+  would leave any column of the trail sealed, so a client that checked the
+  narrower pair would send a payload it already knew was incomplete."
+  [body]
+  (count (filterv sealed? (trail-values body))))
+
 (defn unseal-inbox-entry
   "One queue entry. `recipe_title` and `kind` are clear; a `proposed` entry
   carries a `proposal`, which holds both texts."
@@ -458,6 +531,12 @@
            body)
 
     (not (map? body)) (resolved body)
+
+    ;; GET /api/recipes/:id/sealed. **Before the ladder clause**, though the two
+    ;; cannot collide today: a trail's versions are nested under `:sealed` and a
+    ;; ladder's are at the top, so the shape that is asked about first is the one
+    ;; that carries its own name.
+    (map? (:sealed body)) (unseal-trail k body)
 
     ;; GET /api/recipes/:id/versions
     (contains? body :versions) (unseal-versions k body)
@@ -557,6 +636,28 @@
                  :let [v (get index [table id column])]
                  :when v]
              [column v])))
+
+(defn without-row
+  "The index with one row's remembered ciphertexts taken out — because they are no
+  longer what that row holds, which is different from the ordinary staleness this
+  index tolerates.
+
+  A stale entry is normally harmless: a value somebody else changed no longer
+  unseals to what is being written, so the echo rule does not fire and the write
+  seals fresh. **Publishing is the one write that breaks that**, because it
+  rewrites a column to the very plaintext the remembered ciphertext opens to — so
+  the echo rule would fire on a match that is exactly right, and put the envelope
+  back over a published Recipe's prose.
+
+  It is not what *stops* that happening: `state/writing-key` withholds the key
+  entirely once a Recipe is published, so nothing on that path seals or echoes
+  anything, and the server refuses a sealed write to a published Recipe besides.
+  This is the smaller thing — a client not going on believing something false
+  about a row it has just changed — and it is here rather than in
+  `et.cb.ui.api` so that it can be said in a test at all: that namespace loads
+  `cljs-ajax`, which the node build cannot."
+  [index table id]
+  (apply dissoc index (for [column (get sealed-columns table)] [table id column])))
 
 (defn stored-for-write
   "The `stored` a write should hand `seal`: **what this client believes that row's

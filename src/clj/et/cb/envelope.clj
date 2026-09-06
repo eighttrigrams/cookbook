@@ -82,3 +82,41 @@
   for a row with nothing sealed in it, which is the answer a publish needs."
   [table row]
   (filterv #(sealed? (get row %)) (get prose-columns table)))
+
+;; ---------------------------------------------------------------------------
+;; The one thing the server does about an envelope it must not have.
+
+(def refusal-type
+  "The `:type` on every refusal in this app that is about the seal, so that three
+  handlers can recognise one and answer it the same way — and so that any *other*
+  `ex-info` from the same code path goes on being the bug it is.
+
+  There are two rules behind it, and they are one rule looked at from both ends:
+
+  - **a publish may not leave an envelope behind**, because a visitor has no key
+    and there is no unpublish;
+  - **a published Recipe may not gain one**, for the same reason and with the same
+    lack of a way back.
+
+  The second is what makes the first permanent. Without it, publishing unseals a
+  Recipe and the owner's very next save seals it again — one way, in the wrong
+  direction, on a page a stranger is reading."
+  ::sealed-refusal)
+
+(defn refuse!
+  "Refuse, from wherever the mistake is visible. Inside a transaction this rolls
+  the whole thing back, which is the point: the states worth refusing are all
+  half-done ones.
+
+  A thrown refusal rather than a returned one, deliberately. Its callers are about
+  to make something public and irreversible, and a return value saying *no* is a
+  return value a caller can forget to read."
+  [message data]
+  (throw (ex-info message (assoc data :type refusal-type))))
+
+(defn refusal
+  "The data of `e` when it is one of ours, `nil` when it is anything else — so a
+  handler can answer this and rethrow the rest."
+  [e]
+  (let [data (ex-data e)]
+    (when (= refusal-type (:type data)) data)))

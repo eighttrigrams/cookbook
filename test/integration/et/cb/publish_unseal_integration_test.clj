@@ -26,6 +26,7 @@
             [honey.sql :as sql]
             [et.cb.db :as db]
             [et.cb.envelope :as envelope]
+            [et.cb.db.recipe :as db.recipe]
             [et.cb.integration-helpers :as h :refer [GET-json POST-json]]))
 
 (use-fixtures :each h/with-integration-db)
@@ -442,3 +443,141 @@
         (is (re-find #"(?i)one-way unseal|one way" doc))
         (is (re-find #"unsealed" doc))
         (is (re-find #"(?i)no unpublish" doc))))))
+
+;; ---------------------------------------------------------------------------
+;; The other half of one way: a published Recipe may not gain an envelope
+;;
+;; Publishing unseals because a visitor has no key and there is no unpublish.
+;; That lasts exactly one save unless something says otherwise — the clients seal
+;; every prose write — so the live check's first published Recipe went back to
+;; `enc:v1:` on the next edit, in public. These are the three doors onto a
+;; published Recipe's prose.
+
+(defn- published-recipe! []
+  (let [{:keys [id]} (create! "Public")]
+    (is (= 200 (:status (publish! id))))
+    id))
+
+(deftest a-save-cannot-seal-a-published-recipe
+  (doseq [column [:description :useful_when :reason :context]]
+    (let [id (published-recipe!)
+          before (row id)
+          resp (h/API :put (str "/api/recipes/" id)
+                      {:body {column (ciphertext (if (#{:reason :context} column)
+                                                   column :description) 0)
+                              :modified_at (:modified_at before)}})]
+      (testing (str "a sealed " (name column) " over a published Recipe")
+        (is (= 400 (:status resp)))
+        (is (= "sealed" (:reason (:body resp))))
+        (is (= [(name column)] (:sealed (:body resp))))
+        (is (re-find #"(?i)published" (:error (:body resp)))))
+      (testing "and nothing was written — not the text, not the version, not the stamp"
+        (is (= (:description before) (:description (row id))))
+        (is (= (:version before) (:version (row id))))
+        (is (= (:modified_at before) (:modified_at (row id))))
+        (is (= 0 (count (history id)))))))
+
+  (testing "**all four and not the two a visitor is served.** reason and context
+            never reach a visitor, so sealing those leaks nothing — but *published
+            means the whole trail is plaintext* is what the publish guard
+            establishes and what step 7's walker leans on when it skips published
+            Recipes"
+    (is (= [:description :useful_when :reason :context]
+           (:recipes envelope/prose-columns)))))
+
+(deftest a-save-in-the-clear-on-a-published-recipe-is-untouched-by-the-guard
+  (let [id (published-recipe!)
+        before (row id)
+        resp (h/API :put (str "/api/recipes/" id)
+                    {:body {:description "rewritten in public, in the clear"
+                            :modified_at (:modified_at before)}})]
+    (is (= 200 (:status resp)))
+    (is (= "rewritten in public, in the clear" (:description (row id))))
+    (is (= 2 (:version (row id))))
+    (is (= 1 (count (history id))))))
+
+(deftest an-unpublished-recipe-may-be-sealed-freely
+  (testing "the guard is about the latch and nothing else: the sealed shelf is the
+            whole point of the seal"
+    (let [{:keys [id]} (create! "Private")
+          resp (h/API :put (str "/api/recipes/" id)
+                      {:body {:description (ciphertext :description 0)
+                              :modified_at (:modified_at (row id))}})]
+      (is (= 200 (:status resp)))
+      (is (envelope/sealed? (:description (row id)))))))
+
+(deftest a-machine-cannot-propose-sealed-text-against-a-published-recipe
+  (let [id (published-recipe!)
+        before (row id)
+        resp (h/API :put (str "/api/recipes/" id)
+                    (assoc (machine-opts)
+                           :body {:description (ciphertext :description 0)}))]
+    (testing "400 as it is filed, rather than 202 now and an unapprovable entry later"
+      (is (= 400 (:status resp)))
+      (is (= "sealed" (:reason (:body resp)))))
+    (testing "and nothing was filed, and nothing about the Recipe moved"
+      (is (= [] (proposals id)))
+      (is (= (:description before) (:description (row id))))
+      (is (= (:version before) (:version (row id)))))))
+
+(deftest a-machine-may-still-propose-against-a-published-recipe-in-the-clear
+  (testing "the owner's own door — *its up to the human to approve or not* — is not
+            what this guard closes"
+    (let [id (published-recipe!)
+          resp (h/API :put (str "/api/recipes/" id)
+                      (assoc (machine-opts) :body {:description "the agent's plain body"}))]
+      (is (= 202 (:status resp)))
+      (is (= 1 (count (proposals id))))
+      (testing "and approving it lands, which is the state the sealed one would
+                never have reached"
+        (let [entry (last (filter #(= "proposed" (:kind %)) (:body (GET-json "/api/inbox"))))
+              approved (h/API :post (str "/api/inbox/" (:id entry) "/approve") {})]
+          (is (= 200 (:status approved)))
+          (is (= "the agent's plain body" (:description (row id)))))))))
+
+(deftest approving-cannot-seal-a-published-recipe
+  (testing "the guarantee behind the other two, and unreachable through them: a
+            proposal can only be sealed here if it was filed before the publish,
+            and publishing unseals every proposal in the trail. Seeded behind the
+            app's back, which is the only way this state exists at all."
+    (let [id (published-recipe!)
+          before (row id)
+          _ (h/API :put (str "/api/recipes/" id)
+                   (assoc (machine-opts) :body {:description "the agent's plain body"}))
+          proposal-id (:id (first (proposals id)))
+          entry (last (filter #(= "proposed" (:kind %)) (:body (GET-json "/api/inbox"))))]
+      (seal-row! :recipe_proposals [:= :id proposal-id]
+                 {:description (ciphertext :description 0)})
+      (let [resp (h/API :post (str "/api/inbox/" (:id entry) "/approve") {})]
+        (is (= 400 (:status resp)))
+        (is (= "sealed" (:reason (:body resp))))
+        (testing "and the transaction rolled back: no version, no history row, and
+                  the proposal is still waiting"
+          (is (= (:version before) (:version (row id))))
+          (is (= (:description before) (:description (row id))))
+          (is (= 0 (count (history id))))
+          (is (nil? (:resolved_at (first (proposals id))))))))))
+
+(deftest the-write-guard-holds-at-the-db-layer-too
+  (testing "**asked here rather than over HTTP, because over HTTP it cannot fail:**
+    `update-recipe-handler` refuses a sealed write to a published Recipe before it
+    picks between a save and a proposal, so the guard inside `update-recipe` is
+    never the one that answers. It is kept because that handler is not the only
+    thing that could ever call this — a script, a migration, a later route — and a
+    guard nothing exercises is a guard that quietly stops working. So it is
+    exercised."
+    (let [id (published-recipe!)
+          before (row id)]
+      (is (thrown? clojure.lang.ExceptionInfo
+                   (db.recipe/update-recipe h/*ds* h/*user-id* id
+                                            {:description (ciphertext :description 0)}
+                                            nil)))
+      (is (= (:description before) (:description (row id))))
+      (is (= (:version before) (:version (row id))))
+      (is (= 0 (count (history id))))
+      (testing "and an unpublished Recipe goes through the same call untouched"
+        (let [{other :id} (create! "Private too")]
+          (is (some? (db.recipe/update-recipe h/*ds* h/*user-id* other
+                                              {:description (ciphertext :description 0)}
+                                              nil)))
+          (is (envelope/sealed? (:description (row other)))))))))
