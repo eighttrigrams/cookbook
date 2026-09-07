@@ -313,12 +313,23 @@
   does not exist yet.
 
   **When the value has not changed, `stored` comes back byte for byte, whichever
-  of those it is.** That is the whole echo rule, and it is one line: *does this
-  column already say what I am about to write?* `unseal` is what asks it, and
-  `unseal` answers for all three shapes at once — it opens a ciphertext, hands a
-  plaintext straight back, and hands back an envelope it cannot open as well. So
-  an unchanged value is a no-op on a sealed row, on an unmigrated row, and on a
-  row this client cannot read.
+  of those it is.** That is the whole echo rule: *does this column already say
+  what I am about to write?* It is asked twice, and both halves are load-bearing.
+
+  **First, of the bytes**, before any promise exists. If `v` is already exactly
+  what is stored, nothing has changed and nothing is written, whatever `v`
+  happens to be. That covers the one case the second half answers wrongly: an
+  **envelope handed back unchanged by a client that could open it**. `unseal` of
+  that `stored` resolves to the *plaintext*, `v` is the *ciphertext*, they differ
+  — and sealing would then write `enc(enc(…))`, which opens once into an envelope
+  and reads as an envelope, with nothing anywhere reporting an error. Found in
+  review of the proxy sidecar, which lets an echoed envelope through on the
+  strength of this rule; the same hole was here.
+
+  **Then, of the plaintext.** `unseal` answers for all three shapes at once — it
+  opens a ciphertext, hands a plaintext straight back, and hands back an envelope
+  it cannot open as well. So an unchanged value is a no-op on a sealed row, on an
+  unmigrated row, and on a row this client cannot read.
 
   What that keeps working is the server's `content-would-change?`, and with it the
   version, the history row and — for a machine write — the difference between a
@@ -344,6 +355,9 @@
    (cond
      (nil? k) (resolved v)
      (blank-value? v) (resolved v)
+     ;; The bytes, before anything is opened. See the docstring: this is the
+     ;; branch an echoed openable envelope needs, and the one below cannot answer.
+     (= v stored) (resolved stored)
      :else (.then (unseal k table column stored)
                   (fn [was] (if (= was v) stored (seal-text k (aad table column) v)))))))
 

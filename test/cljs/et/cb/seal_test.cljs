@@ -289,6 +289,30 @@
                                 (is (not= stored changed) "a genuine change gets a fresh nonce"))))))
           (.then done)))))
 
+(deftest an-echoed-envelope-this-key-can-open-is-a-no-op-and-not-a-second-envelope
+  (testing "**the shape the rule was wrong about**, found in review of the proxy
+    sidecar and wrong here too. `v` and `stored` both the stored ciphertext, and
+    this key opens it: `unseal` resolves to the *plaintext*, `v` is the
+    *ciphertext*, they differ — so the rule as written sealed the ciphertext and
+    stored enc(enc(…)), which opens once into an envelope and reads as one, with
+    nothing anywhere reporting an error. The byte test in front of the unseal is
+    what answers it, in both clients, and neither may drift."
+    (async done
+      (-> (test-key)
+          (.then (fn [k]
+                   (-> (seal/seal k :recipes :description "The text as it stands.")
+                       (.then (fn [stored]
+                                (-> (seal/seal k :recipes :description stored stored)
+                                    (.then (fn [out]
+                                             (is (= stored out)
+                                                 "byte-identical, and no second envelope")
+                                             (seal/unseal k :recipes :description out)))
+                                    (.then (fn [opened]
+                                             (is (= "The text as it stands." opened)
+                                                 "one unseal reaches the prose, which is what
+                                                  nesting would have broken"))))))))) 
+          (.then done)))))
+
 (deftest an-unchanged-value-on-an-unmigrated-row-stays-plaintext
   (testing "the mixed-state window: clients deployed first, data sealed later"
     (async done
