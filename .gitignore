@@ -18,3 +18,5 @@ logs/
 *.db
 .DS_Store
 .dev-server.lock
+# A seal key has no business in a checkout, and there is no reset if one leaks.
+*.key
