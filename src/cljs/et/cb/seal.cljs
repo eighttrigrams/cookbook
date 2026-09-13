@@ -349,12 +349,42 @@
   **A migration pass must therefore pass `nil` as `stored`**, and this is the one
   place that trap is written down: a walker that handed the plaintext it just read
   in as `stored` would be told, correctly, that nothing changed, and would seal
-  nothing at all."
+  nothing at all.
+
+  ## And an envelope is handed straight back, whatever is stored
+
+  Both halves above need something to compare against, and when `stored` is `nil`
+  neither can answer: the byte test fails because `nil` is not the envelope, and
+  `unseal` of `nil` is `nil`, which is not `v` either. So a value already
+  carrying the prefix fell through to `seal-text` **of a ciphertext** —
+  `enc(enc(…))`, which opens once into an envelope and reads as one, with nothing
+  reporting an error. The same corruption the byte test was added to prevent,
+  reached by a different road.
+
+  `nil` is the ordinary case and not an exotic one: `stored-for-write` answers
+  `nil` for every create, for any row this client has not read, and for any row
+  whose `table-of` cannot name it. And a page only ever holds an envelope
+  **because it read one**, so handing it back is what *unchanged* means here;
+  sealing it is the corruption.
+
+  It costs one thing, and the right one: a body whose first characters are
+  literally `enc:v1:` goes out unsealed and is refused by the server as readable
+  text. A refused save rather than a corrupted one.
+
+  This branch is in `seal-envelope/seal-at` and `et.tr.ui.seal/seal-at` too, in
+  the same position and for the same reason. **Three implementations, one rule**
+  — and this file is the one that was left out of the round that added it, which
+  is what `an-envelope-with-nothing-to-compare-it-against-is-still-not-sealed-again`
+  exists to stop happening again."
   ([k table column v] (seal k table column v nil))
   ([k table column v stored]
    (cond
      (nil? k) (resolved v)
      (blank-value? v) (resolved v)
+     ;; An envelope is handed straight back, whatever is stored — see the
+     ;; docstring. This is in front of both echo branches because neither can
+     ;; answer when `stored` is nil.
+     (sealed? v) (resolved v)
      ;; The bytes, before anything is opened. See the docstring: this is the
      ;; branch an echoed openable envelope needs, and the one below cannot answer.
      (= v stored) (resolved stored)

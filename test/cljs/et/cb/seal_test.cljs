@@ -313,6 +313,44 @@
                                                   nesting would have broken"))))))))) 
           (.then done)))))
 
+(deftest an-envelope-with-nothing-to-compare-it-against-is-still-not-sealed-again
+  (testing "the same rule, one step further out — and the step the clj half and
+    tracker's browser took while this one did not. Both echo branches need
+    something to compare against, and when `stored` is `nil` neither can answer:
+    the byte test fails because `nil` is not the envelope, and `unseal` of `nil`
+    is `nil`, which is not `v` either. So it fell through to `seal-text` **of a
+    ciphertext** — enc(enc(…)), the very thing the test above removed, reached by
+    a different road.
+
+    `nil` is not exotic here. `stored-for-write` answers `nil` for any row this
+    client has not read, for any row whose `table-of` cannot name it, and for
+    every create. And a page only ever holds an envelope **because it read one**,
+    so handing it back is what *unchanged* means; sealing it is the corruption."
+    (async done
+      (-> (test-key)
+          (.then (fn [k]
+                   (-> (seal/seal k :recipes :description "The text as it stands.")
+                       (.then (fn [stored]
+                                (js/Promise.all
+                                 (into-array
+                                  [(js/Promise.resolve stored)
+                                   ;; nothing stored at all: a create, or a row
+                                   ;; this client has never read
+                                   (seal/seal k :recipes :description stored nil)
+                                   ;; a stale `stored` belonging to some other row
+                                   (seal/seal k :recipes :description stored
+                                              "somebody else's plaintext")]))))
+                       (.then (fn [[stored fresh stale]]
+                                (is (= stored fresh)
+                                    "handed back, byte for byte — never sealed a second time")
+                                (is (= stored stale)
+                                    "and a stale index does not change that either")
+                                (seal/unseal k :recipes :description fresh)))
+                       (.then (fn [opened]
+                                (is (= "The text as it stands." opened)
+                                    "one unseal reaches the prose, not a second envelope"))))))
+          (.then done)))))
+
 (deftest an-unchanged-value-on-an-unmigrated-row-stays-plaintext
   (testing "the mixed-state window: clients deployed first, data sealed later"
     (async done
